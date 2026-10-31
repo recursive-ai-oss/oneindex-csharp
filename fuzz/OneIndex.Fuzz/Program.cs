@@ -24,6 +24,7 @@ internal static class Program
         ["columns"] = DocValuesTarget.RunColumns,
         ["points"] = DocValuesTarget.RunPoints,
         ["stored"] = DocValuesTarget.RunStored,
+        ["usertext"] = UserTextTarget.Run,
     };
 
     private static int Main(string[] args)
@@ -68,6 +69,9 @@ internal static class Program
                     break;
                 case "stored":
                     DocValuesTarget.WriteSeeds(args[2], 2);
+                    break;
+                case "usertext":
+                    UserTextTarget.WriteSeeds(args[2]);
                     break;
                 default:
                     CommitTarget.WriteSeeds(args[2]);
