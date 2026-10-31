@@ -17,6 +17,8 @@ internal static class Program
     {
         ["commit"] = CommitTarget.Run,
         ["analysis"] = AnalysisTarget.Run,
+        ["terms"] = TextIndexTarget.RunTerms,
+        ["postings"] = TextIndexTarget.RunPostings,
     };
 
     private static int Main(string[] args)
@@ -36,13 +38,20 @@ internal static class Program
         if (args.Length > 2 && args[0] == "seeds")
         {
             Directory.CreateDirectory(args[2]);
-            if (args[1] == "analysis")
+            switch (args[1])
             {
-                AnalysisTarget.WriteSeeds(args[2]);
-            }
-            else
-            {
-                CommitTarget.WriteSeeds(args[2]);
+                case "analysis":
+                    AnalysisTarget.WriteSeeds(args[2]);
+                    break;
+                case "terms":
+                    TextIndexTarget.WriteSeeds(args[2], terms: true);
+                    break;
+                case "postings":
+                    TextIndexTarget.WriteSeeds(args[2], terms: false);
+                    break;
+                default:
+                    CommitTarget.WriteSeeds(args[2]);
+                    break;
             }
 
             return 0;

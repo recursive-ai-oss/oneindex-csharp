@@ -6,6 +6,8 @@
 |---|---|---|
 | `commit` | arbitrary bytes | the commit-file reader and the schema reader; a commit or schema that parses must serialize back to exactly the same bytes |
 | `analysis` | byte 0 picks an analyzer, byte 1 a repeat factor, the rest is UTF-16 text (lone surrogates included) | every registered analyzer, the word and sentence segmenters and the normalizer; nothing may be thrown and token offsets, positions and terms must be consistent |
+| `terms` | the terms file of a segment (first byte: odd repairs the header, footer and checksum) | the term dictionary reader, reached through opening the segment and walking every term, prefix, fuzzy and regular-expression enumeration |
+| `postings` | the postings file of a segment (same first byte) | the postings reader: every term's documents, frequencies, positions and offsets, advances and look-aheads |
 
 Only `CorruptIndexException` (and its subclass `UnsupportedFormatException`) may come out of a reader. Any other exception, a failed invariant, a hang (`-timeout`) or a memory blow-up (`-rss_limit_mb`) is a finding.
 

@@ -43,6 +43,9 @@ public abstract class Scorer : DocIdSetIterator
     /// <returns>The last document that the next <see cref="GetMaxScore"/> bound covers.</returns>
     public virtual int AdvanceShallow(int target) => NoMoreDocs;
 
+    /// <summary>An upper bound for the score of every document this scorer can return. <see cref="float.PositiveInfinity"/> when unknown (the default).</summary>
+    public virtual float MaxScore => float.PositiveInfinity;
+
     /// <summary>An upper bound for the score of every document from the last <see cref="AdvanceShallow"/> target up to <paramref name="upTo"/>.</summary>
     /// <param name="upTo">The last document to bound, at most the value <see cref="AdvanceShallow"/> returned.</param>
     /// <returns>A bound; <see cref="float.PositiveInfinity"/> when the scorer cannot say (the default).</returns>

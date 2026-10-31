@@ -66,6 +66,9 @@ public abstract class PostingsIterator : DocIdSetIterator
     /// <param name="target">The document to look ahead to; at least the current document.</param>
     /// <returns>The bound for the block, or one with <c>LastDocId</c> of <see cref="DocIdSetIterator.NoMoreDocs"/> when there is no block.</returns>
     public abstract BlockImpact ShallowAdvance(int target);
+
+    /// <summary>The bound over the whole list: its last document, its largest frequency and its shortest field. Valid from the moment the iterator is created.</summary>
+    public abstract BlockImpact TermImpact { get; }
 }
 
 /// <summary>Walks terms in byte order. Implemented by the term dictionary.</summary>
@@ -102,6 +105,15 @@ public interface ITextFieldReader
     /// <returns>An enumerator the caller disposes.</returns>
     ITermEnumerator GetTerms(ReadOnlySpan<byte> prefix);
 
+    /// <summary>What the field was indexed with: frequencies always, plus positions and offsets when the schema asked for them. <see cref="GetPostings"/> cannot return more than this.</summary>
+    PostingsFeatures IndexedFeatures { get; }
+
+    /// <summary>Walks the terms that a code-point automaton (fuzzy or regular expression) accepts, in byte order, without visiting the dictionary branches it rules out.</summary>
+    /// <param name="automaton">The automaton; not shared with another search.</param>
+    /// <param name="prefix">UTF-8 that every returned term must start with, matched exactly before the automaton takes over (for example a typo-free first letter); empty for none.</param>
+    /// <returns>An enumerator the caller disposes.</returns>
+    ITermEnumerator Intersect(OneIndex.Codecs.TermAutomaton automaton, ReadOnlySpan<byte> prefix = default);
+
     /// <summary>Opens a term's postings.</summary>
     /// <param name="term">The term as returned by <see cref="TryGetTerm"/> or an enumerator.</param>
     /// <param name="features">What the caller will read.</param>
@@ -112,6 +124,18 @@ public interface ITextFieldReader
     /// <param name="docId">The segment-local document id.</param>
     /// <returns>The length; 0 when the document has no value.</returns>
     int GetFieldLength(int docId);
+}
+
+/// <summary>The text fields of one segment. Implemented by the text codec's part reader; the segment reader finds it by type.</summary>
+public interface ITextFieldSource
+{
+    /// <summary>The names of the fields that have terms, in ordinal order.</summary>
+    IReadOnlyList<string> FieldNames { get; }
+
+    /// <summary>Gets a field's reader.</summary>
+    /// <param name="field">The field name.</param>
+    /// <returns>The reader, or <see langword="null"/> when the segment has no terms for the field.</returns>
+    ITextFieldReader? GetTextField(string field);
 }
 
 /// <summary>Per-document values of one field, kept for filtering, sorting and aggregation. Implemented by the column code.</summary>

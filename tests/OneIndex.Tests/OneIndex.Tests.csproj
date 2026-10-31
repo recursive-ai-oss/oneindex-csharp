@@ -13,6 +13,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The fuzz target's reader exerciser doubles as a corruption test here. -->
+    <Compile Include="../../fuzz/OneIndex.Fuzz/TextIndexTarget.cs" Link="Fuzz/TextIndexTarget.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="xunit.v3" />
   </ItemGroup>
 

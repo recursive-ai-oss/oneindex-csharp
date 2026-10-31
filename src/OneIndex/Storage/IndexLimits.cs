@@ -42,4 +42,10 @@ public sealed class IndexLimits
 
     /// <summary>The largest vector dimension a schema may declare. Default 65,536.</summary>
     public int MaxVectorDimensions { get; init; } = 65_536;
+
+    /// <summary>The longest term a text field may hold, in UTF-8 bytes. Default 32,766. The writer refuses longer terms; readers refuse files that claim them.</summary>
+    public int MaxTermBytes { get; init; } = 32_766;
+
+    /// <summary>The largest term-dictionary or field-length file a reader loads into memory, in bytes. Default 1 GiB.</summary>
+    public int MaxResidentFileBytes { get; init; } = 1 << 30;
 }
