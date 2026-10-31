@@ -16,6 +16,7 @@
   <ItemGroup>
     <Compile Include="../AotSmoke/SmokeScenario.cs" Link="SmokeScenario.cs" />
     <Compile Include="../AotSmoke/AnalysisScenario.cs" Link="AnalysisScenario.cs" />
+    <Compile Include="../AotSmoke/QueryFormsLowLevelScenario.cs" Link="QueryFormsLowLevelScenario.cs" />
   </ItemGroup>
 
   <ItemGroup>
