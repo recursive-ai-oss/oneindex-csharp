@@ -101,4 +101,24 @@ public interface IStorage
     /// <param name="cancellationToken">Cancels the call.</param>
     /// <returns>A task that completes when the namespace changes are durable.</returns>
     ValueTask SyncDirectoryAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Whether <see cref="TryLock"/> works on this storage. Default <see langword="false"/>: read-only and remote backends have nothing to lock.</summary>
+    bool SupportsLocks => false;
+
+    /// <summary>
+    /// Takes an exclusive lock on a named file, creating the empty file if it does not exist. The lock is advisory between holders
+    /// of this API, is tied to the open handle, and disappears when the handle is disposed or the process dies. The file stays
+    /// after the lock is released; delete it if it is a lease.
+    /// </summary>
+    /// <param name="name">The file name.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The lock, or <see langword="null"/> if another holder (in this or another process) has it.</returns>
+    /// <exception cref="NotSupportedException">The storage cannot lock (<see cref="SupportsLocks"/> is <see langword="false"/>), or the operating system's file locking is switched off.</exception>
+    IStorageLock? TryLock(string name, CancellationToken cancellationToken = default) => throw new NotSupportedException("This storage does not support locks.");
+
+    /// <summary>The asynchronous twin of <see cref="TryLock"/>.</summary>
+    /// <param name="name">The file name.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The lock, or <see langword="null"/> if another holder has it.</returns>
+    ValueTask<IStorageLock?> TryLockAsync(string name, CancellationToken cancellationToken = default) => ValueTask.FromResult(TryLock(name, cancellationToken));
 }

@@ -104,6 +104,7 @@ public sealed class FaultInjectingStorage : IStorage
     private readonly List<NamespaceOp> _pending = [];
     private SortedDictionary<string, Inode> _live = new(StringComparer.Ordinal);
     private SortedDictionary<string, Inode> _durable = new(StringComparer.Ordinal);
+    private readonly List<HeldLock> _locks = [];
     private long _operations;
     private bool _crashed;
 
@@ -179,6 +180,12 @@ public sealed class FaultInjectingStorage : IStorage
     {
         lock (_gate)
         {
+            // A power cut ends every process, so every lock goes with it.
+            foreach (HeldLock held in _locks.ToArray())
+            {
+                held.Dispose();
+            }
+
             CrashPolicy p = policy ?? _options.Policy;
             var rng = new Random(_options.Seed);
 
@@ -294,6 +301,48 @@ public sealed class FaultInjectingStorage : IStorage
     }
 
     /// <inheritdoc/>
+    public bool SupportsLocks => _inner.SupportsLocks;
+
+    /// <summary>
+    /// Locks through the wrapped storage. A lock file that did not exist counts as a <see cref="StorageOperationKind.Create"/>, so
+    /// schedules can fail or cut the power at it; an existing one counts as nothing.
+    /// </summary>
+    /// <inheritdoc/>
+    public IStorageLock? TryLock(string name, CancellationToken cancellationToken = default)
+    {
+        StorageNames.Validate(name);
+        lock (_gate)
+        {
+            bool exists = _live.ContainsKey(name);
+            if (exists)
+            {
+                CheckAlive();
+            }
+            else
+            {
+                Begin(StorageOperationKind.Create, name, 0, 0, applyBeforeCrash: false);
+            }
+
+            IStorageLock? inner = _inner.TryLock(name, cancellationToken);
+            if (inner is null)
+            {
+                return null;
+            }
+
+            if (!exists)
+            {
+                var inode = new Inode();
+                _live[name] = inode;
+                _pending.Add(new NamespaceOp(NamespaceOpKind.Create, name, null, inode));
+            }
+
+            var held = new HeldLock(this, inner);
+            _locks.Add(held);
+            return held;
+        }
+    }
+
+    /// <inheritdoc/>
     public IStorageWriter Create(string name, CancellationToken cancellationToken = default)
     {
         StorageNames.Validate(name);
@@ -382,6 +431,21 @@ public sealed class FaultInjectingStorage : IStorage
     {
         SyncDirectory(cancellationToken);
         return ValueTask.CompletedTask;
+    }
+
+    private sealed class HeldLock(FaultInjectingStorage owner, IStorageLock inner) : IStorageLock
+    {
+        public string Name => inner.Name;
+
+        public void Dispose()
+        {
+            lock (owner._gate)
+            {
+                owner._locks.Remove(this);
+            }
+
+            inner.Dispose();
+        }
     }
 
     private static void Replay(SortedDictionary<string, Inode> names, NamespaceOp op)

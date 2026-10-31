@@ -16,6 +16,8 @@ A name is 1 to 255 characters from `A-Z a-z 0-9 . _ -` and does not start with a
 
 `Rename(source, destination)` atomically replaces the destination. `Delete(name)` ignores a missing file. `List()` returns names in ordinal order. `SyncDirectory()` makes creations, renames and deletions durable.
 
+`TryLock(name)` (where `SupportsLocks` is true: local files and memory) creates the named file if needed and takes an exclusive lock on it, or returns `null` if another holder has it. The engine uses it for the writer lock and reader leases; see docs/processes.md for the per-OS behaviour. The fault injector counts a lock on a file that did not exist as a `Create`, and a power cut releases every lock it handed out.
+
 A read-only backend reports `IsReadOnly` and throws `NotSupportedException` from every mutating member.
 
 ## What durable means, by platform

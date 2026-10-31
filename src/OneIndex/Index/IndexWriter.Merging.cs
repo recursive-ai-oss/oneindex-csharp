@@ -252,6 +252,7 @@ public sealed partial class IndexWriter
         }
 
         _completedMerges.Clear();
+        _changeStamp++;
     }
 
     private sealed class MergeResult(string newName, List<string> sourceNames, SegmentInfo? newInfo, DocMap[] maps, List<LiveDocs> captured)

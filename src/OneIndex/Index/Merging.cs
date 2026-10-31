@@ -311,10 +311,14 @@ public sealed class ThreadedMergeScheduler : IMergeScheduler
     }
 }
 
-/// <summary>Counts files that something still needs and deletes a file when its last reference goes. Safe for concurrent use.</summary>
-internal sealed class FileReferences(IStorage storage)
+/// <summary>
+/// Counts files that something still needs and deletes a file when its last reference goes. A file that a reader in another
+/// process still pins (<paramref name="pinnedByOthers"/>) is kept and deleted by a later <see cref="ReclaimDeferred"/>. Safe for concurrent use.
+/// </summary>
+internal sealed class FileReferences(IStorage storage, Func<HashSet<string>?>? pinnedByOthers = null)
 {
     private readonly Dictionary<string, int> _counts = new(StringComparer.Ordinal);
+    private readonly SortedSet<string> _deferred = new(StringComparer.Ordinal);
 
     public void Acquire(IEnumerable<string> names)
     {
@@ -357,9 +361,91 @@ internal sealed class FileReferences(IStorage storage)
         }
 
         dead.Sort(StringComparer.Ordinal);
+        HashSet<string>? pinned = ScanPinned(out bool unknown);
         foreach (string n in dead)
         {
+            if (unknown || (pinned is not null && pinned.Contains(n)))
+            {
+                lock (_deferred)
+                {
+                    _deferred.Add(n);
+                }
+            }
+            else
+            {
+                TryDelete(n);
+            }
+        }
+    }
+
+    /// <summary>Marks a file as garbage that a reader in another process still pins; <see cref="ReclaimDeferred"/> deletes it later.</summary>
+    public void Defer(string name)
+    {
+        lock (_deferred)
+        {
+            _deferred.Add(name);
+        }
+    }
+
+    /// <summary>Whether some file is waiting for another process's reader to let go of it.</summary>
+    public bool HasDeferred
+    {
+        get
+        {
+            lock (_deferred)
+            {
+                return _deferred.Count > 0;
+            }
+        }
+    }
+
+    /// <summary>Deletes deferred files that no live reader lease pins any more.</summary>
+    public void ReclaimDeferred()
+    {
+        string[] names;
+        lock (_deferred)
+        {
+            if (_deferred.Count == 0)
+            {
+                return;
+            }
+
+            names = [.. _deferred];
+        }
+
+        HashSet<string>? pinned = ScanPinned(out bool unknown);
+        if (unknown)
+        {
+            return;
+        }
+
+        foreach (string n in names)
+        {
+            if (pinned is not null && pinned.Contains(n))
+            {
+                continue;
+            }
+
             TryDelete(n);
+            lock (_deferred)
+            {
+                _deferred.Remove(n);
+            }
+        }
+    }
+
+    // If the scan itself fails we cannot tell who reads, so every file stays deferred until a later scan works.
+    private HashSet<string>? ScanPinned(out bool unknown)
+    {
+        unknown = false;
+        try
+        {
+            return pinnedByOthers?.Invoke();
+        }
+        catch (IOException)
+        {
+            unknown = true;
+            return null;
         }
     }
 

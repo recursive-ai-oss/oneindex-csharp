@@ -5,10 +5,11 @@ namespace OneIndex.Storage;
 /// so <see cref="SyncDirectory"/> and writer syncs do nothing. A reader keeps seeing the bytes of the file it opened even if the
 /// file is renamed over or deleted afterwards.
 /// </summary>
-public sealed class MemoryStorage : StorageBase
+public sealed class MemoryStorage : StorageBase, IStorage
 {
     private readonly Lock _gate = new();
     private readonly Dictionary<string, MemoryFile> _files = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _locked = new(StringComparer.Ordinal);
 
     /// <inheritdoc/>
     public override bool IsReadOnly => false;
@@ -108,7 +109,46 @@ public sealed class MemoryStorage : StorageBase
     }
 
     /// <inheritdoc/>
+    bool IStorage.SupportsLocks => true;
+
+    /// <inheritdoc/>
+    public IStorageLock? TryLock(string name, CancellationToken cancellationToken = default)
+    {
+        StorageNames.Validate(name);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            if (!_locked.Add(name))
+            {
+                return null;
+            }
+
+            _files.TryAdd(name, new MemoryFile());
+        }
+
+        return new MemoryLock(this, name);
+    }
+
+    /// <inheritdoc/>
     public override void SyncDirectory(CancellationToken cancellationToken = default) => cancellationToken.ThrowIfCancellationRequested();
+
+    private sealed class MemoryLock(MemoryStorage owner, string name) : IStorageLock
+    {
+        private int _disposed;
+
+        public string Name => name;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                lock (owner._gate)
+                {
+                    owner._locked.Remove(name);
+                }
+            }
+        }
+    }
 
     private sealed class MemoryFile
     {

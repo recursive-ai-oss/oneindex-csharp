@@ -115,17 +115,14 @@ public static class CommitProtocol
             return null;
         }
 
-        using IRangeReader reader = storage.OpenRead(name, cancellationToken);
-        limits ??= IndexLimits.Default;
-        if (reader.Length > limits.MaxCommitFileBytes)
-        {
-            throw new CorruptIndexException(name, $"{reader.Length} bytes exceeds the commit file limit of {limits.MaxCommitFileBytes}");
-        }
+        return OpenNamed(storage, name, limits, cancellationToken);
+    }
 
-        var bytes = new byte[(int)reader.Length];
-        reader.ReadExactly(0, bytes, cancellationToken);
-        CommitInfo commit = CommitFileFormat.Parse(bytes, name, limits);
-        CheckGeneration(name, commit);
+    /// <summary>Opens one specific commit and checks that every file it lists is present, complete and the recorded one.</summary>
+    internal static CommitInfo OpenNamed(IStorage storage, string name, IndexLimits? limits, CancellationToken cancellationToken)
+    {
+        limits ??= IndexLimits.Default;
+        CommitInfo commit = ReadCommit(storage, name, limits, cancellationToken);
         foreach (SegmentInfo segment in commit.Segments)
         {
             foreach (SegmentFile file in segment.Files)
@@ -135,6 +132,22 @@ public static class CommitProtocol
             }
         }
 
+        return commit;
+    }
+
+    /// <summary>Parses a commit file without looking at the files it lists.</summary>
+    internal static CommitInfo ReadCommit(IStorage storage, string name, IndexLimits limits, CancellationToken cancellationToken)
+    {
+        using IRangeReader reader = storage.OpenRead(name, cancellationToken);
+        if (reader.Length > limits.MaxCommitFileBytes)
+        {
+            throw new CorruptIndexException(name, $"{reader.Length} bytes exceeds the commit file limit of {limits.MaxCommitFileBytes}");
+        }
+
+        var bytes = new byte[(int)reader.Length];
+        reader.ReadExactly(0, bytes, cancellationToken);
+        CommitInfo commit = CommitFileFormat.Parse(bytes, name, limits);
+        CheckGeneration(name, commit);
         return commit;
     }
 
@@ -261,7 +274,7 @@ public static class CommitProtocol
         }
     }
 
-    private static long LatestGeneration(IReadOnlyList<string> names)
+    internal static long LatestGeneration(IReadOnlyList<string> names)
     {
         long latest = 0;
         foreach (string name in names)
@@ -275,7 +288,7 @@ public static class CommitProtocol
         return latest;
     }
 
-    private static bool TryFindLatest(IReadOnlyList<string> names, [NotNullWhen(true)] out string? latestName)
+    internal static bool TryFindLatest(IReadOnlyList<string> names, [NotNullWhen(true)] out string? latestName)
     {
         long latest = LatestGeneration(names);
         latestName = latest == 0 ? null : CommitFileNames.For(latest);
