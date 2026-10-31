@@ -20,11 +20,12 @@ public class Invoice {
 | `[FullText(Boost, Language, Analyzer)]` | `string`, `string[]`, `List<string>`, `IEnumerable<string>`, ... | Analyzed text searched by user text and scored with BM25F. `Boost` (default 1, finite, above 0) is the field's weight. `Language` (`"en"`, ...) picks the language analyzer; `Analyzer` names a registered analyzer (`"cjk"`, `"en-both"`) and wins over `Language`. Default analyzer: `standard`. |
 | `[Keyword]` | the same types | The whole value is matched exactly (tags, codes). Filterable with `==` and `Contains`. A collection holds several values. |
 | `[Filterable]` | numbers, dates, `bool`, strings | Queries can filter on it. On a string it implies `[Keyword]`. |
-| `[Sortable]` | single-valued members | Kept column-wise for sorting (sorting itself arrives later). |
+| `[Sortable]` | single-valued members | Kept column-wise for sorting with `OrderBy` and friends ([sorting.md](sorting.md)). |
+| `[Geo]` | one `GeoPoint` (or `GeoPoint?`) | Indexed and kept in a column for radius and bounding-box filters and distance sorting ([geo.md](geo.md)). |
 | `[Facet]` | keyword and value members | Kept for counts of values (facets arrive later); implies filterable. |
 | `[Dynamic]`, `[Vector]` | | Declared, not supported yet: a compile-time error. |
 
-Supported member types: `string`; `string[]`, `List<string>`, `IEnumerable<string>`, `IReadOnlyList<string>`, `IReadOnlyCollection<string>`, `IList<string>`, `ICollection<string>`; `sbyte`, `byte`, `short`, `ushort`, `int`, `uint`, `long`; `float`, `double`; `bool`; `DateTime`, `DateTimeOffset`; and the nullable forms of the value types (a null is simply absent).
+Supported member types: `GeoPoint` (with `[Geo]`); `string`; `string[]`, `List<string>`, `IEnumerable<string>`, `IReadOnlyList<string>`, `IReadOnlyCollection<string>`, `IList<string>`, `ICollection<string>`; `sbyte`, `byte`, `short`, `ushort`, `int`, `uint`, `long`; `float`, `double`; `bool`; `DateTime`, `DateTimeOffset`; and the nullable forms of the value types (a null is simply absent).
 
 Public read/write properties of supported types **without** attributes are stored and returned with the document but cannot be searched or filtered. Read-only properties and properties of other types are not part of the document and come back with their constructor defaults.
 

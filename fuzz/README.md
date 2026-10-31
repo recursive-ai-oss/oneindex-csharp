@@ -11,12 +11,12 @@
 | `segment` | arbitrary bytes | the delete-file reader and the identifier-map reader (validation and binary-search lookup); what parses must agree with itself |
 | `query` | the bytes choose a small random corpus (segments, deletes, optional merge), a random query tree of every kind, and the checks | query execution against a brute-force BM25F reference (docs/queries.md): same hit set, scores within tolerance, pruned top-k pages bit-identical to the exhaustive list, explanations equal to scores; only `QueryException` for the queries meant to be invalid |
 | `columns` | the columns file of a segment (first byte: odd repairs the header, footer and checksum) | the column directory and sections: every document's values, dictionaries, bulk decodes |
-| `points` | the points file of a segment (same first byte) | the point-index directory and leaves: range iteration, advances, leaf reads |
+| `points` | the points file of a segment (same first byte) | the point-index directory and leaves, numeric and geo: range iteration, advances, leaf reads, geo rectangle lookups (across the antimeridian, at the poles) |
 | `stored` | the stored-source file of a segment (same first byte) | the block table and the compressed blocks: every document fetched as a document and as source bytes |
 | `usertext` | UTF-16 text (lone surrogates and controls included) | the user-text parser and a search over a small index, with and without a filter; nothing may be thrown, pages are bounded and scores finite |
 | `strict` | UTF-16 text | the strict query parser, its printer and binder: only `QueryParseException` may come out; what parses prints and reads back to an equal tree; the compiled query runs on a small index |
-| `filter` | UTF-16 text | the filter-string parser and printer, same checks |
-| `queryjson` | UTF-8 bytes | the query JSON reader and writer: only `QueryParseException`; write then read gives an equal request; the compiled query runs |
+| `filter` | UTF-16 text | the filter-string parser and printer (geo conditions included), same checks |
+| `queryjson` | UTF-8 bytes | the query JSON reader and writer (geo nodes, `sort` and `searchAfter` included): only `QueryParseException`; write then read gives an equal request; the compiled query runs, and a sorted request runs its first page and a page after its cursor |
 
 Only `CorruptIndexException` (and its subclass `UnsupportedFormatException`) may come out of a reader. Any other exception, a failed invariant, a hang (`-timeout`) or a memory blow-up (`-rss_limit_mb`) is a finding.
 

@@ -244,6 +244,15 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     {
         QueryRequest request = QueryJson.Read(queryJson, Schema);
         SearchQuery<T> search = SearchBy(request.ToQuery()).Take(request.Limit).Skip(request.Offset);
+        if (request.Sort is { } sort)
+        {
+            search = search.WithKeys([.. sort.Keys]);
+            if (request.SearchAfter is { } token)
+            {
+                search = search.SearchAfter(token);
+            }
+        }
+
         if (request.CountExactly)
         {
             search = search.CountExactly();
@@ -420,6 +429,12 @@ public sealed class SearchHit<T>
     /// <summary>The document's identifier.</summary>
     public string Id { get; }
 
+    /// <summary>For a sorted search: the place of this hit in the order, to continue after it with <c>SearchAfter</c>. <see langword="null"/> for a relevance-ranked search.</summary>
+    public SortCursor? Cursor { get; internal set; }
+
+    /// <summary>For a search sorted by distance: the metres from the sort point to the document's nearest (or, descending, farthest) point. <see langword="null"/> otherwise or when the document has no point.</summary>
+    public double? GeoDistance { get; internal set; }
+
     /// <summary>The relevance score: BM25F over the full-text fields for text queries; 1 times boost for filter-only and blank searches.</summary>
     public float Score { get; }
 
@@ -459,6 +474,9 @@ public sealed class SearchResults<T> : IReadOnlyList<SearchHit<T>>
 
     /// <summary>Whether <see cref="TotalHits"/> is the exact count (see <see cref="SearchQuery{T}.CountExactly"/>).</summary>
     public bool TotalHitsExact { get; }
+
+    /// <summary>For a sorted search: the cursor after the last hit, to fetch the next page with <c>SearchAfter</c>; <see langword="null"/> when there are no hits or the search is not sorted.</summary>
+    public SortCursor? NextCursor => _hits.Count > 0 ? _hits[^1].Cursor : null;
 
     /// <inheritdoc/>
     public int Count => _hits.Count;

@@ -30,8 +30,10 @@ string canonical = QueryJson.Write(request);
 | `offset` | Hits to skip, 0 to 10,000. Default 0. `limit + offset` is at most 10,000. |
 | `countExactly` | `true` for an exact `TotalHits`. Default false (a lower bound). |
 | `highlight` | `true` for the default snippets, or `{"fragmentLength": 1..10000, "maxFragments": 1..100}` (defaults 160 and 3). |
+| `sort` | 1 to 16 strings that order the hits instead of relevance: `Field:asc`, `Field:desc`, `_score`, `_geoPoint(lat, lng):asc`, each optionally ending in `:first` or `:last` for documents without a value. See [sorting.md](sorting.md). |
+| `searchAfter` | A cursor token (`SortCursor.ToToken()`, also `NextCursor` of the previous page) to continue after; needs `sort` made the same way, and excludes `offset`. |
 
-With no `q` and no `query`, every document is a candidate. Unknown properties are errors that name the path and the nearest known name. These names are reserved for later versions and rejected with a message of their own: `sort`, `facets`, `aggregations`, `distinct`, `hybrid`, `vector`, `searchAfter`.
+With no `q` and no `query`, every document is a candidate. Unknown properties are errors that name the path and the nearest known name. These names are reserved for later versions and rejected with a message of their own: `facets`, `aggregations`, `distinct`, `hybrid`, `vector`. (`sort` and `searchAfter` were reserved in the first drafts of version 1 and are now properties: documents that used to be rejected are accepted, and every document that was accepted reads the same.)
 
 Limits: the document is at most 1 MiB, strings 8,192 characters, query nodes nested 32 deep, 2,048 nodes in all. Invalid UTF-8 and lone surrogates are errors.
 
@@ -53,6 +55,8 @@ A node is an object with a `type`. Every node accepts `"boost"` (a non-negative 
 | `range` | `field`, at most one of `gt`/`gte`, at most one of `lt`/`lte`, at least one bound | numbers, dates (ISO strings) or keywords (strings); not booleans |
 | `exists` | `field` | documents that have a value |
 | `multiFieldTerm` | `fields`, `term` | one analyzed term in any of the full-text or keyword fields, scored as one BM25F term |
+| `geoRadius` | `field` (a geo point field), `lat`, `lng`, `meters` | documents with a point within the distance ([geo.md](geo.md)) |
+| `geoBoundingBox` | `field`, `north`, `south`, `west`, `east` | documents with a point in the rectangle; `west` greater than `east` crosses the antimeridian |
 | `bool` | `must`, `filter`, `should`, `mustNot` (arrays of nodes), `minimumShouldMatch` | all `must` and `filter` clauses, no `mustNot` clause, and enough `should` clauses; `filter` clauses do not score |
 
 `phrase`, `prefix`, `fuzzy`, `regex` and `multiFieldTerm` carry **already analyzed** terms, as the query objects do: write them lower case for the default analyzer. To search words the way a user would, use `text` or `strict` (`{"type":"strict","text":"Title:\"acme corp\""}`).
@@ -65,7 +69,7 @@ A `QueryParseException` has `Path` (`$.query.must[1].field`), `Detail`, and `Sug
 
 ## Canonical form and round trips
 
-`QueryJson.Write` is canonical: properties in a fixed order (`v`, `query`, `filter`, `limit`, `offset`, `countExactly`, `highlight`), nodes with `type` first, no white space, defaults left out, boosts as shortest round-trip numbers.
+`QueryJson.Write` is canonical: properties in a fixed order (`v`, `query`, `filter`, `limit`, `offset`, `countExactly`, `highlight`, `sort`, `searchAfter`), nodes with `type` first, no white space, defaults left out, boosts as shortest round-trip numbers.
 
 - **Object to JSON to object is identity:** `Read(Write(request))` equals `request` for every request whose boolean clauses are grouped as `must`, `filter`, `should`, `mustNot` (the shapes of all our parsers). Interleaved clauses are written grouped, which keeps the order inside each group; their meaning is the same.
 - **JSON to object to JSON is canonical:** any accepted document, whatever its property order or spacing, and with `q`, `text`, `strict` and `filter` nodes already compiled into query nodes, writes as one canonical document. Writing is deterministic.

@@ -235,6 +235,18 @@ public sealed class QueryEngine : IWeightFactory
             return RangeWeightFactory.Create(context.Schema, query);
         }
 
+        public override Weight VisitGeoRadius(GeoRadiusQuery query)
+        {
+            CheckBoost(query);
+            return GeoWeightFactory.Radius(context.Schema, query);
+        }
+
+        public override Weight VisitGeoBoundingBox(GeoBoundingBoxQuery query)
+        {
+            CheckBoost(query);
+            return GeoWeightFactory.BoundingBox(context.Schema, query);
+        }
+
         private Weight Expand(FieldDefinition def, float boost, Func<ITextFieldReader, ITermEnumerator> open)
         {
             int limit = options.MaxExpandedTerms;

@@ -7,10 +7,13 @@ using OneIndex.Search;
 namespace OneIndex;
 
 /// <summary>What a search computes beyond its page of hits.</summary>
-internal sealed record QueryStages(FacetRequest[] Facets, string? Distinct, Aggregation[] Aggregations)
+internal sealed record QueryStages(FacetRequest[] Facets, string? Distinct, Aggregation[] Aggregations, SortPlan? Sort = null)
 {
     public static readonly QueryStages None = new([], null, []);
 }
+
+/// <summary>The sort keys of a search and the cursor it continues from.</summary>
+internal sealed record SortPlan(SortCriterion[] Keys, SortCursor? After);
 
 public sealed partial class SearchQuery<T>
     where T : class
@@ -86,9 +89,33 @@ public sealed partial class SearchQuery<T>
         Schema schema = _index.Mapping.Schema;
         var collectors = new List<Collector>();
         TopScoreCollector? top = null;
+        TopFieldCollector? sorted = null;
         CountCollector? counter = null;
         DistinctCollector? distinct = null;
-        if (stages.Distinct is { } field)
+        if (stages.Sort is { } plan)
+        {
+            if (stages.Distinct is not null)
+            {
+                throw new NotSupportedException("Distinct cannot be combined with OrderBy: distinct ranks its groups by relevance.");
+            }
+
+            if (plan.After is not null && _skip > 0)
+            {
+                throw new InvalidOperationException("Skip cannot be combined with SearchAfter: the cursor already says where the page starts.");
+            }
+
+            if (_take > 0)
+            {
+                sorted = new TopFieldCollector(plan.Keys, _skip + _take, plan.After, schema.IdField);
+                collectors.Add(sorted);
+            }
+            else
+            {
+                counter = new CountCollector();
+                collectors.Add(counter);
+            }
+        }
+        else if (stages.Distinct is { } field)
         {
             distinct = new DistinctCollector(field, Math.Max(1, _skip + _take));
             collectors.Add(distinct);
@@ -124,7 +151,21 @@ public sealed partial class SearchQuery<T>
 
         long total;
         IReadOnlyList<ScoreDoc> docs;
-        if (distinct is not null)
+        IReadOnlyList<FieldDoc>? sortedDocs = null;
+        if (sorted is not null)
+        {
+            TopFieldDocs t = sorted.GetTopDocs();
+            total = t.TotalHits;
+            sortedDocs = t.Hits;
+            var plain = new ScoreDoc[t.Hits.Count];
+            for (int i = 0; i < plain.Length; i++)
+            {
+                plain[i] = new ScoreDoc(t.Hits[i].DocId, t.Hits[i].Score);
+            }
+
+            docs = plain;
+        }
+        else if (distinct is not null)
         {
             DistinctDocs d = distinct.GetTopDocs();
             total = d.TotalGroups;
@@ -152,7 +193,22 @@ public sealed partial class SearchQuery<T>
                 LeafContext leaf = LeafOf(generation!.Context, sd.DocId);
                 Document stored = _index.Source(generation, leaf, sd.DocId - leaf.DocBase, out string id)
                     ?? throw new InvalidOperationException($"The stored source of document '{id}' is not available.");
-                hits.Add(new SearchHit<T>(id, sd.Score, _index.Mapping.FromDocument(stored), stored, schema, terms, _highlight));
+                SearchHit<T> hit = new(id, sd.Score, _index.Mapping.FromDocument(stored), stored, schema, terms, _highlight);
+                if (sortedDocs is not null)
+                {
+                    FieldDoc fd = sortedDocs[i];
+                    hit.Cursor = SortCursor.After(stages.Sort!.Keys, fd);
+                    for (int key = 0; key < stages.Sort.Keys.Length; key++)
+                    {
+                        if (stages.Sort.Keys[key] is GeoDistanceSort && !fd.Values[key].IsMissing)
+                        {
+                            hit.GeoDistance = fd.Values[key].AsDouble();
+                            break;
+                        }
+                    }
+                }
+
+                hits.Add(hit);
             }
         }
 

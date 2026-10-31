@@ -127,6 +127,8 @@ internal static class DocValuesTarget
 
     private static readonly (long Low, long High)[] Ranges = [(long.MinValue, long.MaxValue), (-5, 5), (0, 1), (1_700_000_000_000, 1_700_000_050_000), (long.MinValue, 0), (0, long.MaxValue)];
 
+    private static readonly (double South, double North, double West, double East)[] GeoBoxes = [(-90, 90, -180, 180), (-10, 10, 170, -170), (48.8, 48.9, 2.2, 2.4), (89, 90, -180, 180), (-90, -89, 0, 1), (0, 0, 0, 0)];
+
     private static void ReadPoints(PointPartReader part)
     {
         using (part)
@@ -153,6 +155,25 @@ internal static class DocValuesTarget
                     it = points.GetRange(low, high);
                     for (int doc = it.Advance(3); doc != DocIdSetIterator.NoMoreDocs; doc = it.Advance(doc + 7))
                     {
+                    }
+                }
+
+                if (points.IsGeo)
+                {
+                    // Rectangles over the whole map, across the antimeridian, tiny, and at the poles.
+                    foreach ((double south, double north, double west, double east) in GeoBoxes)
+                    {
+                        DocIdSetIterator candidates = points.GetCandidates(south, north, west, east);
+                        int previous = -1;
+                        for (int doc = candidates.NextDoc(); doc != DocIdSetIterator.NoMoreDocs; doc = candidates.NextDoc())
+                        {
+                            if (doc <= previous)
+                            {
+                                throw new InvalidOperationException("geo iterator went backwards");
+                            }
+
+                            previous = doc;
+                        }
                     }
                 }
 
