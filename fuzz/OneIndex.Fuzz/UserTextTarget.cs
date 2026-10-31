@@ -1,3 +1,4 @@
+using OneIndex.Index;
 using OneIndex.Queries;
 
 namespace OneIndex.Fuzz;
@@ -5,20 +6,49 @@ namespace OneIndex.Fuzz;
 /// <summary>A small document type for the user-text target: a stemmed body, a plain title, a keyword and a number.</summary>
 public class FuzzDocument
 {
-    [SearchId]
     public string Id { get; set; } = string.Empty;
 
-    [FullText(Boost = 2)]
     public string Title { get; set; } = string.Empty;
 
-    [FullText(Language = "en")]
     public string Body { get; set; } = string.Empty;
 
-    [Keyword]
     public string Tag { get; set; } = string.Empty;
 
-    [Filterable]
     public int Number { get; set; }
+}
+
+/// <summary>
+/// The mapping of <see cref="FuzzDocument"/>, written by hand (the low-level API). The generator's registration runs when the
+/// assembly loads, which is before the instrumented library has its coverage memory; registering inside the target avoids that.
+/// </summary>
+internal sealed class FuzzMapping : SearchMapping<FuzzDocument>
+{
+    public FuzzMapping()
+        : base(
+        [
+            new MappedMember("Id", FieldType.Keyword, multi: false, indexed: true, column: true, facet: false, fullText: false, isId: true, boost: 1f, analyzer: null),
+            new MappedMember("Title", FieldType.Text, multi: false, indexed: true, column: false, facet: false, fullText: true, isId: false, boost: 2f, analyzer: null),
+            new MappedMember("Body", FieldType.Text, multi: false, indexed: true, column: false, facet: false, fullText: true, isId: false, boost: 1f, analyzer: "en"),
+            new MappedMember("Tag", FieldType.Keyword, multi: false, indexed: true, column: false, facet: false, fullText: false, isId: false, boost: 1f, analyzer: null),
+            new MappedMember("Number", FieldType.Integral, multi: false, indexed: true, column: true, facet: false, fullText: false, isId: false, boost: 1f, analyzer: null),
+        ])
+    {
+    }
+
+    public override string? GetId(FuzzDocument value) => value.Id;
+
+    public override Document ToDocument(FuzzDocument value)
+        => new Document().Add("Id", value.Id).Add("Title", value.Title).Add("Body", value.Body).Add("Tag", value.Tag).Add("Number", (long)value.Number);
+
+    public override FuzzDocument FromDocument(Document document)
+        => new()
+        {
+            Id = document.Get("Id").AsText(),
+            Title = document.Get("Title").AsText(),
+            Body = document.Get("Body").AsText(),
+            Tag = document.Get("Tag").AsText(),
+            Number = (int)document.Get("Number").AsInt64(),
+        };
 }
 
 /// <summary>
@@ -27,10 +57,11 @@ public class FuzzDocument
 /// </summary>
 internal static class UserTextTarget
 {
-    private static readonly SearchIndex<FuzzDocument> Index = Build();
+    private static SearchIndex<FuzzDocument>? built;
 
     public static void Run(ReadOnlySpan<byte> data)
     {
+        SearchIndex<FuzzDocument> index = built ??= Build();
         var chars = new char[data.Length / 2];
         for (int i = 0; i < chars.Length; i++)
         {
@@ -49,7 +80,7 @@ internal static class UserTextTarget
             }
         }
 
-        SearchResults<FuzzDocument> page = Index.Search(text).Take(5).Execute();
+        SearchResults<FuzzDocument> page = index.Search(text).Take(5).Execute();
         Require(page.Count <= 5 && page.TotalHits >= page.Count, "page");
         foreach (SearchHit<FuzzDocument> hit in page)
         {
@@ -58,7 +89,7 @@ internal static class UserTextTarget
         }
 
         int bound = chars.Length % 7;
-        _ = Index.Search(text).Where(x => x.Number > bound).Skip(1).Take(3).CountExactly().Count();
+        _ = index.Search(text).Where(x => x.Number > bound).Skip(1).Take(3).CountExactly().Count();
     }
 
     public static void WriteSeeds(string directory)
@@ -79,6 +110,7 @@ internal static class UserTextTarget
 
     private static SearchIndex<FuzzDocument> Build()
     {
+        SearchMappings.Register(new FuzzMapping());
         SearchIndex<FuzzDocument> index = SearchIndex.InMemory<FuzzDocument>();
         string[] words = ["overdue", "acme", "corp", "draft", "cat", "dog", "state", "art", "running", "runner", "the", "of", "\u6771\u4eac\u90fd", "caf\u00e9"];
         for (int i = 0; i < 40; i++)
