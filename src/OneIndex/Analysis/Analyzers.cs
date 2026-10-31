@@ -62,12 +62,14 @@ public sealed class LanguageAnalyzer : Analyzer
     private readonly string _code;
     private readonly string _language;
     private readonly bool _both;
+    private readonly StopWordSettings? _stopSettings;
 
     /// <summary>Creates an analyzer.</summary>
     /// <param name="languageCode">An ISO 639-1 code from <see cref="LanguageCodes"/>.</param>
     /// <param name="keepUnstemmed">Whether to index the unstemmed word beside its stem (the <c>-both</c> form).</param>
+    /// <param name="stopWords">A per-index stop word configuration that replaces or extends the language's list; <see langword="null"/> (default) keeps the language's own list. The analyzer's <see cref="Name"/> does not change: the settings are stored with the index, not in the name.</param>
     /// <exception cref="ArgumentException">The code is not supported.</exception>
-    public LanguageAnalyzer(string languageCode, bool keepUnstemmed = false)
+    public LanguageAnalyzer(string languageCode, bool keepUnstemmed = false, StopWordSettings? stopWords = null)
     {
         ArgumentNullException.ThrowIfNull(languageCode);
         string? language = null;
@@ -82,6 +84,7 @@ public sealed class LanguageAnalyzer : Analyzer
         _language = language ?? throw new ArgumentException($"No language analyzer for '{languageCode}'.", nameof(languageCode));
         _code = languageCode;
         _both = keepUnstemmed;
+        _stopSettings = stopWords;
     }
 
     /// <summary>The ISO 639-1 codes that have an analyzer, in alphabetical order.</summary>
@@ -113,8 +116,11 @@ public sealed class LanguageAnalyzer : Analyzer
             stream = new ElisionFilter(stream, elision);
         }
 
-        StopWords? stopWords = StopWords.ForLanguage(_code);
-        if (stopWords is not null)
+        if (_stopSettings is not null)
+        {
+            stream = _stopSettings.CreateFilter(stream, _code);
+        }
+        else if (StopWords.ForLanguage(_code) is { } stopWords)
         {
             stream = new StopFilter(stream, stopWords);
         }

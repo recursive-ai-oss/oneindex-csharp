@@ -230,6 +230,21 @@ public sealed class StopWords
     /// <summary>The number of words.</summary>
     public int Count => _sorted.Length;
 
+    /// <summary>The words in ordinal order.</summary>
+    public IReadOnlyList<string> Words => _sorted;
+
+    /// <summary>A set with no words.</summary>
+    public static StopWords Empty { get; } = new([]);
+
+    /// <summary>Returns a set holding these words and <paramref name="more"/>.</summary>
+    /// <param name="more">The words to add; duplicates are fine.</param>
+    /// <returns>A new set; this one is unchanged.</returns>
+    public StopWords With(IEnumerable<string> more)
+    {
+        ArgumentNullException.ThrowIfNull(more);
+        return new StopWords(_sorted.Concat(more));
+    }
+
     /// <summary>Returns the stop word list the Snowball project publishes for a language.</summary>
     /// <param name="language">An ISO 639-1 code as the language analyzers use: da, nl, en, fi, fr, de, hu, id, ga, it, no, pt, ru, st, es, sv.</param>
     /// <returns>The list, or <see langword="null"/> when none is published for the language.</returns>
@@ -270,12 +285,14 @@ public sealed class StopWords
 }
 
 /// <summary>
-/// Drops terms found in a stop word set. The position increment of a dropped term is added to the next term, so a phrase across a
-/// removed word keeps its gap.
+/// Drops terms found in a stop word set. By default the position increment of a dropped term is added to the next term, so a
+/// phrase across a removed word keeps its gap; with <c>preserveGaps</c> false the next term follows directly, as if the word had
+/// never been in the text (stop words are then ignored inside phrases too).
 /// </summary>
 /// <param name="input">The stream to read from.</param>
 /// <param name="stopWords">The words to drop.</param>
-public sealed class StopFilter(TokenSource input, StopWords stopWords) : TokenFilter(input)
+/// <param name="preserveGaps">Whether a dropped word leaves a gap in the positions. Default true.</param>
+public sealed class StopFilter(TokenSource input, StopWords stopWords, bool preserveGaps = true) : TokenFilter(input)
 {
     private readonly StopWords _stopWords = stopWords ?? throw new ArgumentNullException(nameof(stopWords));
 
@@ -287,7 +304,11 @@ public sealed class StopFilter(TokenSource input, StopWords stopWords) : TokenFi
         {
             if (_stopWords.Contains(Token.Term))
             {
-                skipped += Token.PositionIncrement;
+                if (preserveGaps)
+                {
+                    skipped += Token.PositionIncrement;
+                }
+
                 continue;
             }
 
