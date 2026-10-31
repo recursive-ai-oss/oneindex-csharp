@@ -128,8 +128,10 @@ public sealed class KeywordAnalyzer : Analyzer
 }
 
 /// <summary>
-/// The analyzers this build knows, by the names schemas store. The list is a plain <c>switch</c>, not discovered by reflection, so
-/// trimming and AOT keep exactly what is named here. Each analysis addition adds its line.
+/// The analyzers this build knows, by the names schemas store. The list is a plain <c>switch</c> and a fixed table, not discovered by
+/// reflection, so trimming and AOT keep exactly what is named here. The names are: <c>standard</c> (the default), <c>cjk</c>,
+/// <c>keyword</c>, <c>whitespace-lowercase</c>, one per language code (<see cref="LanguageAnalyzer.LanguageCodes"/>) and the
+/// language code plus <c>-both</c>.
 /// </summary>
 public static class AnalyzerRegistry
 {
@@ -141,9 +143,11 @@ public static class AnalyzerRegistry
     {
         analyzer = name switch
         {
+            StandardAnalyzer.RegisteredName => new StandardAnalyzer(),
+            CjkAnalyzer.RegisteredName => new CjkAnalyzer(),
             WhitespaceLowercaseAnalyzer.RegisteredName => new WhitespaceLowercaseAnalyzer(),
             KeywordAnalyzer.RegisteredName => new KeywordAnalyzer(),
-            _ => null,
+            _ => TryCreateLanguage(name),
         };
         return analyzer is not null;
     }
@@ -154,4 +158,19 @@ public static class AnalyzerRegistry
     /// <exception cref="ArgumentException">No analyzer has that name.</exception>
     public static Analyzer Create(string name)
         => TryCreate(name, out Analyzer? analyzer) ? analyzer : throw new ArgumentException($"No analyzer named '{name}' is registered.", nameof(name));
+
+    private static LanguageAnalyzer? TryCreateLanguage(string name)
+    {
+        bool both = name.EndsWith("-both", StringComparison.Ordinal);
+        string code = both ? name[..^5] : name;
+        foreach (string known in LanguageAnalyzer.LanguageCodes)
+        {
+            if (known == code)
+            {
+                return new LanguageAnalyzer(code, both);
+            }
+        }
+
+        return null;
+    }
 }

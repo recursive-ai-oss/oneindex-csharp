@@ -28,6 +28,12 @@ public enum TokenMarks : byte
 
     /// <summary>The term must not be stemmed or otherwise rewritten.</summary>
     Keyword = 1,
+
+    /// <summary>
+    /// The term is the stem a stemming filter added beside the unstemmed word it came from (same position, increment 0). An indexer
+    /// can keep such terms apart from exact words, for example to rank an exact match above a stem match.
+    /// </summary>
+    Stemmed = 2,
 }
 
 /// <summary>
