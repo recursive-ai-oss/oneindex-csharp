@@ -41,6 +41,14 @@ internal static class HappyPathScenario
         Require(hits[0].Highlights["Body"][0].Marked("[", "]") == "Payment from [Acme Corp] is [overdue].", "highlight");
         Require(index.Search("\"unterminated").Count() == 0 && index.Search(null).Count() == 3, "forgiving text");
 
+        SearchResults<Invoice> faceted = index.Search().Facets(x => x.Tags, sortBy: Aggregations.FacetSort.Count).Distinct(x => x.Tags).Aggregate(a => a
+            .Terms("tags", x => x.Tags, sub: s => s.Cardinality("days", x => x.Modified))
+            .DateHistogram("months", x => x.Modified, Aggregations.DateInterval.Year)
+            .Percentiles("when", x => x.Modified, 50)).Take(5).Execute();
+        Require(faceted.Facets["Tags"].Values.Select(v => v.Value + "=" + v.Count).SequenceEqual(["invoice=3", "draft=1"]), "facets");
+        Require(faceted.Aggregations.Get<Aggregations.BucketsResult>("months").Buckets.Count == 3 && faceted.TotalHits == 1 && faceted.Count == 1, "aggregations and distinct");
+        Require(faceted.Aggregations.Get<Aggregations.BucketsResult>("tags").Buckets[0].Aggregations.Get<Aggregations.CardinalityResult>("days").Value == 3, "sub-aggregation");
+
         bool threw = false;
         try
         {

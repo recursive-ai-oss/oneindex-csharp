@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Linq.Expressions;
+using OneIndex.Aggregations;
 using OneIndex.Highlighting;
 using OneIndex.Index;
 using OneIndex.Linq;
@@ -398,6 +399,12 @@ public sealed class SearchResults<T> : IReadOnlyList<SearchHit<T>>
         TotalHitsExact = exact;
     }
 
+    /// <summary>The facet counts asked for with <see cref="SearchQuery{T}.Facets{TField}"/>, by property name; empty when none were asked for. Counted over all matches, not just the page.</summary>
+    public IReadOnlyDictionary<string, FacetResult> Facets { get; internal init; } = new Dictionary<string, FacetResult>();
+
+    /// <summary>The results of <see cref="SearchQuery{T}.Aggregate"/>, by name; empty when none were asked for. Computed over all matches, not just the page.</summary>
+    public AggregationResultSet Aggregations { get; internal init; } = AggregationResultSet.Empty;
+
     /// <summary>The number of matching documents: a lower bound unless <see cref="TotalHitsExact"/>.</summary>
     public long TotalHits { get; }
 
@@ -421,7 +428,7 @@ public sealed class SearchResults<T> : IReadOnlyList<SearchHit<T>>
 /// when enumerated or executed. Results come best first; ties are broken by the order documents were indexed.
 /// </summary>
 /// <typeparam name="T">The document type.</typeparam>
-public sealed class SearchQuery<T> : IEnumerable<SearchHit<T>>
+public sealed partial class SearchQuery<T> : IEnumerable<SearchHit<T>>
     where T : class
 {
     /// <summary>The largest <c>Skip + Take</c>. Deeper pages are rejected rather than made slow.</summary>
@@ -435,9 +442,11 @@ public sealed class SearchQuery<T> : IEnumerable<SearchHit<T>>
     private readonly int _skip;
     private readonly bool _exact;
     private readonly HighlightOptions? _highlight;
+    private readonly QueryStages? _stages;
 
-    internal SearchQuery(SearchIndex<T> index, string? text, Search.Query? query, Expression<Func<T, bool>>[] filters, int take, int skip, bool exact, HighlightOptions? highlight)
+    internal SearchQuery(SearchIndex<T> index, string? text, Search.Query? query, Expression<Func<T, bool>>[] filters, int take, int skip, bool exact, HighlightOptions? highlight, QueryStages? stages = null)
     {
+        _stages = stages;
         _index = index;
         _text = text;
         _query = query;
@@ -456,7 +465,7 @@ public sealed class SearchQuery<T> : IEnumerable<SearchHit<T>>
     {
         ArgumentNullException.ThrowIfNull(predicate);
         _ = new FilterTranslator<T>(_index.Mapping).Translate(predicate);
-        return new SearchQuery<T>(_index, _text, _query, [.. _filters, predicate], _take, _skip, _exact, _highlight);
+        return new SearchQuery<T>(_index, _text, _query, [.. _filters, predicate], _take, _skip, _exact, _highlight, _stages);
     }
 
     /// <summary>Limits the number of hits returned. Default 20.</summary>
@@ -466,7 +475,7 @@ public sealed class SearchQuery<T> : IEnumerable<SearchHit<T>>
     public SearchQuery<T> Take(int count)
     {
         CheckWindow(count, _skip);
-        return new SearchQuery<T>(_index, _text, _query, _filters, count, _skip, _exact, _highlight);
+        return new SearchQuery<T>(_index, _text, _query, _filters, count, _skip, _exact, _highlight, _stages);
     }
 
     /// <summary>Skips the first hits, for paging. Default 0.</summary>
@@ -476,12 +485,12 @@ public sealed class SearchQuery<T> : IEnumerable<SearchHit<T>>
     public SearchQuery<T> Skip(int count)
     {
         CheckWindow(_take, count);
-        return new SearchQuery<T>(_index, _text, _query, _filters, _take, count, _exact, _highlight);
+        return new SearchQuery<T>(_index, _text, _query, _filters, _take, count, _exact, _highlight, _stages);
     }
 
     /// <summary>Makes <see cref="SearchResults{T}.TotalHits"/> and <see cref="Count()"/> exact. This visits every match, so it is slower on large result sets.</summary>
     /// <returns>The search.</returns>
-    public SearchQuery<T> CountExactly() => new(_index, _text, _query, _filters, _take, _skip, true, _highlight);
+    public SearchQuery<T> CountExactly() => new(_index, _text, _query, _filters, _take, _skip, true, _highlight, _stages);
 
     /// <summary>Sets the size of the snippets in <see cref="SearchHit{T}.Highlights"/>.</summary>
     /// <param name="options">Fragment length and count.</param>
@@ -489,7 +498,7 @@ public sealed class SearchQuery<T> : IEnumerable<SearchHit<T>>
     public SearchQuery<T> Highlight(HighlightOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        return new SearchQuery<T>(_index, _text, _query, _filters, _take, _skip, _exact, options);
+        return new SearchQuery<T>(_index, _text, _query, _filters, _take, _skip, _exact, options, _stages);
     }
 
     /// <summary>Compiles the search to query objects: the text query that scores, and the filters that only select.</summary>
@@ -505,6 +514,18 @@ public sealed class SearchQuery<T> : IEnumerable<SearchHit<T>>
     {
         Search.Query query = Build(out Search.Query textQuery);
         SearchIndex<T>.Generation? generation = _index.Acquire();
+        if (_stages is not null)
+        {
+            try
+            {
+                return ExecuteStages(query, textQuery, generation, cancellationToken);
+            }
+            finally
+            {
+                generation?.Release();
+            }
+        }
+
         if (generation is null)
         {
             return new SearchResults<T>([], 0, true);

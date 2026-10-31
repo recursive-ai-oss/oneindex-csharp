@@ -57,8 +57,12 @@ engines with matched analysis be compared for agreement.
    (the pinned `sqlite3` command-line tool) run the same queries. The FTS5 per-query time includes a small process start-up share
    because each row is one `sqlite3` invocation. Neither is a gate; the target is within 1.5x of them.
 
-OneIndex is driven through the same `ITextEngine` adapter (`OneIndexEngine`). It reports itself unavailable until index writing,
-scoring and query execution exist; no row is skipped silently, the driver exits with code 3 and says why.
+OneIndex is driven through the same `ITextEngine` adapter (`OneIndexEngine`). On the benchmark profile (body text with standard
+analysis, the `len` integral column and the `cat` keyword facet column) it answers the term, Facets and Stats rows; the others are
+reported as skipped ("unsupported by engine") until their query types exist. Facets: the top ten `cat` counts by frequency over all
+matches together with the top page, in one pass; Stats: count, minimum, maximum and sum of `len` over all matches. The Facets and Stats
+`matchChecksum` values agree with Lucene.NET's, which is how the two are checked to compute the same thing. A Terms row's checksum
+differs because OneIndex prunes with block-max WAND and reports a lower-bound total.
 
 ## The machine record
 
