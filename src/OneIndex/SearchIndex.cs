@@ -49,14 +49,16 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     private readonly IStorage _storage;
     private readonly IndexWriter _writer;
     private readonly SearchMapping<T> _mapping;
-    private readonly object _gate = new();
+    private readonly object _gate = new(); // writer calls and the changes waiting for the next commit
+    private readonly object _readGate = new(); // the current generation: held only for a pointer swap, never across I/O
     private readonly bool _storesSource;
-    // Until the index stores source itself, documents are kept in memory: those of the last commit, and the changes waiting for the next.
-    private readonly Dictionary<string, Document> _sourceFallback = new(StringComparer.Ordinal);
+    // Until the index stores source itself, documents are kept in memory: each generation holds the documents of its commit (a copy,
+    // so that a search in flight never sees a later version), and these are the changes waiting for the next commit.
+    private Dictionary<string, Document> _sourceCommitted = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Document> _sourcePending = new(StringComparer.Ordinal);
     private readonly HashSet<string> _deletesPending = new(StringComparer.Ordinal);
     private Generation? _current;
-    private bool _disposed;
+    private volatile bool _disposed;
 
     internal SearchIndex(IStorage storage, SearchMapping<T> mapping)
     {
@@ -69,7 +71,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         {
             if (_writer.Generation > 0)
             {
-                _current = new Generation(_writer.OpenSnapshot());
+                _current = new Generation(_writer.OpenSnapshot(), _sourceCommitted);
             }
         }
         catch
@@ -84,7 +86,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     {
         get
         {
-            lock (_gate)
+            lock (_readGate)
             {
                 ThrowIfDisposed();
                 return _current?.Snapshot.LiveDocCount ?? 0;
@@ -171,19 +173,33 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         {
             ThrowIfDisposed();
             long generation = _writer.Commit(cancellationToken);
-            foreach (string id in _deletesPending)
+            if (!_storesSource)
             {
-                _sourceFallback.Remove(id);
-            }
+                var next = new Dictionary<string, Document>(_sourceCommitted, StringComparer.Ordinal);
+                foreach (string id in _deletesPending)
+                {
+                    next.Remove(id);
+                }
 
-            foreach (KeyValuePair<string, Document> kv in _sourcePending)
-            {
-                _sourceFallback[kv.Key] = kv.Value;
+                foreach (KeyValuePair<string, Document> kv in _sourcePending)
+                {
+                    next[kv.Key] = kv.Value;
+                }
+
+                _sourceCommitted = next;
             }
 
             _deletesPending.Clear();
             _sourcePending.Clear();
-            Refresh();
+            var fresh = new Generation(_writer.OpenSnapshot(), _sourceCommitted);
+            Generation? old;
+            lock (_readGate)
+            {
+                old = _current;
+                _current = fresh;
+            }
+
+            old?.Release();
             return generation;
         }
     }
@@ -217,9 +233,15 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
                 return;
             }
 
-            _disposed = true;
-            _current?.Release();
-            _current = null;
+            Generation? old;
+            lock (_readGate)
+            {
+                _disposed = true;
+                old = _current;
+                _current = null;
+            }
+
+            old?.Release();
             _writer.Dispose();
         }
     }
@@ -234,7 +256,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
 
     internal Generation? Acquire()
     {
-        lock (_gate)
+        lock (_readGate)
         {
             ThrowIfDisposed();
             _current?.AddRef();
@@ -252,17 +274,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         }
 
         id = generation.IdOf(leaf.Ordinal, localDocId);
-        lock (_gate)
-        {
-            return _sourceFallback.GetValueOrDefault(id);
-        }
-    }
-
-    private void Refresh()
-    {
-        Generation next = new(_writer.OpenSnapshot());
-        _current?.Release();
-        _current = next;
+        return generation.Fallback.GetValueOrDefault(id);
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
@@ -273,9 +285,10 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         private readonly Dictionary<int, Dictionary<int, string>> _ids = [];
         private int _refs = 1;
 
-        public Generation(IndexSnapshot snapshot)
+        public Generation(IndexSnapshot snapshot, Dictionary<string, Document> fallback)
         {
             Snapshot = snapshot;
+            Fallback = fallback;
             try
             {
                 Context = SnapshotSearch.CreateContext(snapshot);
@@ -289,6 +302,8 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         }
 
         public IndexSnapshot Snapshot { get; }
+
+        public Dictionary<string, Document> Fallback { get; }
 
         public SearchContext Context { get; }
 
