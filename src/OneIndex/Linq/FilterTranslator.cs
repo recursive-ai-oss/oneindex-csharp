@@ -88,6 +88,11 @@ public sealed class FilterTranslator<T>
 
     private Search.Query Compare(BinaryExpression cmp, ParameterExpression p)
     {
+        if (StripConvert(cmp.Left) is MethodCallExpression pathCall && IsPathCall(pathCall))
+        {
+            return ComparePath(cmp, pathCall, p);
+        }
+
         ExpressionType op = cmp.NodeType;
         Expression left = StripConvert(cmp.Left);
         Expression right = StripConvert(cmp.Right);
@@ -127,6 +132,11 @@ public sealed class FilterTranslator<T>
 
     private Search.Query Call(MethodCallExpression call, ParameterExpression p)
     {
+        if (call.Object is not null && call.Method.DeclaringType == typeof(DynamicValue) && call.Method.Name == nameof(DynamicValue.Exists) && StripConvert(call.Object) is MethodCallExpression existsPath && IsPathCall(existsPath))
+        {
+            return new RangeQuery(PathName(existsPath, p), null, null);
+        }
+
         // collection.Contains(item): the member is the collection (any of its values equals item) or the item (it is one of a captured list).
         Expression? collection = null;
         Expression? item = null;
@@ -187,6 +197,68 @@ public sealed class FilterTranslator<T>
 
         throw new UnsupportedExpressionException(call, "Contains must be called on a member that is a collection, or with a member as its argument.");
     }
+
+    private static bool IsPathCall(MethodCallExpression call)
+        => call.Method.DeclaringType == typeof(JsonPathExtensions) && call.Method.Name == nameof(JsonPathExtensions.Path) && call.Arguments.Count == 2;
+
+    // The logical name of x.Property.Path("a.b"): the property name, a dot, then the path (the form the index and the other query surfaces use).
+    private string PathName(MethodCallExpression call, ParameterExpression p)
+    {
+        if (Member(StripConvert(call.Arguments[0]), p) is not { Type: FieldType.Json } member)
+        {
+            throw new UnsupportedExpressionException(call, "Path can only be taken from a property of the document marked [Dynamic].");
+        }
+
+        if (Mentions(call.Arguments[1], p))
+        {
+            throw new UnsupportedExpressionException(call, "the path may not use the document; give a constant or a captured variable.");
+        }
+
+        return Evaluate(call.Arguments[1]) is string path
+            ? member.Name + "." + path
+            : throw new UnsupportedExpressionException(call, "the path is null.");
+    }
+
+    private Search.Query ComparePath(BinaryExpression cmp, MethodCallExpression pathCall, ParameterExpression p)
+    {
+        string name = PathName(pathCall, p);
+        if (Mentions(cmp.Right, p))
+        {
+            throw new UnsupportedExpressionException(cmp, "the other side may not use the document; compare a path with a constant or a captured variable.");
+        }
+
+        object? value = Evaluate(cmp.Right) ?? throw new UnsupportedExpressionException(cmp, "comparing with null is not supported; absent values are simply not matched.");
+        FieldValue v = value switch
+        {
+            string s => FieldValue.FromText(s),
+            bool b => FieldValue.FromBool(b),
+            DateTimeOffset dto => FieldValue.FromDate(dto),
+            DateTime dt => FieldValue.FromDate(SearchMapping.ToDate(dt)),
+            IConvertible c => FieldValue.FromFloat64(c.ToDouble(System.Globalization.CultureInfo.InvariantCulture)),
+            _ => throw new UnsupportedExpressionException(cmp, "a path is compared with a string, number, bool or date."),
+        };
+        switch (cmp.NodeType)
+        {
+            case ExpressionType.Equal:
+                return EqualPath(name, v);
+            case ExpressionType.NotEqual:
+                return Negate(EqualPath(name, v));
+        }
+
+        if (v.Kind == FieldValueKind.Bool)
+        {
+            throw new UnsupportedExpressionException(cmp, "ordering comparisons are not supported on booleans.");
+        }
+
+        bool lower = cmp.NodeType is ExpressionType.GreaterThan or ExpressionType.GreaterThanOrEqual;
+        bool inclusive = cmp.NodeType is ExpressionType.GreaterThanOrEqual or ExpressionType.LessThanOrEqual;
+        return lower
+            ? new RangeQuery(name, v, null) { IncludeLower = inclusive }
+            : new RangeQuery(name, null, v) { IncludeUpper = inclusive };
+    }
+
+    private static Search.Query EqualPath(string name, FieldValue v)
+        => v.Kind == FieldValueKind.Text ? new TermQuery(name, v.AsText()) : double.IsNaN(v.Kind == FieldValueKind.Fractional ? v.AsFloat64() : 0) ? None() : new RangeQuery(name, v, v);
 
     private static void CheckFilterable(MappedMember member, Expression context)
     {

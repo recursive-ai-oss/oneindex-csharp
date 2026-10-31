@@ -21,7 +21,7 @@ public static class SearchIndex
     /// <param name="path">The directory. It is created if missing. Only one process may write to it at a time.</param>
     /// <returns>The index, which holds the directory's single writer until disposed.</returns>
     /// <exception cref="InvalidOperationException">The type has no generated mapping or no <see cref="SearchIdAttribute"/> member.</exception>
-    /// <exception cref="ArgumentException">The directory holds an index whose schema differs from the type's (schema changes are not supported yet).</exception>
+    /// <exception cref="OneIndex.Index.SchemaEvolutionException">The directory holds an index whose schema cannot be changed into the type's; the message names the field.</exception>
     /// <exception cref="CorruptIndexException">The newest commit or a file it lists is damaged.</exception>
     public static SearchIndex<T> Open<T>(string path)
         where T : class
@@ -206,6 +206,42 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
             old?.Release();
             return generation;
         }
+    }
+
+    /// <summary>
+    /// Where the rebuild after a change to the document type stands. When the type's schema differs from the one in the directory the new
+    /// schema takes effect at open and the segments that need it are rebuilt from stored source; each commit advances the rebuild by a few
+    /// segments, and <see cref="CompleteSchemaEvolution(CancellationToken)"/> finishes it. Until then the new capability applies to the
+    /// segments already rebuilt and to new documents (docs/schema-evolution.md).
+    /// </summary>
+    public SchemaEvolutionStatus SchemaEvolution => _writer.SchemaEvolution;
+
+    /// <summary>Rebuilds every segment that still awaits the schema change, committing as it goes (see <see cref="SchemaEvolution"/>). Returns at once when nothing is waiting.</summary>
+    /// <param name="cancellationToken">Cancels between segments; what was committed stays.</param>
+    /// <exception cref="IOException">A rebuild failed; the index is unchanged by it.</exception>
+    public void CompleteSchemaEvolution(CancellationToken cancellationToken = default)
+    {
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            if (!_writer.SchemaEvolution.InProgress)
+            {
+                return;
+            }
+
+            _writer.CompleteSchemaEvolution(cancellationToken);
+        }
+
+        Commit(cancellationToken);
+    }
+
+    /// <summary>Rebuilds segments awaiting a schema change (see <see cref="CompleteSchemaEvolution(CancellationToken)"/>).</summary>
+    /// <param name="cancellationToken">Cancels between segments.</param>
+    /// <returns>A completed task.</returns>
+    public ValueTask CompleteSchemaEvolutionAsync(CancellationToken cancellationToken = default)
+    {
+        CompleteSchemaEvolution(cancellationToken);
+        return ValueTask.CompletedTask;
     }
 
     /// <summary>Commits (see <see cref="Commit(CancellationToken)"/>).</summary>

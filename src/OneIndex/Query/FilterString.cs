@@ -145,7 +145,7 @@ public static class FilterString
 
     private static void PrintRange(RangeQuery r, Schema schema, StringBuilder sb)
     {
-        if (!schema.TryGetField(r.Field, out FieldDefinition? def))
+        if (!schema.TryGetField(r.Field, out FieldDefinition? def) && !schema.TryGetPath(r.Field, out def))
         {
             throw new ArgumentException($"The schema has no field '{r.Field}'.", nameof(r));
         }
@@ -533,7 +533,7 @@ public static class FilterString
         private FieldDefinition Resolve(Tok fieldTok)
         {
             string name = fieldTok.Text;
-            if (!_schema.TryGetField(name, out FieldDefinition? def))
+            if (!_schema.TryGetField(name, out FieldDefinition? def) && !_schema.TryGetPath(name, out def))
             {
                 string? near = QuerySyntax.Nearest(name, _schema.Fields.Where(IsFilterable).Select(static f => f.Name));
                 string hint = near is null ? string.Empty : $" Did you mean '{near}'?";
@@ -555,7 +555,7 @@ public static class FilterString
         }
 
         private static bool IsFilterable(FieldDefinition f)
-            => f.Indexed && f.Type is FieldType.Keyword or FieldType.Integral or FieldType.Fractional or FieldType.Date or FieldType.Bool;
+            => f.Indexed && f.Type is FieldType.Keyword or FieldType.Integral or FieldType.Fractional or FieldType.Date or FieldType.Bool or FieldType.Json;
 
         private Query EqualTo(FieldDefinition def, Tok value)
         {
@@ -565,6 +565,11 @@ public static class FilterString
             }
 
             FieldValue v = Bind(def, value, BoundRole.Equal, out _, out bool nothing);
+            if (v.Kind == FieldValueKind.Text)
+            {
+                return new TermQuery(def.Name, v.AsText()); // a string at a JSON path
+            }
+
             return nothing ? None() : new RangeQuery(def.Name, v, v);
         }
 

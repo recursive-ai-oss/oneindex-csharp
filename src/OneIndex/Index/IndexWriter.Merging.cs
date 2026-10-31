@@ -9,7 +9,8 @@ public sealed partial class IndexWriter
         var candidates = new List<MergeCandidate>();
         foreach (WorkSegment s in _segments)
         {
-            if (!_busy.Contains(s.Info.Name))
+            // A segment still waiting for its rebuild is converted, not merged: merging it with rebuilt ones would mix two schemas.
+            if (!_busy.Contains(s.Info.Name) && !IsStale(s))
             {
                 candidates.Add(new MergeCandidate(s.Info.Name, s.Info.DocCount - s.DeletedCount, s.DeletedCount));
             }
@@ -106,7 +107,7 @@ public sealed partial class IndexWriter
                     IdsFormat.Write(sink, entries, cancellationToken);
                 }
 
-                result = new SegmentInfo(name, total, 0, 0, sink.Files);
+                result = new SegmentInfo(name, total, 0, 0, sink.Files, _schemaEpoch);
             }
 
             lock (_gate)

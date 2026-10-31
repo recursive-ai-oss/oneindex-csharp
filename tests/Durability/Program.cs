@@ -32,8 +32,23 @@ static int Run(string[] args)
             return result.Failures == 0 ? 0 : 1;
         }
 
+        case "evolve-sweep":
+        {
+            int[] workloads = [.. Enumerable.Range(Number("first-seed", 1), Number("workloads", 2))];
+            int[] crashSeeds = [.. Enumerable.Range(1, Number("crash-seeds", 2))];
+            var clock = Stopwatch.StartNew();
+            FaultSweep.Result result = EvolutionSweep.Run(workloads, crashSeeds, Number("ops", 60));
+            Console.WriteLine($"evolve-sweep: {result.Schedules} schedules (workload seeds {string.Join(",", workloads)}, crash seeds {string.Join(",", crashSeeds)}, up to {result.OperationsPerRun} storage operations per run), {result.Failures} failures, {clock.Elapsed.TotalSeconds:F1} s");
+            foreach (string m in result.Messages.Take(20))
+            {
+                Console.WriteLine("  " + m);
+            }
+
+            return result.Failures == 0 ? 0 : 1;
+        }
+
         case "child":
-            return KillHarness.RunChild(Option("dir", "."), Number("seed", 1), Number("ops", 200_000), Option("expect", "") is { Length: > 0 } e ? e : null, Number("pace-ms", 0));
+            return KillHarness.RunChild(Option("dir", "."), Number("seed", 1), Number("ops", 200_000), Option("expect", "") is { Length: > 0 } e ? e : null, Number("pace-ms", 0), Number("evolve", 0));
 
         case "reader":
             return ProcessHarness.RunReader(Option("dir", "."), Option("expect", "."), Number("seed", 1), Number("seconds", 0));
@@ -57,6 +72,7 @@ static int Run(string[] args)
             int seed = Number("seed", 1);
             int maxDelay = Number("max-delay-ms", 600);
             string failures = Option("failures", Path.Combine(root, "failures"));
+            bool evolve = Option("evolve", "false") == "true";
             string[] childCommand = [Environment.ProcessPath!, .. Environment.GetCommandLineArgs().Take(1).Where(a => a.EndsWith(".dll", StringComparison.Ordinal))];
             var clock = Stopwatch.StartNew();
             var tasks = new List<Task<KillHarness.Summary>>();
@@ -64,7 +80,7 @@ static int Run(string[] args)
             {
                 int laneIndex = lane;
                 int perLane = kills / lanes + (laneIndex < kills % lanes ? 1 : 0);
-                tasks.Add(Task.Run(() => KillHarness.RunLane(Path.Combine(root, "lane" + laneIndex), failures, perLane, seed + (laneIndex * 7919), maxDelay, childCommand)));
+                tasks.Add(Task.Run(() => KillHarness.RunLane(Path.Combine(root, "lane" + laneIndex), failures, perLane, seed + (laneIndex * 7919), maxDelay, childCommand, evolve)));
             }
 
             KillHarness.Summary[] all = Task.WhenAll(tasks).GetAwaiter().GetResult();

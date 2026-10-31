@@ -63,6 +63,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
         Bool,
         DateTime,
         DateTimeOffset,
+        Json,
     }
 
     private sealed class Result
@@ -84,6 +85,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
         public bool Filterable;
         public bool Sortable;
         public bool Facet;
+        public bool Dynamic;
         public double Boost = 1;
         public string? Language;
         public string? Analyzer;
@@ -239,8 +241,8 @@ public sealed class MappingGenerator : IIncrementalGenerator
                     m.Facet = true;
                     break;
                 case "DynamicAttribute":
-                    diagnostics.Add(Diagnostic.Create(NotYetSupported, location, property.Name, "Dynamic"));
-                    return null;
+                    m.Dynamic = true;
+                    break;
                 case "VectorAttribute":
                     diagnostics.Add(Diagnostic.Create(NotYetSupported, location, property.Name, "Vector"));
                     return null;
@@ -273,6 +275,16 @@ public sealed class MappingGenerator : IIncrementalGenerator
             }
 
             return null;
+        }
+
+        if (m.Dynamic && m.Shape != Shape.Json)
+        {
+            diagnostics.Add(Diagnostic.Create(UnsupportedType, location, property.Name, property.Type.ToDisplayString(), "[Dynamic] (use System.Text.Json.JsonElement)"));
+        }
+
+        if (m.Dynamic && (m.FullText || m.Keyword || m.IsId || m.Filterable || m.Sortable || m.Facet))
+        {
+            diagnostics.Add(Diagnostic.Create(Conflict, location, property.Name, "a [Dynamic] member is indexed by path and cannot carry other search attributes"));
         }
 
         if (m.FullText && m.Keyword)
@@ -355,6 +367,12 @@ public sealed class MappingGenerator : IIncrementalGenerator
         }
 
         string display = type.ToDisplayString();
+        if (display == "System.Text.Json.JsonElement")
+        {
+            m.Shape = Shape.Json;
+            return m.Dynamic; // a JSON value is only mapped when marked [Dynamic]
+        }
+
         if (display == "System.DateTimeOffset")
         {
             m.Shape = Shape.DateTimeOffset;
@@ -503,10 +521,11 @@ public sealed class MappingGenerator : IIncrementalGenerator
             Shape.Integral => "Integral",
             Shape.Fractional => "Fractional",
             Shape.Bool => "Bool",
+            Shape.Json => "Json",
             _ => "Date",
         };
         // Text fields are searched when [FullText]; everything else is searchable by value only when marked for filtering.
-        bool indexed = m.FullText || m.IsId || m.Keyword || m.Filterable || m.Facet;
+        bool indexed = m.FullText || m.IsId || m.Keyword || m.Filterable || m.Facet || m.Dynamic;
         bool column = m.Filterable || m.Sortable || m.Facet || m.IsId;
         string boost = m.Boost.ToString("R", CultureInfo.InvariantCulture) + "f";
         string? analyzerName = m.FullText ? (m.Analyzer ?? m.Language) : null;
@@ -531,6 +550,11 @@ public sealed class MappingGenerator : IIncrementalGenerator
             case Shape.TextList:
             case Shape.TextInterface:
                 sb.AppendLine("            if (" + p + " is { } c_" + m.Name + ") { foreach (string? e in c_" + m.Name + ") { if (e is not null) { document.Add(" + n + ", e); } } }");
+                break;
+            case Shape.Json:
+                sb.AppendLine(m.Nullable
+                    ? "            if (" + p + " is { } j_" + m.Name + " && j_" + m.Name + ".ValueKind != global::System.Text.Json.JsonValueKind.Undefined) { document.Add(" + n + ", global::OneIndex.Index.FieldValue.FromJson(j_" + m.Name + ")); }"
+                    : "            if (" + p + ".ValueKind != global::System.Text.Json.JsonValueKind.Undefined) { document.Add(" + n + ", global::OneIndex.Index.FieldValue.FromJson(" + p + ")); }");
                 break;
             default:
                 string v = m.Nullable ? "n_" + m.Name : p;
@@ -557,6 +581,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
             Shape.Integral => "result." + name + " = unchecked((" + IntegralType(m) + ")field.Value.AsInt64());",
             Shape.Fractional => "result." + name + " = (" + FractionalType(m) + ")field.Value.AsFloat64();",
             Shape.Bool => "result." + name + " = field.Value.AsBool();",
+            Shape.Json => "result." + name + " = field.Value.AsJson();",
             Shape.DateTime => "result." + name + " = global::OneIndex.SearchMapping.FromDate(field.Value);",
             _ => "result." + name + " = global::System.DateTimeOffset.FromUnixTimeMilliseconds(field.Value.AsInt64());",
         };

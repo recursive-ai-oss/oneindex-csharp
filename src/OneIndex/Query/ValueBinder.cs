@@ -38,6 +38,10 @@ internal static class ValueBinder
         "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFK",
     ];
 
+    /// <summary>Reads a date in one of the formats of the filter grammar (UTC when no zone is given).</summary>
+    internal static bool TryParseDate(string text, out DateTimeOffset when)
+        => DateTimeOffset.TryParseExact(text, DateFormats, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out when);
+
     /// <summary>The kinds of value a comparison can use, for messages.</summary>
     internal static string Describe(FieldType type) => type switch
     {
@@ -137,6 +141,28 @@ internal static class ValueBinder
                 return field.Type == FieldType.Integral
                     ? BindIntegral(field, text, role, out value, out roundedInclusive, out nothing)
                     : BindFractional(field, text, out value);
+
+            case FieldType.Json:
+                // A path inside a JSON field: the literal says which kind of leaf is meant (docs/dynamic.md).
+                if (kind == LiteralKind.Bool || (kind == LiteralKind.Bare && (text.Equals("true", StringComparison.OrdinalIgnoreCase) || text.Equals("false", StringComparison.OrdinalIgnoreCase))))
+                {
+                    value = FieldValue.FromBool(text.Equals("true", StringComparison.OrdinalIgnoreCase));
+                    return null;
+                }
+
+                if (kind == LiteralKind.Number || (kind == LiteralKind.Bare && IsNumber(text)))
+                {
+                    return IsNumber(text) ? BindFractional(field, text, out value) : wrong + ".";
+                }
+
+                if (role != BoundRole.Equal && TryParseDate(text, out DateTimeOffset day))
+                {
+                    value = FieldValue.FromDate(day);
+                    return null;
+                }
+
+                value = FieldValue.FromText(text);
+                return null;
 
             default:
                 return $"Field '{field.Name}' is {field.Type} and cannot be compared with a value.";

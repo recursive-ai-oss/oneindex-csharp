@@ -76,7 +76,8 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
     private readonly IStorage _storage;
     private readonly IndexWriterOptions _options;
     private readonly IndexLimits _limits;
-    private readonly Schema _schema;
+    private volatile Schema _schema;
+    private long _schemaEpoch;
     private readonly IReadOnlyList<ISegmentCodec> _codecs;
     private readonly IMergeScheduler _scheduler;
     private readonly FileReferences _refs;
@@ -99,8 +100,9 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
     private bool _disposed;
     private long _changeStamp;
 
-    private IndexWriter(IStorage storage, Schema schema, IndexWriterOptions options, IStorageLock? writerLock)
+    private IndexWriter(IStorage storage, Schema schema, long schemaEpoch, IndexWriterOptions options, IStorageLock? writerLock)
     {
+        _schemaEpoch = schemaEpoch;
         _writerLock = writerLock;
         _storage = storage;
         _schema = schema;
@@ -111,8 +113,20 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
         _refs = new FileReferences(storage, storage.SupportsLocks ? () => IndexLocks.LivePinnedFiles(storage, options.Limits, default) : null);
     }
 
-    /// <summary>The schema documents are validated against.</summary>
+    /// <summary>The schema documents are validated against. It grows as the paths of indexed JSON fields appear (docs/dynamic.md).</summary>
     public Schema Schema => _schema;
+
+    /// <summary>Where the background rebuild after a schema change stands (docs/schema-evolution.md).</summary>
+    public SchemaEvolutionStatus SchemaEvolution
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return new SchemaEvolutionStatus(_schemaEpoch, _segments.Count, _segments.Count(IsStale));
+            }
+        }
+    }
 
     /// <summary>The generation of the newest commit, or 0 before the first.</summary>
     public long Generation
@@ -182,13 +196,14 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
 
     /// <summary>Opens the writer, recovering from any interrupted work.</summary>
     /// <param name="storage">A writable storage holding a new or existing index.</param>
-    /// <param name="schema">The schema. Required for a new index; for an existing one it must equal the committed schema (or be <see langword="null"/> to use it).</param>
+    /// <param name="schema">The schema. Required for a new index. For an existing one, <see langword="null"/> uses the committed schema and a different schema evolves the index: it takes effect at once and segments that need it are rebuilt in the background (docs/schema-evolution.md).</param>
     /// <param name="options">Settings; defaults apply when <see langword="null"/>.</param>
     /// <param name="cancellationToken">Cancels the open.</param>
     /// <returns>The writer.</returns>
     /// <exception cref="IndexLockedException">Another writer, in this or another process, has the index open. The lock is released if that process dies.</exception>
     /// <exception cref="CorruptIndexException">The newest commit or a file it lists is damaged. The writer never falls back to an older commit.</exception>
-    /// <exception cref="ArgumentException">The codecs are inconsistent, or there is no schema, or it differs from the committed one.</exception>
+    /// <exception cref="ArgumentException">The codecs are inconsistent, or a new index has no schema.</exception>
+    /// <exception cref="SchemaEvolutionException">The schema cannot replace the committed one; the message names the field.</exception>
     /// <remarks>
     /// Recovery deletes leftover temporary commit files, commit files older than the newest, and segment files no commit lists,
     /// except files that a live reader in another process still pins (they go when that reader lets go). Other files in the storage
@@ -220,25 +235,40 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
     {
         CommitInfo? commit = CommitProtocol.OpenLatest(storage, options.Limits, cancellationToken);
         Schema effective;
+        long epoch = commit?.SchemaEpoch ?? 0;
+        bool adopt = false;
         if (commit is not null && !commit.SchemaBytes.IsEmpty)
         {
             Schema committed = Schema.Deserialize(commit.SchemaBytes.Span, options.Limits);
+            effective = committed;
             if (schema is not null && !schema.Equals(committed))
             {
-                throw new ArgumentException("The schema differs from the one recorded in the index; schema changes are not supported by the writer.", nameof(schema));
-            }
+                SchemaDiff.Plan plan = SchemaDiff.Compare(committed, schema.WithoutDynamicFields(), options.Limits);
+                effective = plan.Effective;
+                if (plan.Rebuild && commit.Segments.Count > 0)
+                {
+                    epoch++;
+                }
 
-            effective = committed;
+                adopt = !effective.Equals(committed) || epoch != commit.SchemaEpoch;
+            }
         }
         else
         {
             effective = schema ?? throw new ArgumentException("A new index needs a schema.", nameof(schema));
         }
 
-        var writer = new IndexWriter(storage, effective, options, writerLock);
+        var writer = new IndexWriter(storage, effective, epoch, options, writerLock);
         try
         {
             writer.Recover(commit, cancellationToken);
+            if (adopt)
+            {
+                // Make the new schema (and the epoch that marks the old segments for rebuild) durable before anything else happens.
+                writer._metaDirty = true;
+                writer.Commit(cancellationToken);
+            }
+
             return writer;
         }
         catch
@@ -468,7 +498,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
             InstallMergesLocked();
             FlushLocked(cancellationToken);
             DropEmptySegmentsLocked();
-            bool dirty = _metaDirty || _current is null || _segments.Any(s => s.Dirty || s.IsNew) || SegmentSetChanged();
+            bool dirty = _metaDirty || _current is null || _current.SchemaEpoch != _schemaEpoch || _segments.Any(s => s.Dirty || s.IsNew) || SegmentSetChanged() || !_schema.Serialize().AsSpan().SequenceEqual(_current.SchemaBytes.Span);
             if (!dirty)
             {
                 return _current!.Generation;
@@ -484,7 +514,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
                     infos.Add(s.Dirty ? WriteDeletes(s, written, cancellationToken) : s.Info);
                 }
 
-                next = new CommitInfo((_current?.Generation ?? 0) + 1, _nextSegmentId, infos, _schema.Serialize(), _appliedPosition, _userData);
+                next = new CommitInfo((_current?.Generation ?? 0) + 1, _nextSegmentId, infos, _schema.Serialize(), _appliedPosition, _userData, _schemaEpoch);
             }
             catch
             {
@@ -513,6 +543,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
             }
 
             AfterCommit(next);
+            MaybeBackfillLocked();
             if (_options.AutoMerge)
             {
                 MaybeMergeLocked();
@@ -619,7 +650,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
                 ThrowIfUnusable();
                 InstallMergesLocked();
                 DropEmptySegmentsLocked();
-                var idle = _segments.Where(s => !_busy.Contains(s.Info.Name)).OrderBy(s => s.Info.DocCount - s.DeletedCount).ThenBy(s => s.Info.Name, StringComparer.Ordinal).ToList();
+                var idle = _segments.Where(s => !_busy.Contains(s.Info.Name) && !IsStale(s)).OrderBy(s => s.Info.DocCount - s.DeletedCount).ThenBy(s => s.Info.Name, StringComparer.Ordinal).ToList();
                 bool rewrite = idle.Count == 1 && maxSegments == 1 && idle[0].DeletedCount > 0 && _segments.Count == 1;
                 if (_segments.Count <= maxSegments && !rewrite)
                 {
@@ -867,7 +898,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
 
         written.AddRange(sink.CreatedNames);
         var files = new List<SegmentFile>(seg.Info.Files.Where(f => f.Part != SegmentParts.Deletes)) { sink.Files[0] };
-        return new SegmentInfo(segmentName, seg.Info.DocCount, seg.DeletedCount, generation, files);
+        return new SegmentInfo(segmentName, seg.Info.DocCount, seg.DeletedCount, generation, files, seg.Info.SchemaEpoch);
     }
 
     private void DropEmptySegmentsLocked()
@@ -923,7 +954,9 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
         var sink = new SegmentFileSink(_storage, name);
         try
         {
-            var context = new SegmentFlushContext(_schema, name, docs, _limits);
+            IReadOnlyList<Document> expanded = DynamicFields.Expand(_schema, docs, _limits, out Schema flushSchema);
+            _schema = flushSchema;
+            var context = new SegmentFlushContext(flushSchema, name, expanded, _limits);
             foreach (ISegmentCodec codec in _codecs)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -951,7 +984,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
             throw;
         }
 
-        var info = new SegmentInfo(name, docs.Count, 0, 0, sink.Files);
+        var info = new SegmentInfo(name, docs.Count, 0, 0, sink.Files, _schemaEpoch);
         AddNewSegment(info, _segments.Count);
         _buffer.Clear();
         _bufferIds.Clear();

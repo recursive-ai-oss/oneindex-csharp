@@ -19,7 +19,8 @@ public sealed class SegmentInfo
     /// <param name="deletedCount">Documents currently deleted; at most <paramref name="docCount"/>.</param>
     /// <param name="deleteGeneration">The generation of the delete bitmap file, 0 when the segment has none.</param>
     /// <param name="files">The segment's files, one per part (the delete bitmap included when the generation is not 0).</param>
-    public SegmentInfo(string name, int docCount, int deletedCount, long deleteGeneration, IReadOnlyList<SegmentFile> files)
+    /// <param name="schemaEpoch">The schema epoch the segment was written under (see <see cref="CommitInfo.SchemaEpoch"/>); 0 for an index whose schema never needed a rebuild.</param>
+    public SegmentInfo(string name, int docCount, int deletedCount, long deleteGeneration, IReadOnlyList<SegmentFile> files, long schemaEpoch = 0)
     {
         StorageNames.Validate(name);
         ArgumentOutOfRangeException.ThrowIfNegative(docCount);
@@ -27,6 +28,8 @@ public sealed class SegmentInfo
         ArgumentOutOfRangeException.ThrowIfGreaterThan(deletedCount, docCount);
         ArgumentOutOfRangeException.ThrowIfNegative(deleteGeneration);
         ArgumentNullException.ThrowIfNull(files);
+        ArgumentOutOfRangeException.ThrowIfNegative(schemaEpoch);
+        SchemaEpoch = schemaEpoch;
         Name = name;
         DocCount = docCount;
         DeletedCount = deletedCount;
@@ -48,6 +51,9 @@ public sealed class SegmentInfo
 
     /// <summary>The generation of the delete bitmap file; 0 when none.</summary>
     public long DeleteGeneration { get; }
+
+    /// <summary>The schema epoch the segment was written under. A segment older than the commit's epoch still needs its rebuild (see docs/schema-evolution.md).</summary>
+    public long SchemaEpoch { get; }
 
     /// <summary>The files of the segment in a fixed order.</summary>
     public IReadOnlyList<SegmentFile> Files { get; }
@@ -82,14 +88,16 @@ public sealed class CommitInfo
     /// <param name="schema">The serialized schema (see <see cref="Schema.Serialize"/>); empty when none.</param>
     /// <param name="appliedPosition">An opaque value the application stores with the commit, such as the position reached in an external change log; empty when none.</param>
     /// <param name="userData">Application strings stored with the commit; written in key order.</param>
+    /// <param name="schemaEpoch">The schema epoch: 0 until a schema change needs existing segments rebuilt, then raised by one for each such change.</param>
     public CommitInfo(
         long generation,
         ulong nextSegmentId,
         IReadOnlyList<SegmentInfo> segments,
         ReadOnlyMemory<byte> schema = default,
         ReadOnlyMemory<byte> appliedPosition = default,
-        IReadOnlyDictionary<string, string>? userData = null)
-        : this(generation, nextSegmentId, segments, schema, appliedPosition, userData, minimumGeneration: 1)
+        IReadOnlyDictionary<string, string>? userData = null,
+        long schemaEpoch = 0)
+        : this(generation, nextSegmentId, segments, schema, appliedPosition, userData, schemaEpoch, minimumGeneration: 1)
     {
     }
 
@@ -100,8 +108,11 @@ public sealed class CommitInfo
         ReadOnlyMemory<byte> schema,
         ReadOnlyMemory<byte> appliedPosition,
         IReadOnlyDictionary<string, string>? userData,
+        long schemaEpoch,
         long minimumGeneration)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(schemaEpoch);
+        SchemaEpoch = schemaEpoch;
         ArgumentOutOfRangeException.ThrowIfLessThan(generation, minimumGeneration);
         ArgumentNullException.ThrowIfNull(segments);
         Generation = generation;
@@ -116,6 +127,9 @@ public sealed class CommitInfo
 
     /// <summary>The commit's number.</summary>
     public long Generation { get; }
+
+    /// <summary>The schema epoch. Segments written under an older epoch are rebuilt in the background (docs/schema-evolution.md).</summary>
+    public long SchemaEpoch { get; }
 
     /// <summary>The number the writer will use for the next segment name.</summary>
     public ulong NextSegmentId { get; }
@@ -133,8 +147,8 @@ public sealed class CommitInfo
     /// The description of a near-real-time view: the segments as the writer holds them, extending the commit of the given
     /// generation (0 before the first commit). Never written to storage.
     /// </summary>
-    internal static CommitInfo NearRealTimeView(long extendedGeneration, ulong nextSegmentId, IReadOnlyList<SegmentInfo> segments, ReadOnlyMemory<byte> schema, ReadOnlyMemory<byte> appliedPosition, IReadOnlyDictionary<string, string> userData)
-        => new(extendedGeneration, nextSegmentId, segments, schema, appliedPosition, userData, minimumGeneration: 0);
+    internal static CommitInfo NearRealTimeView(long extendedGeneration, ulong nextSegmentId, IReadOnlyList<SegmentInfo> segments, ReadOnlyMemory<byte> schema, ReadOnlyMemory<byte> appliedPosition, IReadOnlyDictionary<string, string> userData, long schemaEpoch = 0)
+        => new(extendedGeneration, nextSegmentId, segments, schema, appliedPosition, userData, schemaEpoch, minimumGeneration: 0);
 
     /// <summary>The application strings stored with the commit, in key order.</summary>
     public IReadOnlyDictionary<string, string> UserData { get; }

@@ -10,8 +10,11 @@ namespace OneIndex.Index;
 /// </summary>
 public static class CommitFileFormat
 {
-    /// <summary>The newest commit format version this build reads and writes.</summary>
-    public const int FormatVersion = 1;
+    /// <summary>
+    /// The newest commit format version this build reads. A commit is written as version 1 unless it carries schema evolution
+    /// state (a schema epoch above 0), in which case it is written as version 2; both are read.
+    /// </summary>
+    public const int FormatVersion = 2;
 
     /// <summary>The file-type magic of a commit file ("OIXC").</summary>
     public static readonly uint Magic = IndexFile.Magic("OIXC");
@@ -31,8 +34,9 @@ public static class CommitFileFormat
         Check(commit.UserData.Count <= limits.MaxUserDataEntries, "user data entry count");
 
         var sink = new ByteSink();
+        bool evolved = commit.SchemaEpoch != 0 || commit.Segments.Any(static s => s.SchemaEpoch != 0);
         sink.WriteUInt32(Magic);
-        sink.WriteUInt32(FormatVersion);
+        sink.WriteUInt32(evolved ? 2u : 1u);
         sink.WriteUInt64((ulong)commit.Generation);
         sink.WriteUInt64(commit.NextSegmentId);
         sink.WriteBytes(commit.AppliedPosition.Span);
@@ -42,6 +46,11 @@ public static class CommitFileFormat
         {
             sink.WriteString(pair.Key);
             sink.WriteString(pair.Value);
+        }
+
+        if (evolved)
+        {
+            sink.WriteVarUInt((ulong)commit.SchemaEpoch);
         }
 
         sink.WriteVarUInt((ulong)commit.Segments.Count);
@@ -67,6 +76,11 @@ public static class CommitFileFormat
                 sink.WriteVarUInt((ulong)file.Codec.Version);
                 sink.WriteVarUInt((ulong)file.Length);
                 sink.WriteUInt32(file.Checksum);
+            }
+
+            if (evolved)
+            {
+                sink.WriteVarUInt((ulong)segment.SchemaEpoch);
             }
         }
 
@@ -141,7 +155,7 @@ public static class CommitFileFormat
 
     private static CommitInfo ParseBody(ReadOnlySpan<byte> body, int version, string fileName, IndexLimits limits)
     {
-        _ = version; // Only version 1 exists; later versions branch here and keep reading the older layouts.
+        bool evolved = version >= 2;
         var src = new ByteSource(body);
         ulong generation = src.ReadUInt64();
         if (generation is 0 or > long.MaxValue)
@@ -168,7 +182,18 @@ public static class CommitFileFormat
             previousKey = key;
         }
 
+        ulong commitEpoch = 0;
+        if (evolved)
+        {
+            commitEpoch = src.ReadVarUInt();
+            if (commitEpoch > long.MaxValue)
+            {
+                throw new MalformedInputException("schema epoch is out of range");
+            }
+        }
+
         int segmentCount = src.ReadCount(limits.MaxSegments, "segment count");
+        bool anyEpoch = commitEpoch != 0;
         var segments = new List<SegmentInfo>(Math.Min(segmentCount, 1024));
         var seenSegments = new HashSet<string>(StringComparer.Ordinal);
         var seenFiles = new HashSet<string>(StringComparer.Ordinal);
@@ -219,7 +244,19 @@ public static class CommitFileFormat
                 files.Add(new SegmentFile(part, fileNameInCommit, codec, (long)length, checksum));
             }
 
-            segments.Add(new SegmentInfo(name, docCount, deleted, (long)deleteGeneration, files));
+            ulong segmentEpoch = 0;
+            if (evolved)
+            {
+                segmentEpoch = src.ReadVarUInt();
+                if (segmentEpoch > commitEpoch)
+                {
+                    throw new MalformedInputException($"segment '{name}' is newer than the commit's schema epoch");
+                }
+
+                anyEpoch |= segmentEpoch != 0;
+            }
+
+            segments.Add(new SegmentInfo(name, docCount, deleted, (long)deleteGeneration, files, (long)segmentEpoch));
         }
 
         if (src.Remaining != 0)
@@ -227,7 +264,13 @@ public static class CommitFileFormat
             throw new MalformedInputException($"{src.Remaining} unexpected bytes follow the last segment");
         }
 
-        return new CommitInfo((long)generation, nextSegmentId, segments, schema, applied, userData);
+        if (evolved && !anyEpoch)
+        {
+            // Version 2 exists to carry epochs; without any, the canonical form is version 1.
+            throw new MalformedInputException("a version 2 commit carries no schema epoch");
+        }
+
+        return new CommitInfo((long)generation, nextSegmentId, segments, schema, applied, userData, (long)commitEpoch);
 
         static void RequireName(string name, string what)
         {

@@ -22,9 +22,12 @@ public class Invoice {
 | `[Filterable]` | numbers, dates, `bool`, strings | Queries can filter on it. On a string it implies `[Keyword]`. |
 | `[Sortable]` | single-valued members | Kept column-wise for sorting (sorting itself arrives later). |
 | `[Facet]` | keyword and value members | Kept for counts of values (facets arrive later); implies filterable. |
-| `[Dynamic]`, `[Vector]` | | Declared, not supported yet: a compile-time error. |
+| `[Dynamic]` | a `System.Text.Json.JsonElement` (or `JsonElement?`) | A JSON value whose leaf paths are indexed on the fly and can be filtered by path; the whole value is stored and comes back unchanged. See dynamic.md. |
+| `[Vector]` | | Declared, not supported yet: a compile-time error. |
 
 Supported member types: `string`; `string[]`, `List<string>`, `IEnumerable<string>`, `IReadOnlyList<string>`, `IReadOnlyCollection<string>`, `IList<string>`, `ICollection<string>`; `sbyte`, `byte`, `short`, `ushort`, `int`, `uint`, `long`; `float`, `double`; `bool`; `DateTime`, `DateTimeOffset`; and the nullable forms of the value types (a null is simply absent).
+
+A `JsonElement` property is only mapped when it is marked `[Dynamic]`; `[Dynamic]` on any other type is OI0001.
 
 Public read/write properties of supported types **without** attributes are stored and returned with the document but cannot be searched or filtered. Read-only properties and properties of other types are not part of the document and come back with their constructor defaults.
 
@@ -35,8 +38,8 @@ The type must be a non-generic, non-abstract class, reachable from its assembly 
 | Id | Meaning |
 |---|---|
 | OI0001 | An attributed member has a type the attribute cannot map. |
-| OI0002 | `[Dynamic]` or `[Vector]`: declared but not supported yet. |
-| OI0003 | Conflicting attributes (`[FullText]` with `[Keyword]`, or with a filtering attribute; `[Sortable]` on a collection). |
+| OI0002 | `[Vector]`: declared but not supported yet. |
+| OI0003 | Conflicting attributes (`[FullText]` with `[Keyword]`, or with a filtering attribute; `[Sortable]` on a collection; `[Dynamic]` with any other search attribute). |
 | OI0004 | A bad identifier: several `[SearchId]`, or one that is not a plain string. |
 | OI0005 | The type cannot be mapped (generic, abstract, private, no usable constructor). |
 | OI0006 | A member cannot be mapped (a field, no getter or setter, `init`, `required`). |

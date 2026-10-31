@@ -135,6 +135,13 @@ public static class SearchTool
         return list;
     }
 
+    // Fields inside a JSON property are reached by path in a filter string; the node types with field enums cannot name them.
+    private static string JsonHint(Schema schema)
+    {
+        string? json = schema.Fields.FirstOrDefault(static f => f.Type == FieldType.Json && f.Indexed && f.DynamicParent is null)?.Name;
+        return json is null ? string.Empty : " Values inside the JSON property " + json + " are reached by path, e.g. " + json + ".customer.age >= 18 or " + json + ".tags = \"red\".";
+    }
+
     private static void WriteSchema(Utf8JsonWriter w, Schema schema)
     {
         List<string> keyword = Names(schema, FieldType.Keyword);
@@ -160,7 +167,7 @@ public static class SearchTool
         Def("matchAll", () => Node(w, "matchAll", null));
         Def("text", () => Node(w, "text", () => Str(w, "text", "Free text, searched in every full-text field. Words must all match; \"quoted phrases\"; -excluded words; OR."), required: ["text"]));
         Def("strict", () => Node(w, "strict", () => Str(w, "text", "A query in the strict syntax: field:value, AND, OR, NOT, \"phrase\"~2, prefix*, fuzzy~1, /regex/, field:[a TO b], ^boost."), required: ["text"]));
-        Def("filter", () => Node(w, "filter", () => Str(w, "filter", "A filter string such as: Paid = false AND Total >= 100. Operators: = != > >= < <= TO IN EXISTS IS NULL IS EMPTY AND OR NOT, parentheses."), required: ["filter"]));
+        Def("filter", () => Node(w, "filter", () => Str(w, "filter", "A filter string such as: Paid = false AND Total >= 100. Operators: = != > >= < <= TO IN EXISTS IS NULL IS EMPTY AND OR NOT, parentheses." + JsonHint(schema)), required: ["filter"]));
 
         if (textOrKeyword.Count > 0)
         {

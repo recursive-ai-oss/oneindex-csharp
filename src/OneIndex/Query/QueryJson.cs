@@ -767,7 +767,7 @@ internal sealed class QueryJsonReader
 
     private FieldDefinition CheckField(string name, string fp, FieldKinds kinds)
     {
-        if (!_schema.TryGetField(name, out FieldDefinition? def))
+        if (!_schema.TryGetField(name, out FieldDefinition? def) && !_schema.TryGetPath(name, out def))
         {
             string? near = QuerySyntax.Nearest(name, _schema.Fields.Select(static f => f.Name));
             string hint = near is null ? string.Empty : $" Did you mean \"{near}\"?";
@@ -781,9 +781,9 @@ internal sealed class QueryJsonReader
 
         bool ok = kinds switch
         {
-            FieldKinds.TextOrKeyword => def.Type is FieldType.Text or FieldType.Keyword,
-            FieldKinds.NotText => def.Type is FieldType.Keyword or FieldType.Integral or FieldType.Fractional or FieldType.Date or FieldType.Bool,
-            _ => def.Type is FieldType.Text or FieldType.Keyword or FieldType.Integral or FieldType.Fractional or FieldType.Date or FieldType.Bool,
+            FieldKinds.TextOrKeyword => def.Type is FieldType.Text or FieldType.Keyword or FieldType.Json,
+            FieldKinds.NotText => def.Type is FieldType.Keyword or FieldType.Integral or FieldType.Fractional or FieldType.Date or FieldType.Bool or FieldType.Json,
+            _ => def.Type is FieldType.Text or FieldType.Keyword or FieldType.Integral or FieldType.Fractional or FieldType.Date or FieldType.Bool or FieldType.Json,
         };
         if (!ok)
         {
@@ -838,6 +838,11 @@ internal sealed class QueryJsonReader
         }
 
         FieldValue v = BindValue(def, value, vp, BoundRole.Equal, out _, out bool nothing);
+        if (v.Kind == FieldValueKind.Text)
+        {
+            return Boosted(new TermQuery(def.Name, v.AsText()), e, path); // a string at a JSON path
+        }
+
         return Boosted(nothing ? new BooleanQuery([]) : new RangeQuery(def.Name, v, v), e, path);
     }
 

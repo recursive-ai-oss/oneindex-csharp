@@ -44,6 +44,10 @@ A field must exist in the schema, be indexed (`[Filterable]`, `[Keyword]`, or th
 
 Comparing with a quoted number or date (`Total > "100"`) is accepted; a value that does not fit the field's type is an error pointing at the value, naming what the field holds.
 
+## Paths in dynamic JSON
+
+The name of a `[Dynamic]` property followed by a dot and a path is a field: `Meta.customer.age >= 18`, `Meta.tags = "red"`, `Meta.customer.name EXISTS`. The literal says which kind of value is meant: a quoted string is a string, a bare number is a number, `true` and `false` are booleans, and in an ordering comparison or `TO` range a string that reads as a date (the date formats above) is a date. `Meta.id = 5` does not match the string `"5"`: quote it. See dynamic.md.
+
 ## Meaning
 
 - `a != v` is `NOT a = v`: documents without a value for the field match it, as `NOT` does in Meilisearch.

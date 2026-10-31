@@ -16,6 +16,29 @@ public static class Workload
         .Integral("n")
         .Build();
 
+    /// <summary>
+    /// The schema the evolution campaigns switch to: a stemming analyzer on the body, a column on the tag and a new field. Moving between
+    /// <see cref="Schema"/> and this one in either direction rebuilds the segments from stored source.
+    /// </summary>
+    public static readonly Schema SchemaV2 = new SchemaBuilder()
+        .Id("id")
+        .Add(new FieldDefinition("tag", FieldType.Keyword) { Column = true })
+        .Add(new FieldDefinition("body", FieldType.Text) { Analyzer = "en" })
+        .Integral("n")
+        .Keyword("extra")
+        .Build();
+
+    /// <summary>The schema of an evolution campaign cycle: 1 is <see cref="Schema"/>, 2 is <see cref="SchemaV2"/>.</summary>
+    public static Schema ForVersion(int version) => version == 2 ? SchemaV2 : Schema;
+
+    /// <summary>Options for the evolution campaigns: the real codecs, because the rebuild reads the real stored source.</summary>
+    public static IndexWriterOptions EvolveOptions(IMergeScheduler? scheduler = null, int maxBuffered = 6) => new()
+    {
+        MaxBufferedDocuments = maxBuffered,
+        MergePolicy = new TieredMergePolicy { SegmentsPerTier = 3, MaxMergeAtOnce = 3, FloorSegmentDocs = 4, DeletesPctAllowed = 50 },
+        MergeScheduler = scheduler,
+    };
+
     /// <summary>Small buffers and a low merge threshold so that a short workload flushes and merges often.</summary>
     public static IndexWriterOptions Options(IMergeScheduler? scheduler = null, int maxBuffered = 6, bool autoMerge = true) => new()
     {
@@ -144,7 +167,7 @@ public static class Workload
         for (int s = 0; s < snapshot.SegmentCount; s++)
         {
             SegmentReader seg = snapshot.GetSegment(s);
-            IStoredFieldsReader stored = seg.GetPart<IStoredFieldsReader>() ?? throw new InvalidDataException($"segment {seg.Info.Name} has no stored documents");
+            IStoredFieldsReader stored = seg.GetPart<IStoredFieldsSource>()?.StoredFields ?? seg.GetPart<IStoredFieldsReader>() ?? throw new InvalidDataException($"segment {seg.Info.Name} has no stored documents");
             for (int d = 0; d < seg.MaxDoc; d++)
             {
                 if (!seg.Live.IsLive(d))
