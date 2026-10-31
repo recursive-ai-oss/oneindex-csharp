@@ -287,7 +287,17 @@ public static class ProcessHarness
             }
         }
 
-        public bool WaitForExit(int ms) => _process.WaitForExit(ms);
+        public bool WaitForExit(int ms)
+        {
+            if (!_process.WaitForExit(ms))
+            {
+                return false;
+            }
+
+            // The timed wait can return before the asynchronously read output has been delivered.
+            _process.WaitForExit();
+            return true;
+        }
 
         public void Kill()
         {
