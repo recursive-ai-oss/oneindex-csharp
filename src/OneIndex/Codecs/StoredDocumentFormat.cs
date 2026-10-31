@@ -295,9 +295,14 @@ internal static class StoredDocumentFormat
 
         public ReadOnlySpan<byte> Bytes()
         {
-            int length = Count(Remaining, "a stored length");
-            ReadOnlySpan<byte> v = _data.Slice(Position, length);
-            Position += length;
+            ulong length = VarUInt();
+            if (length > (ulong)Remaining)
+            {
+                throw new CorruptIndexException(_name, "a stored length runs past the end of its document");
+            }
+
+            ReadOnlySpan<byte> v = _data.Slice(Position, (int)length);
+            Position += (int)length;
             return v;
         }
 

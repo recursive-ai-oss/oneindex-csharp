@@ -469,6 +469,16 @@ public sealed class DocValueTests
         return (snapshot, SnapshotSearch.CreateSearcher(snapshot));
     }
 
+    [Fact]
+    public void SavedFuzzFindingsRaiseTypedExceptions()
+    {
+        // A length prefix that fits the document before the prefix itself is read, but not after (found by the stored-source fuzz target).
+        string path = Path.Combine(Path.GetDirectoryName(ThisFile())!, "..", "..", "testdata", "fuzz", "stored-block-length.bin");
+        DocValuesTarget.Run(File.ReadAllBytes(path), 2);
+    }
+
+    private static string ThisFile([System.Runtime.CompilerServices.CallerFilePath] string path = "") => path;
+
     // ---- verification ------------------------------------------------------------------------------------------
 
     private static int Verify(IndexSnapshot snapshot, Dictionary<string, Document> expected, int seed)
