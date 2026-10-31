@@ -1,0 +1,16 @@
+# group	dest (under the OneIndex data root)	url	sha256	md5 (or -)
+# Every download is verified against these before use; see tools/fetch.sh.
+beir	corpus/beir/scifact.zip	https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip	536e14446a0ba56ed1398ab1055f39fe852686ecad24a6306c80c490fa8e0165	5f7d1de60b170fc8027bb7898e2efca1
+beir	corpus/beir/arguana.zip	https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/arguana.zip	cfdf79adce27a401b3cd3ea267903134dbfab2c6afeb95d7fe5724a00bf7557b	8ad3e3c2a5867cdced806d6503f29b99
+beir	corpus/beir/nq.zip	https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/nq.zip	2553bf7bfbab47b1436ca00a34bce57320e18e611fd00999a2a3a1b4714be752	d4d3d2e48787a744b6f6e691ff534307
+beir	corpus/beir/scidocs.zip	https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scidocs.zip	96640201687767c9b1fcc5af7a80b90fb325b37fa25329c2586c25edcfa17ef1	38121350fc3a4d2f48850f6aff52e4a9
+ucd	corpus/ucd-17.0.0/UCD.zip	https://www.unicode.org/Public/17.0.0/ucd/UCD.zip	2066d1909b2ea93916ce092da1c0ee4808ea3ef8407c94b4f14f5b7eb263d28e	-
+ucd	corpus/ucd-17.0.0/auxiliary/WordBreakTest.txt	https://www.unicode.org/Public/17.0.0/ucd/auxiliary/WordBreakTest.txt	1de23a75f37904abc7d206239ee8d34f8fdf0fb4ab32a7174dfbabbde25419b2	-
+ucd	corpus/ucd-17.0.0/auxiliary/SentenceBreakTest.txt	https://www.unicode.org/Public/17.0.0/ucd/auxiliary/SentenceBreakTest.txt	12cb47d028ded0c1cb8a28558f95479cbcd24559c46977015c82f3b50a1cc6e4	-
+ucd	corpus/ucd-17.0.0/auxiliary/GraphemeBreakTest.txt	https://www.unicode.org/Public/17.0.0/ucd/auxiliary/GraphemeBreakTest.txt	e2d134d2c52919bace503ebb6a551c1855fe1a1faec18478c78fff254a1793ec	-
+ucd	corpus/ucd-17.0.0/auxiliary/WordBreakProperty.txt	https://www.unicode.org/Public/17.0.0/ucd/auxiliary/WordBreakProperty.txt	72274cac1e6b919507db35655c3e175aa27274668a1ece95c28d2069f2ad9852	-
+ucd	corpus/ucd-17.0.0/auxiliary/SentenceBreakProperty.txt	https://www.unicode.org/Public/17.0.0/ucd/auxiliary/SentenceBreakProperty.txt	871c0c985ad95125e25b302414065a10839d068970bceb383ecec138f22a0a18	-
+snowball	corpus/snowball/snowball-data.zip	https://codeload.github.com/snowballstem/snowball-data/zip/refs/heads/main	5bacb3c4f822d167707d87e08e807f65c27ac517543ef57fe4a2bfcf5bfcb7ed	-
+wikipedia	corpus/wikipedia/train-00000-of-00041.parquet	https://huggingface.co/datasets/wikimedia/wikipedia/resolve/main/20231101.en/train-00000-of-00041.parquet	382e7f6f09e488b24793a7f7cfc659879d5a22da2cf2efec6491665f0c019677	-
+wikipedia	corpus/wikipedia/train-00001-of-00041.parquet	https://huggingface.co/datasets/wikimedia/wikipedia/resolve/main/20231101.en/train-00001-of-00041.parquet	6cd57a5825312ca966313d4a1b614690b5c4fb53cee9b124bc0e999977eb36cf	-
+sqlite-linux-x64	oracles/sqlite-tools-linux-x64-3540100.zip	https://www.sqlite.org/2026/sqlite-tools-linux-x64-3540100.zip	a21062b333c7d66d7d8c42054c0fab1c1899729185289ad14bd4f25f9f576d14	-
