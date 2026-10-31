@@ -276,6 +276,8 @@ public sealed class TopFieldCollector : Collector
         private readonly IColumnReader? _idColumn;
         private byte[] _id = new byte[32];
         private int _idLength;
+        private int _doc;
+        private bool _idLoaded;
         private Scorer? _scorer;
 
         public Leaf(TopFieldCollector owner, LeafContext leaf)
@@ -306,7 +308,27 @@ public sealed class TopFieldCollector : Collector
 
         public bool[] IsText { get; }
 
-        public ReadOnlySpan<byte> Id => _id.AsSpan(0, _idLength);
+        // The identifier is only read when the sort keys tie (or a document is kept), which is rare next to the number of matches.
+        public ReadOnlySpan<byte> Id
+        {
+            get
+            {
+                if (!_idLoaded)
+                {
+                    ReadOnlySpan<byte> id = _idColumn!.GetKeyword(_doc);
+                    if (id.Length > _id.Length)
+                    {
+                        _id = new byte[Math.Max(id.Length, _id.Length * 2)];
+                    }
+
+                    id.CopyTo(_id);
+                    _idLength = id.Length;
+                    _idLoaded = true;
+                }
+
+                return _id.AsSpan(0, _idLength);
+            }
+        }
 
         public ReadOnlySpan<byte> Text(int key) => _readers[key] is KeywordReader r ? r.Text.AsSpan(0, r.Length) : default;
 
@@ -334,18 +356,8 @@ public sealed class TopFieldCollector : Collector
                 }
             }
 
-            if (_idColumn is not null)
-            {
-                ReadOnlySpan<byte> id = _idColumn.GetKeyword(docId);
-                if (id.Length > _id.Length)
-                {
-                    _id = new byte[Math.Max(id.Length, _id.Length * 2)];
-                }
-
-                id.CopyTo(_id);
-                _idLength = id.Length;
-            }
-
+            _doc = docId;
+            _idLoaded = false;
             _owner.Offer(this, _docBase + docId, score);
         }
     }
