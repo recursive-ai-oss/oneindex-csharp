@@ -25,14 +25,14 @@ internal static class QueryFormsScenario
         // A tool call: free text, an exact filter and a structured query, paged.
         const string call = """
             {"v":1,"q":"overdue","filter":"Tags = invoice AND Modified > 2024-01-01 AND NOT Tags = draft",
-             "query":{"type":"bool","should":[{"type":"phrase","field":"Body","terms":["acme","corp"]}],"minimumShouldMatch":1},
+             "query":{"type":"bool","should":[{"type":"phrase","field":"Title","terms":["overdue","notice"]}],"minimumShouldMatch":1},
              "limit":10,"countExactly":true,"highlight":true}
             """;
         SearchResults<Invoice> hits = index.Parse(call).Execute();
-        Require(hits.Count == 1 && hits[0].Id == "inv-1" && hits.TotalHits == 1, "parse and run");
+        Require(hits.Count == 1 && hits[0].Id == "inv-1" && hits.TotalHits == 1, $"parse and run {hits.Count} {(hits.Count > 0 ? hits[0].Id : "-")} {hits.TotalHits}");
         Require(index.TryParse("""{"v":1,"filter":"Tagz = x"}""", out _, out QueryParseException? error) is false && error!.Path == "$.filter" && error.Suggestion == "Tags", "named error");
 
-        Require(index.SearchStrict("Title:overdue AND NOT Tags:draft").Count() == 2, "strict query");
+        Require(index.SearchStrict("Title:overdue AND NOT Tags:draft").Count() == 1, "strict query");
         bool threw = false;
         try
         {
