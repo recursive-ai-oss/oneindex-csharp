@@ -62,9 +62,14 @@ public sealed partial class IndexWriter
                 }
             }
 
+            ReaderLease? lease = IndexLocks.AcquireViewLease(_storage, _current?.Generation ?? 0, cancellationToken);
             var view = CommitInfo.NearRealTimeView(_current?.Generation ?? 0, _nextSegmentId, infos, _schema.Serialize(), _appliedPosition, _userData);
             _refs.Acquire(names);
-            return new IndexSnapshot(_storage, view, _schema, _codecs, _limits, () => _refs.Release(names), live, _changeStamp);
+            return new IndexSnapshot(_storage, view, _schema, _codecs, _limits, () =>
+            {
+                lease?.Dispose();
+                _refs.Release(names);
+            }, live, _changeStamp);
         }
     }
 }

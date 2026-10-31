@@ -30,15 +30,19 @@ internal static class IndexLocks
     public const string WriterLockName = "write.lock";
 
     private const string LeasePrefix = "reader-";
+
+    // Same length as LeasePrefix. A viewer lease pins its generation and every later commit (see AcquireViewLease).
+    private const string ViewPrefix = "viewer-";
     private const string LeaseExtension = ".lease";
 
-    public static string LeaseName(long generation, ulong salt) => $"{LeasePrefix}{generation:x16}-{salt:x16}{LeaseExtension}";
+    public static string LeaseName(long generation, ulong salt, bool openEnded = false) => $"{(openEnded ? ViewPrefix : LeasePrefix)}{generation:x16}-{salt:x16}{LeaseExtension}";
 
-    public static bool TryParseLease(string name, out long generation)
+    public static bool TryParseLease(string name, out long generation, out bool openEnded)
     {
         generation = 0;
+        openEnded = name.StartsWith(ViewPrefix, StringComparison.Ordinal);
         if (name.Length != LeasePrefix.Length + 16 + 1 + 16 + LeaseExtension.Length
-            || !name.StartsWith(LeasePrefix, StringComparison.Ordinal)
+            || !(openEnded || name.StartsWith(LeasePrefix, StringComparison.Ordinal))
             || !name.EndsWith(LeaseExtension, StringComparison.Ordinal)
             || name[LeasePrefix.Length + 16] != '-')
         {
@@ -75,9 +79,10 @@ internal static class IndexLocks
 
         HashSet<string>? pinned = null;
         HashSet<long>? done = null;
-        foreach (string name in storage.List(cancellationToken))
+        IReadOnlyList<string> listing = storage.List(cancellationToken);
+        foreach (string name in listing)
         {
-            if (!TryParseLease(name, out long generation))
+            if (!TryParseLease(name, out long generation, out bool openEnded))
             {
                 continue;
             }
@@ -99,33 +104,75 @@ internal static class IndexLocks
             }
 
             done ??= [];
-            if (!done.Add(generation))
+            pinned ??= new HashSet<string>(StringComparer.Ordinal);
+            if (!openEnded)
             {
+                PinCommit(storage, generation, limits, done, pinned, cancellationToken);
                 continue;
             }
 
-            pinned ??= new HashSet<string>(StringComparer.Ordinal);
-            string commitName = CommitFileNames.For(generation);
-            try
+            // A viewer lease pins every commit from its generation on: a near-real-time view may use a segment that only a later
+            // commit lists, and a merge may drop that segment from the commit after.
+            foreach (string other in listing)
             {
-                CommitInfo commit = CommitProtocol.ReadCommit(storage, commitName, limits, cancellationToken);
-                pinned.Add(commitName);
-                foreach (SegmentInfo s in commit.Segments)
+                if (CommitFileNames.TryParse(other, out long g) && g >= generation)
                 {
-                    foreach (SegmentFile f in s.Files)
-                    {
-                        pinned.Add(f.FileName);
-                    }
+                    PinCommit(storage, g, limits, done, pinned, cancellationToken);
                 }
-            }
-            catch (Exception e) when (e is IOException or CorruptIndexException)
-            {
-                // A lease for a commit that is gone or damaged protects nothing it could still read.
-                pinned.Add(commitName);
             }
         }
 
         return pinned;
+    }
+
+    private static void PinCommit(IStorage storage, long generation, IndexLimits limits, HashSet<long> done, HashSet<string> pinned, CancellationToken cancellationToken)
+    {
+        if (!done.Add(generation))
+        {
+            return;
+        }
+
+        string commitName = CommitFileNames.For(generation);
+        try
+        {
+            CommitInfo commit = CommitProtocol.ReadCommit(storage, commitName, limits, cancellationToken);
+            pinned.Add(commitName);
+            foreach (SegmentInfo s in commit.Segments)
+            {
+                foreach (SegmentFile f in s.Files)
+                {
+                    pinned.Add(f.FileName);
+                }
+            }
+        }
+        catch (Exception e) when (e is IOException or CorruptIndexException)
+        {
+            // A lease for a commit that is gone or damaged protects nothing it could still read.
+            pinned.Add(commitName);
+        }
+    }
+
+    /// <summary>
+    /// Pins a near-real-time view: the commit of <paramref name="generation"/> (the writer's newest, or 0 before the first) and every
+    /// later one. Only the writer takes these, and it is the only process that creates commits, so no listing protocol is needed.
+    /// </summary>
+    public static ReaderLease? AcquireViewLease(IStorage storage, long generation, CancellationToken cancellationToken)
+    {
+        if (!storage.SupportsLocks)
+        {
+            return null;
+        }
+
+        for (int attempt = 0; attempt < 100; attempt++)
+        {
+            IStorageLock? held = storage.TryLock(LeaseName(Math.Max(1, generation), NextSalt(), openEnded: true), cancellationToken);
+            if (held is not null)
+            {
+                return new ReaderLease(storage, held);
+            }
+        }
+
+        throw new IOException("Could not create a lease file: every name tried was taken.");
     }
 
     private static bool TryDelete(IStorage storage, string name)

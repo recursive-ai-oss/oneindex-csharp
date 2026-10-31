@@ -147,6 +147,7 @@ public static class ProcessHarness
         private long _verifications;
         private string? _failure;
         private bool _locked;
+        private bool _ready;
 
         public Child(string[] command, IEnumerable<string> arguments, string role)
         {
@@ -190,6 +191,10 @@ public static class ProcessHarness
                     else if (e.Data == "LOCKED")
                     {
                         _locked = true;
+                    }
+                    else if (e.Data == "READY")
+                    {
+                        _ready = true;
                     }
                 }
             };
@@ -256,6 +261,29 @@ public static class ProcessHarness
                 {
                     return _locked;
                 }
+            }
+        }
+
+        /// <summary>Waits until the process reports that it has opened the index (a writer holds the lock from then on).</summary>
+        public bool WaitReady(int ms)
+        {
+            var clock = Stopwatch.StartNew();
+            while (clock.ElapsedMilliseconds < ms && !_process.HasExited)
+            {
+                lock (this)
+                {
+                    if (_ready)
+                    {
+                        return true;
+                    }
+                }
+
+                Thread.Sleep(5);
+            }
+
+            lock (this)
+            {
+                return _ready;
             }
         }
 
@@ -387,6 +415,13 @@ public static class ProcessHarness
 
                 if (k % 5 == 4)
                 {
+                    // The first writer must really hold the lock before a second one is tried against it.
+                    if (!writer.WaitReady(60_000))
+                    {
+                        problems.Add($"kill {k}: the writer did not open the index within 60 s (exit {(writer.HasExited ? writer.ExitCode : -1)}, {writer.Failure})");
+                        break;
+                    }
+
                     // A second writer while the first is alive must be refused at once.
                     Child second = StartWriter();
                     if (!second.WaitForExit(20_000))

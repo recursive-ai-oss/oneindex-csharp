@@ -16,8 +16,9 @@ An index directory can be open in one writer and in any number of readers at onc
 |---|---|
 | `write.lock` | Empty. Held with an exclusive lock for the life of a writer. Stays on disk. |
 | `reader-<generation 16 hex>-<random 16 hex>.lease` | Empty. Held with an exclusive lock for the life of one open snapshot of that generation. Deleted when the snapshot is disposed. |
+| `viewer-<generation 16 hex>-<random 16 hex>.lease` | Empty. Held by the writer for each open near-real-time view. Pins that generation (1 before the first commit) and every later commit, because the view may read a segment that only a later commit lists and a merge may drop it from the one after. |
 
-Both are created through `IStorage.TryLock(name)`, so the fault-injecting wrapper sees them and a power cut can lose or keep them like any file. They carry no data, so there is nothing to corrupt; a stale one is only a name.
+All are created through `IStorage.TryLock(name)`, so the fault-injecting wrapper sees them and a power cut can lose or keep them like any file. They carry no data, so there is nothing to corrupt; a stale one is only a name.
 
 `TryLock` creates the file if needed and takes an exclusive, non-blocking lock tied to the open handle. It returns `null` if somebody else holds it. The lock goes away when the handle is disposed or the process ends.
 
@@ -68,7 +69,7 @@ Limits worth knowing:
 
 - It is **not durable**. `IsDurable` is `false` on the reader and on every snapshot it hands out, and `Generation` is the last commit the view extends (0 before the first). A crash, or `Dispose` without `Commit`, discards everything it showed.
 - It exists only in the writer's process. Other processes read commits.
-- Its segment files are pinned by the writer's file counts, so a merge installed by a commit does not delete files a view still reads.
+- Its segment files are pinned by the writer's file counts and by a viewer lease, so neither a merge installed by a commit nor a reader process tidying up superseded commits deletes files a view still reads. Old commits therefore stay on disk until the view is refreshed or disposed.
 - It is a copy of the delete state at the moment of the refresh: later deletes do not change a view already handed out.
 - Each refresh that finds buffered documents writes a small segment; the merge policy folds them at the next commit. Refresh at the rate freshness needs, not more.
 - Dispose NRT readers before the writer.

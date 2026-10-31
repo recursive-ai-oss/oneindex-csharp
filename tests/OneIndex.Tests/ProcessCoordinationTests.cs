@@ -275,6 +275,37 @@ public class ProcessCoordinationTests
     }
 
     [Fact]
+    public void NearRealTimeViewKeepsItsFilesFromAReaderProcessTidyingUp()
+    {
+        string dir = TestHelpers.NewTempDirectory();
+        try
+        {
+            using IndexWriter w = IndexWriter.Open(new FileSystemStorage(dir), Workload.Schema, Workload.Options(maxBuffered: 5, autoMerge: false));
+            Fill(w, 10, "v1");
+            w.Commit();
+            Fill(w, 10, "v2"); // flushed segments that no commit lists yet
+            using IndexSnapshot view = w.OpenNearRealTimeSnapshot();
+            SortedDictionary<string, string> seen = Workload.ReadContent(view);
+            w.Commit(); // commit 2 lists the view's segments
+
+            // A reader process pins commit 2, the writer merges the segments away and commits, and the reader then lets go: its
+            // housekeeping deletes superseded commits nobody pins, which must not take files the view still reads.
+            IndexSnapshot other = IndexSnapshot.Open(new FileSystemStorage(dir), Workload.Codecs);
+            Assert.Equal(2, other.Generation);
+            w.ForceMerge(1);
+            w.Commit();
+            other.Dispose();
+
+            view.Verify();
+            Assert.Equal(seen, Workload.ReadContent(view));
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
+    [Fact]
     public void NearRealTimeStateIsNotDurable()
     {
         var storage = new MemoryStorage();
