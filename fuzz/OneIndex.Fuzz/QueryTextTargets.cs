@@ -66,8 +66,19 @@ internal static class QueryTextTargets
         }
 
         // Whatever the parser accepts has a text form that reads back to the same tree.
+        // (Printing adds escapes, explicit operators and parentheses, so a tree near a limit can print past it; those are skipped.)
         string printed = StrictQuery.Print(tree);
-        Require(tree.Equals(StrictQuery.ParseSyntax(printed)), "strict print/parse identity");
+        if (printed.Length <= StrictQuery.MaxLength)
+        {
+            try
+            {
+                Require(tree.Equals(StrictQuery.ParseSyntax(printed)), "strict print/parse identity");
+            }
+            catch (QueryParseException e) when (e.Detail.Contains("nested deeper", StringComparison.Ordinal))
+            {
+            }
+        }
+
         try
         {
             Query q = StrictQuery.Bind(tree, Schema, text);
@@ -103,9 +114,16 @@ internal static class QueryTextTargets
             // Queries that match nothing by construction (an empty IN list, a fractional equality on an integer) have no filter text.
         }
 
-        if (printed is not null)
+        if (printed is not null && printed.Length <= FilterString.MaxLength)
         {
-            Require(q.Equals(FilterString.Parse(printed, Schema)), "filter print/parse identity");
+            try
+            {
+                Require(q.Equals(FilterString.Parse(printed, Schema)), "filter print/parse identity");
+            }
+            catch (QueryParseException e) when (e.Detail.Contains("nested deeper", StringComparison.Ordinal) || e.Detail.Contains("more than", StringComparison.Ordinal))
+            {
+                // The printed text parenthesizes and so can pass a limit that the input stayed under.
+            }
         }
 
         Run(q);
@@ -126,7 +144,17 @@ internal static class QueryTextTargets
         }
 
         string json = QueryJson.Write(request);
-        QueryRequest again = QueryJson.Read(Encoding.UTF8.GetBytes(json), Schema);
+        QueryRequest again;
+        try
+        {
+            again = QueryJson.Read(Encoding.UTF8.GetBytes(json), Schema);
+        }
+        catch (QueryParseException e) when (e.Detail.Contains("deeper", StringComparison.Ordinal) || e.Detail.Contains("more than", StringComparison.Ordinal))
+        {
+            // Text, strict and filter nodes expand to deeper trees when written, which can pass a limit that the input stayed under.
+            return;
+        }
+
         Require(request.Equals(again), "json round trip");
         Require(QueryJson.Write(again) == json, "json canonical");
         Run(request.ToQuery());
