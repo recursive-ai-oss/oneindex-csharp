@@ -408,6 +408,67 @@ public sealed class DocValueTests
         Assert.Equal(4500, mutations);
     }
 
+    [Fact]
+    public void RangeQueriesAgreeBetweenThePointIndexAndNumericTerms()
+    {
+        List<Document> docs = DocValuesFixture.Generate(41, 700);
+        (IndexSnapshot withPoints, IndexSearcher a) = BuildSearcher(docs, SegmentCodecs.CreateDefault());
+        (IndexSnapshot termsOnly, IndexSearcher b) = BuildSearcher(docs, [new TextSegmentCodec(), new ColumnSegmentCodec(), new StoredSegmentCodec()]);
+        using (withPoints)
+        using (termsOnly)
+        {
+            Assert.NotNull(withPoints.GetSegment(0).GetPart<IPointSource>()!.GetPoints("n"));
+            Assert.Null(termsOnly.GetSegment(0).GetPart<IPointSource>());
+            var rng = new Random(8);
+            int queries = 0;
+            foreach (string field in new[] { "n", "f", "when", "flag", "nums" })
+            {
+                FieldType type = TestSchema.TryGetField(field, out FieldDefinition? def) ? def.Type : throw new InvalidOperationException(field);
+                var values = docs.SelectMany(d => d.Fields.Where(f => f.Name == field).Select(f => f.Value)).Where(v => type != FieldType.Fractional || !double.IsNaN(v.AsFloat64())).ToList();
+                for (int i = 0; i < 60; i++)
+                {
+                    FieldValue? Bound() => rng.Next(5) == 0 ? null : values[rng.Next(values.Count)];
+                    var q = new RangeQuery(field, Bound(), Bound()) { IncludeLower = rng.Next(2) == 0, IncludeUpper = rng.Next(2) == 0 };
+                    TopDocs x;
+                    TopDocs y;
+                    try
+                    {
+                        x = a.Search(q, 1000, countExactly: true);
+                    }
+                    catch (QueryException)
+                    {
+                        Assert.Throws<QueryException>(() => b.Search(q, 1000, countExactly: true));
+                        continue;
+                    }
+
+                    y = b.Search(q, 1000, countExactly: true);
+                    Assert.Equal(y.TotalHits, x.TotalHits);
+                    Assert.Equal(y.Hits.Select(h => h.DocId).Order(), x.Hits.Select(h => h.DocId).Order());
+                    queries++;
+                }
+            }
+
+            Assert.True(queries > 200);
+        }
+    }
+
+    private static (IndexSnapshot, IndexSearcher) BuildSearcher(List<Document> docs, IReadOnlyList<ISegmentCodec> codecs)
+    {
+        var storage = new MemoryStorage();
+        using (IndexWriter w = IndexWriter.Open(storage, TestSchema, new IndexWriterOptions { Codecs = codecs, MaxBufferedDocuments = 10_000, AutoMerge = false }))
+        {
+            foreach (Document d in docs)
+            {
+                w.Upsert(d);
+            }
+
+            w.Commit();
+        }
+
+        IndexSnapshot snapshot = IndexSnapshot.Open(storage, codecs);
+        return (snapshot, SnapshotSearch.CreateSearcher(snapshot));
+    }
+
     // ---- verification ------------------------------------------------------------------------------------------
 
     private static int Verify(IndexSnapshot snapshot, Dictionary<string, Document> expected, int seed)
