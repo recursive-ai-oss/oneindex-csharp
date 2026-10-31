@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using OneIndex.Aggregations;
 using OneIndex.Analysis;
 using OneIndex.Index;
 using OneIndex.Search;
@@ -8,8 +9,8 @@ namespace OneIndex.Harness;
 
 /// <summary>
 /// OneIndex behind the harness: the BEIR profile (title, text and a flat title+text field, English analysis, frequencies only) and
-/// free-text <see cref="MatchQuery"/> / <see cref="TermsQuery"/> scoring. The benchmark profile's filters, facets and sorts arrive
-/// with the column codecs and are reported as unsupported until then.
+/// free-text <see cref="MatchQuery"/> / <see cref="TermsQuery"/> scoring; and the benchmark profile's term, facet and statistics rows.
+/// Filters, sorts and the other rows are reported as unsupported until their queries exist.
 /// </summary>
 public sealed class OneIndexEngine : ITextEngine
 {
@@ -38,30 +39,52 @@ public sealed class OneIndexEngine : ITextEngine
     }
 
     /// <inheritdoc/>
-    public bool Supports(Type queryType) => queryType == typeof(MatchQuery) || queryType == typeof(TermsQuery);
+    public bool Supports(Type queryType) => queryType == typeof(MatchQuery) || queryType == typeof(TermsQuery) || queryType == typeof(FacetQuery) || queryType == typeof(StatsQuery);
 
     /// <inheritdoc/>
     public void Create(EngineSettings settings)
     {
-        if (settings.Profile != IndexProfile.Beir || settings.Analysis != AnalysisKind.English)
-        {
-            throw new NotSupportedException("OneIndex runs the BEIR profile with English analysis; the benchmark profile needs the column codecs.");
-        }
-
         _settings = settings;
         Directory.CreateDirectory(settings.Directory);
         _storage = new FileSystemStorage(settings.Directory);
-        FieldDefinition Text(string name) => new(name, FieldType.Text) { Analyzer = "en", IndexOptions = IndexOptions.Freqs, Stored = false };
-        // A match in the title says more than one in the body: its BM25F weight is 3 (chosen on the four BEIR gate sets, docs/scoring.md).
-        const float titleBoost = 3f;
-        Schema schema = new SchemaBuilder().Id("id").Add(new FieldDefinition("title", FieldType.Text) { Analyzer = "en", IndexOptions = IndexOptions.Freqs, Stored = false, Boost = titleBoost }).Add(Text("text")).Add(Text("all")).Build();
+        Schema schema;
+        if (settings.Profile == IndexProfile.Bench && settings.Analysis == AnalysisKind.Standard)
+        {
+            // The benchmark profile: body text, a numeric column and a keyword facet column, standard analysis.
+            schema = new SchemaBuilder().Id("id")
+                .Add(new FieldDefinition("text", FieldType.Text) { Analyzer = "standard", IndexOptions = IndexOptions.Freqs, Stored = false })
+                .Add(new FieldDefinition("len", FieldType.Integral) { Column = true, Stored = false })
+                .Add(new FieldDefinition("cat", FieldType.Keyword) { Facet = true, Stored = false })
+                .Build();
+        }
+        else if (settings.Profile == IndexProfile.Beir && settings.Analysis == AnalysisKind.English)
+        {
+            FieldDefinition Text(string name) => new(name, FieldType.Text) { Analyzer = "en", IndexOptions = IndexOptions.Freqs, Stored = false };
+            // A match in the title says more than one in the body: its BM25F weight is 3 (chosen on the four BEIR gate sets, docs/scoring.md).
+            const float titleBoost = 3f;
+            schema = new SchemaBuilder().Id("id").Add(new FieldDefinition("title", FieldType.Text) { Analyzer = "en", IndexOptions = IndexOptions.Freqs, Stored = false, Boost = titleBoost }).Add(Text("text")).Add(Text("all")).Build();
+        }
+        else
+        {
+            throw new NotSupportedException("OneIndex runs the BEIR profile with English analysis and the benchmark profile with standard analysis.");
+        }
+
+        _settings = settings;
         _writer = IndexWriter.Open(_storage, schema, new IndexWriterOptions { MaxBufferedDocuments = 20_000 });
     }
 
     /// <inheritdoc/>
     public void Add(Doc doc)
     {
-        _writer!.Upsert(new Document().Add("id", doc.Id).Add("title", doc.Title).Add("text", doc.Text).Add("all", doc.Title + " " + doc.Text));
+        if (_settings!.Profile == IndexProfile.Bench)
+        {
+            _writer!.Upsert(new Document().Add("id", doc.Id).Add("text", doc.Text).Add("len", doc.Length).Add("cat", doc.Category));
+        }
+        else
+        {
+            _writer!.Upsert(new Document().Add("id", doc.Id).Add("title", doc.Title).Add("text", doc.Text).Add("all", doc.Title + " " + doc.Text));
+        }
+
         _ids.Enqueue(doc.Id);
     }
 
@@ -108,9 +131,29 @@ public sealed class OneIndexEngine : ITextEngine
         Query q = query switch
         {
             MatchQuery m => Match(m),
-            TermsQuery t => new BooleanQuery([.. t.Terms.Select(x => new BooleanClause(new TermQuery("text", x), Occur.Should))]),
+            TermsQuery t => TermsOf(t.Terms),
+            FacetQuery f => TermsOf(f.Terms),
+            StatsQuery st => TermsOf(st.Terms),
             _ => throw new NotSupportedException(query.GetType().Name),
         };
+        if (query is FacetQuery)
+        {
+            // The top page and the ten most frequent category values over all matches, in one pass.
+            var pageCollector = new TopScoreCollector(k, countExactly: true);
+            var facets = new FacetCollector(_context!.Schema, [new FacetRequest("cat") { MaxValues = 10, SortBy = FacetSort.Count }]);
+            _searcher!.Search(q, new MultiCollector([pageCollector, facets]));
+            TopDocs page = pageCollector.GetTopDocs();
+            Hit[] pageHits = [.. page.Hits.Select(h => new Hit(_idOf[h.DocId], h.Score))];
+            return new SearchResult(pageHits, page.TotalHits, [.. facets.GetResults()[0].Values.Select(v => (v.Value, v.Count))]);
+        }
+
+        if (query is StatsQuery)
+        {
+            var stats = new AggregationCollector(_context!.Schema, [new StatsAggregation("len", "len")]);
+            _searcher!.Search(q, stats);
+            var s = stats.GetResults().Get<StatsResult>("len");
+            return new SearchResult([], s.Count, null, (s.Count, (long)(s.Min ?? 0), (long)(s.Max ?? 0), (long)s.Sum));
+        }
         TopDocs top = _searcher!.Search(q, k, countExactly: false);
         var hits = new Hit[top.Hits.Count];
         for (int i = 0; i < hits.Length; i++)
@@ -163,6 +206,8 @@ public sealed class OneIndexEngine : ITextEngine
         _snapshot?.Dispose();
         _writer?.Dispose();
     }
+
+    private static BooleanQuery TermsOf(string[] terms) => new([.. terms.Select(x => new BooleanClause(new TermQuery("text", x), Occur.Should))]);
 
     private QueryEngineOptions Engine() => new() { Bm25 = new Bm25Parameters(_k1, _b) };
 
