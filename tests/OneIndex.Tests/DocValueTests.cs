@@ -414,7 +414,7 @@ public sealed class DocValueTests
     {
         List<Document> docs = DocValuesFixture.Generate(41, 700);
         (IndexSnapshot withPoints, IndexSearcher a) = BuildSearcher(docs, SegmentCodecs.CreateDefault());
-        (IndexSnapshot termsOnly, IndexSearcher b) = BuildSearcher(docs, [new TextSegmentCodec(), new ColumnSegmentCodec(), new StoredSegmentCodec()]);
+        (IndexSnapshot termsOnly, IndexSearcher b) = BuildSearcher(docs, [new TextSegmentCodec { IndexNumericTerms = true }, new ColumnSegmentCodec(), new StoredSegmentCodec()]);
         using (withPoints)
         using (termsOnly)
         {

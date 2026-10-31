@@ -256,7 +256,20 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
     /// <param name="document">The document; it is validated against the schema.</param>
     /// <param name="cancellationToken">Cancels a flush this call triggers.</param>
     /// <exception cref="ArgumentException">The document does not fit the schema.</exception>
-    public void Upsert(Document document, CancellationToken cancellationToken = default)
+    public void Upsert(Document document, CancellationToken cancellationToken = default) => UpsertCore(document, replaceCommitted: true, cancellationToken);
+
+    /// <summary>
+    /// Bulk-load path: adds a document whose identifier the caller knows is not in the index yet, skipping the lookup in every segment
+    /// that <see cref="Upsert(Document, CancellationToken)"/> does (cost grows with the segment count, which dominates loading millions of
+    /// documents). A document with the same identifier still in the write buffer is replaced as usual.
+    /// </summary>
+    /// <param name="document">The document; it is validated against the schema.</param>
+    /// <param name="cancellationToken">Cancels a flush this call triggers.</param>
+    /// <exception cref="ArgumentException">The document does not fit the schema.</exception>
+    /// <remarks>If an earlier flushed document does have the identifier, both stay live and identifier lookups find the newer one; use <see cref="Upsert(Document, CancellationToken)"/> when unsure.</remarks>
+    public void AddUnique(Document document, CancellationToken cancellationToken = default) => UpsertCore(document, replaceCommitted: false, cancellationToken);
+
+    private void UpsertCore(Document document, bool replaceCommitted, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(document);
         _schema.Validate(document);
@@ -266,7 +279,15 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
             ThrowIfUnusable();
             if (id is not null)
             {
-                DeleteByIdLocked(id);
+                if (replaceCommitted)
+                {
+                    DeleteByIdLocked(id);
+                }
+                else if (_bufferIds.TryGetValue(id, out int at))
+                {
+                    RemoveFromBuffer(at);
+                }
+
                 _bufferIds[id] = _buffer.Count;
             }
 
@@ -895,13 +916,13 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
         }
 
         var info = new SegmentInfo(name, docs.Count, 0, 0, sink.Files);
-        AddNewSegment(info, _segments.Count);
+        AddUniqueSegment(info, _segments.Count);
         _buffer.Clear();
         _bufferIds.Clear();
         _bufferLive = 0;
     }
 
-    private void AddNewSegment(SegmentInfo info, int position)
+    private void AddUniqueSegment(SegmentInfo info, int position)
     {
         var seg = new WorkSegment(info) { IsNew = true };
         List<string> names = info.Files.Select(f => f.FileName).ToList();

@@ -30,9 +30,17 @@ public static class BeirRunner
 
     /// <summary>All reported settings: three field layouts times the two parameter sets.</summary>
     public static IEnumerable<Bm25Setting> Settings() =>
-        from layout in new[] { FieldLayout.Flat, FieldLayout.MultiFieldMax, FieldLayout.MultiFieldSum, FieldLayout.Bm25F }
+        from layout in Layouts()
         from p in Parameters
         select new Bm25Setting(layout, p.K1, p.B);
+
+    // ONEINDEX_LAYOUTS (comma separated layout names) narrows a run to some layouts; large corpora use it to fit a time budget.
+    private static IEnumerable<FieldLayout> Layouts()
+    {
+        FieldLayout[] all = [FieldLayout.Flat, FieldLayout.MultiFieldMax, FieldLayout.MultiFieldSum, FieldLayout.Bm25F];
+        string? only = Environment.GetEnvironmentVariable("ONEINDEX_LAYOUTS");
+        return only is null ? all : all.Where(l => only.Split(',').Contains(l.ToString(), StringComparer.OrdinalIgnoreCase));
+    }
 
     /// <summary>Indexes the dataset, runs every setting and writes <c>runs/*.run</c> (raw) and <c>runs/*.beir.run</c> (identical ids dropped) plus <c>summary.json</c> under <paramref name="outDir"/>.</summary>
     /// <param name="engine">The engine to drive.</param>
@@ -45,25 +53,51 @@ public static class BeirRunner
     {
         var runsDir = Path.Combine(outDir, "runs");
         Directory.CreateDirectory(runsDir);
-        if (Directory.Exists(indexDir))
-        {
-            Directory.Delete(indexDir, true);
-        }
-
-        var sw = Stopwatch.StartNew();
-        engine.Create(new EngineSettings(indexDir, AnalysisKind.English, IndexProfile.Beir));
+        // ONEINDEX_PHASE=index builds and commits the index and stops; =search reopens it and runs the queries. A corpus too big for one
+        // time-limited job is run in two. Unset runs both in one process.
+        var phase = Environment.GetEnvironmentVariable("ONEINDEX_PHASE") ?? "both";
+        var marker = Path.Combine(indexDir + ".indexed");
         var options = new ParallelOptions { MaxDegreeOfParallelism = threads };
-        var docCount = 0L;
-        Parallel.ForEach(data.ReadCorpus(), options, doc =>
+        long docCount;
+        double indexSeconds;
+        if (phase == "search")
         {
-            engine.Add(doc);
-            Interlocked.Increment(ref docCount);
-        });
-        var addSeconds = sw.Elapsed.TotalSeconds;
-        engine.Commit();
-        engine.OpenSearcher();
-        var indexSeconds = sw.Elapsed.TotalSeconds;
-        Console.Error.WriteLine($"{data.Name}: indexed {docCount} docs in {indexSeconds:F1}s ({addSeconds:F1}s adding), {engine.IndexSizeBytes() / 1048576} MiB");
+            var parts = File.ReadAllText(marker).Split(' ');
+            docCount = long.Parse(parts[0], System.Globalization.CultureInfo.InvariantCulture);
+            var open = Stopwatch.StartNew();
+            engine.Create(new EngineSettings(indexDir, AnalysisKind.English, IndexProfile.Beir));
+            engine.OpenSearcher();
+            indexSeconds = double.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture);
+            Console.Error.WriteLine($"{data.Name}: reopened {docCount} docs in {open.Elapsed.TotalSeconds:F1}s");
+        }
+        else
+        {
+            if (Directory.Exists(indexDir))
+            {
+                Directory.Delete(indexDir, true);
+            }
+
+            var sw = Stopwatch.StartNew();
+            engine.Create(new EngineSettings(indexDir, AnalysisKind.English, IndexProfile.Beir));
+            var added = 0L;
+            Parallel.ForEach(data.ReadCorpus(), options, doc =>
+            {
+                engine.Add(doc);
+                Interlocked.Increment(ref added);
+            });
+            docCount = added;
+            var addSeconds = sw.Elapsed.TotalSeconds;
+            engine.Commit();
+            indexSeconds = sw.Elapsed.TotalSeconds;
+            Console.Error.WriteLine($"{data.Name}: indexed {docCount} docs in {indexSeconds:F1}s ({addSeconds:F1}s adding), {engine.IndexSizeBytes() / 1048576} MiB");
+            if (phase == "index")
+            {
+                File.WriteAllText(marker, string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{docCount} {indexSeconds}"));
+                return [];
+            }
+
+            engine.OpenSearcher();
+        }
 
         var outcomes = new List<RunOutcome>();
         foreach (var setting in Settings())

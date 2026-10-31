@@ -16,17 +16,19 @@ public static class Workload
         .Integral("n")
         .Build();
 
-    /// <summary>Small buffers and a low merge threshold so that a short workload flushes and merges often.</summary>
+    /// <summary>
+    /// The engine's default codec set (text, columns, points, stored source) with small buffers and a low merge threshold, so that a
+    /// short workload flushes and merges often. The schema has a keyword, a text and a numeric field, all stored.
+    /// </summary>
     public static IndexWriterOptions Options(IMergeScheduler? scheduler = null, int maxBuffered = 6, bool autoMerge = true) => new()
     {
-        Codecs = [new StoredDocumentCodec()],
         MaxBufferedDocuments = maxBuffered,
         MergePolicy = new TieredMergePolicy { SegmentsPerTier = 3, MaxMergeAtOnce = 3, FloorSegmentDocs = 4, DeletesPctAllowed = 50 },
         MergeScheduler = scheduler,
         AutoMerge = autoMerge,
     };
 
-    public static IReadOnlyList<ISegmentCodec> Codecs { get; } = [new StoredDocumentCodec()];
+    public static IReadOnlyList<ISegmentCodec> Codecs => OneIndex.Codecs.SegmentCodecs.CreateDefault();
 
     public enum Kind
     {
@@ -144,7 +146,7 @@ public static class Workload
         for (int s = 0; s < snapshot.SegmentCount; s++)
         {
             SegmentReader seg = snapshot.GetSegment(s);
-            IStoredFieldsReader stored = seg.GetPart<IStoredFieldsReader>() ?? throw new InvalidDataException($"segment {seg.Info.Name} has no stored documents");
+            IStoredFieldsReader stored = seg.GetPart<IStoredFieldsSource>()?.StoredFields ?? throw new InvalidDataException($"segment {seg.Info.Name} has no stored documents");
             for (int d = 0; d < seg.MaxDoc; d++)
             {
                 if (!seg.Live.IsLive(d))
@@ -196,6 +198,50 @@ public static class Workload
             if (!listed.Contains(name))
             {
                 return name;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Runs fixed queries through the search engine on a snapshot and compares each result set with what the verified rows imply:
+    /// a keyword term, a text term, a numeric range and a boolean combination of the two. A mismatch means the indexes disagree with the stored source.
+    /// </summary>
+    public static string? CheckSearch(IndexSnapshot snapshot, SortedDictionary<string, string> rows)
+    {
+        SearchContext context = SnapshotSearch.CreateContext(snapshot);
+        var searcher = new IndexSearcher(context, new QueryEngine());
+        static (string Tag, string Body, long N) Parse(string fingerprint)
+        {
+            string[] p = fingerprint.Split('|');
+            return (p[0], p[1], long.Parse(p[2], System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        string someBody = rows.Count > 0 ? Parse(rows.First().Value).Body : "body 0";
+        string someNumber = someBody[(someBody.LastIndexOf(' ') + 1)..];
+        var cases = new (string Name, Query Query, Func<(string Tag, string Body, long N), bool> Expect)[]
+        {
+            ("tag=t1", new TermQuery("tag", "t1"), r => r.Tag == "t1"),
+            ("body:body", new TermQuery("body", "body"), _ => true),
+            ($"body:{someNumber}", new TermQuery("body", someNumber), r => r.Body == someBody),
+            ("n in [250000,750000)", new RangeQuery("n", FieldValue.FromInt64(250_000), FieldValue.FromInt64(750_000)) { IncludeUpper = false }, r => r.N >= 250_000 && r.N < 750_000),
+            ("tag=t0 and n>=500000", new BooleanQuery([new BooleanClause(new TermQuery("tag", "t0"), Occur.Must), new BooleanClause(new RangeQuery("n", FieldValue.FromInt64(500_000), null), Occur.Must)]), r => r.Tag == "t0" && r.N >= 500_000),
+        };
+        foreach ((string name, Query query, Func<(string Tag, string Body, long N), bool> expect) in cases)
+        {
+            TopDocs top = searcher.Search(query, 10_000, countExactly: true);
+            var found = new SortedSet<string>(StringComparer.Ordinal);
+            foreach (ScoreDoc hit in top.Hits)
+            {
+                LeafContext leaf = context.Leaves.Last(l => l.DocBase <= hit.DocId);
+                found.Add(leaf.Reader.StoredFields!.GetDocument(hit.DocId - leaf.DocBase).Get("id").AsText());
+            }
+
+            var wanted = new SortedSet<string>(rows.Where(r => expect(Parse(r.Value))).Select(r => r.Key), StringComparer.Ordinal);
+            if (!wanted.SetEquals(found) || top.TotalHits != wanted.Count)
+            {
+                return $"search '{name}' found {found.Count} documents ({top.TotalHits} total), the content implies {wanted.Count}";
             }
         }
 

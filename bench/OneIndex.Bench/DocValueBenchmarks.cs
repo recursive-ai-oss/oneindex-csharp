@@ -203,7 +203,7 @@ public class DocValueBenchmarks
         Schema schema = new SchemaBuilder().Id("id").Integral("price").Date("ts")
             .Add(new FieldDefinition("category", FieldType.Keyword) { Column = true }).Text("title").Build();
         (IndexSnapshot a, IndexSearcher sa) = Build(schema, SegmentCodecs.CreateDefault());
-        (IndexSnapshot b, IndexSearcher sb) = Build(schema, [new TextSegmentCodec(), new ColumnSegmentCodec(), new StoredSegmentCodec()]);
+        (IndexSnapshot b, IndexSearcher sb) = Build(schema, [new TextSegmentCodec { IndexNumericTerms = true }, new ColumnSegmentCodec(), new StoredSegmentCodec()]);
         _points = a;
         _pointSearcher = sa;
         _terms = b;

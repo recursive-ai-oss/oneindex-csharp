@@ -206,6 +206,48 @@ public sealed class LuceneEngine : ITextEngine
         return new SearchResult(hits, docs.TotalHits);
     }
 
+    /// <summary>The public Explain output of the top hit of a query, and of the hit at rank 10 (a black-box look at how Lucene.NET forms a score).</summary>
+    /// <param name="m">The query.</param>
+    /// <returns>Text.</returns>
+    public string ExplainTop(MatchQuery m)
+    {
+        var q = MatchToLucene(m);
+        var docs = _searcher!.Search(q, 10);
+        var sb = new System.Text.StringBuilder();
+        foreach (var rank in new[] { 0, docs.ScoreDocs.Length - 1 })
+        {
+            if (rank < 0)
+            {
+                continue;
+            }
+
+            var sd = docs.ScoreDocs[rank];
+            sb.AppendLine($"-- rank {rank + 1} id {_searcher.Doc(sd.Doc, IdOnly).Get("id")} score {sd.Score}");
+            sb.AppendLine(_searcher.Explain(q, sd.Doc).ToString());
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>The terms Lucene's English analyzer makes of a text, in order (observed through its public token stream API).</summary>
+    /// <param name="text">The text.</param>
+    /// <returns>The terms.</returns>
+    public static IReadOnlyList<string> Analyze(string text)
+    {
+        using var analyzer = new EnglishAnalyzer(Version48);
+        using var stream = analyzer.GetTokenStream("f", new StringReader(text));
+        var term = stream.AddAttribute<Lucene.Net.Analysis.TokenAttributes.ICharTermAttribute>();
+        var terms = new List<string>();
+        stream.Reset();
+        while (stream.IncrementToken())
+        {
+            terms.Add(term.ToString());
+        }
+
+        stream.End();
+        return terms;
+    }
+
     private static BooleanQuery Terms(string[] terms)
     {
         var q = new BooleanQuery();

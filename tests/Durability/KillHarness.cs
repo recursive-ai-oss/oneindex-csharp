@@ -209,20 +209,16 @@ public static class KillHarness
             gen = commit.Generation;
             using IndexSnapshot snap = IndexSnapshot.Open(storage, Workload.Codecs);
             snap.Verify();
-            hash = Workload.HashRows(Workload.ReadContent(snap));
+            SortedDictionary<string, string> content = Workload.ReadContent(snap);
+            hash = Workload.HashRows(content);
             if (gen < ackGen)
             {
                 return $"lost commit: generation {gen} is open but {ackGen} was acknowledged";
             }
 
-            if (gen == ackGen && hash == ackHash)
+            if ((gen == ackGen && hash == ackHash) || (gen == ackGen + 1 && pre is not null && hash == pre))
             {
-                return null;
-            }
-
-            if (gen == ackGen + 1 && pre is not null && hash == pre)
-            {
-                return null;
+                return Workload.CheckSearch(snap, content) is { } searchFailure ? $"wrong search results at generation {gen}: {searchFailure}" : null;
             }
 
             return $"silently wrong: generation {gen} content {hash}, acknowledged generation {ackGen} content {ackHash}, in-flight content {pre ?? "none"}";
