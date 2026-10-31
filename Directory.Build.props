@@ -1,0 +1,44 @@
+<Project>
+
+  <PropertyGroup Label="Name">
+    <!-- The one place the package prefix lives: the core package is $(PackagePrefix), the others add a suffix. -->
+    <PackagePrefix>RecursiveAI.OneIndex</PackagePrefix>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Output">
+    <!-- Build output stays out of the checkout. Set ONEINDEX_ARTIFACTS to choose where; the default is a folder in the user's
+         local application data. -->
+    <ArtifactsPath Condition="'$(ONEINDEX_ARTIFACTS)' != ''">$(ONEINDEX_ARTIFACTS)</ArtifactsPath>
+    <ArtifactsPath Condition="'$(ONEINDEX_ARTIFACTS)' == ''">$([System.Environment]::GetFolderPath(SpecialFolder.LocalApplicationData))/oneindex-artifacts</ArtifactsPath>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Language and analysis">
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <!-- Safe, bounds-checked C# throughout: no pointers, no reinterpret casts. -->
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <Deterministic>true</Deterministic>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Version">
+    <!-- The one place the version lives; every package shares it. -->
+    <Version>0.1.0-preview.1</Version>
+  </PropertyGroup>
+
+  <ItemGroup Label="Global usings (implicit usings are off so that the set is explicit)">
+    <Using Include="System" />
+    <Using Include="System.Collections.Generic" />
+    <Using Include="System.IO" />
+    <Using Include="System.Linq" />
+    <Using Include="System.Threading" />
+    <Using Include="System.Threading.Tasks" />
+  </ItemGroup>
+
+</Project>

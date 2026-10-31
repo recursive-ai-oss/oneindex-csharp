@@ -1,0 +1,27 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/OneIndex/OneIndex.csproj" />
+    <Project Path="src/OneIndex.Generators/OneIndex.Generators.csproj" />
+    <Project Path="src/OneIndex.Models/OneIndex.Models.csproj" />
+    <Project Path="src/OneIndex.Analysis.Asian/OneIndex.Analysis.Asian.csproj" />
+    <Project Path="src/OneIndex.EntityFrameworkCore/OneIndex.EntityFrameworkCore.csproj" />
+    <Project Path="src/OneIndex.VectorData/OneIndex.VectorData.csproj" />
+    <Project Path="src/OneIndex.Files/OneIndex.Files.csproj" />
+    <Project Path="src/OneIndex.Files.Ocr/OneIndex.Files.Ocr.csproj" />
+    <Project Path="src/OneIndex.Cli/OneIndex.Cli.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/OneIndex.Tests/OneIndex.Tests.csproj" />
+    <Project Path="tests/Durability/Durability.csproj" />
+    <Project Path="tests/Relevance/Relevance.csproj" />
+    <Project Path="tests/Differential/Differential.csproj" />
+    <Project Path="tests/AotSmoke/AotSmoke.csproj" />
+    <Project Path="tests/WasmSmoke/WasmSmoke.csproj" />
+  </Folder>
+  <Folder Name="/bench/">
+    <Project Path="bench/OneIndex.Bench/OneIndex.Bench.csproj" />
+  </Folder>
+  <Folder Name="/fuzz/">
+    <Project Path="fuzz/OneIndex.Fuzz/OneIndex.Fuzz.csproj" />
+  </Folder>
+</Solution>

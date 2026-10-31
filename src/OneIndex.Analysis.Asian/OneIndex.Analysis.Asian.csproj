@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>OneIndex.Analysis.Asian</RootNamespace>
+    <PackageId>$(PackagePrefix).Analysis.Asian</PackageId>
+    <Description>Japanese, Chinese, Korean and Southeast Asian word segmentation for OneIndex. Part of the OneIndex embedded search engine; unaffiliated with other products named OneIndex, OneSearch or similar.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../OneIndex/OneIndex.csproj" />
+  </ItemGroup>
+
+</Project>

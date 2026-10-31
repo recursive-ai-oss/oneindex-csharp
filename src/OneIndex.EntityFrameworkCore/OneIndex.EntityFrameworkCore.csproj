@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>OneIndex.EntityFrameworkCore</RootNamespace>
+    <PackageId>$(PackagePrefix).EntityFrameworkCore</PackageId>
+    <Description>Entity Framework Core integration for OneIndex: keeps a search index in step with SaveChanges through a transactional outbox. Part of the OneIndex embedded search engine; unaffiliated with other products named OneIndex, OneSearch or similar.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../OneIndex/OneIndex.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+  </ItemGroup>
+
+</Project>

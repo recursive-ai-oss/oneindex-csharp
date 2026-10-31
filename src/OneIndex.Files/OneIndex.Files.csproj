@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>OneIndex.Files</RootNamespace>
+    <PackageId>$(PackagePrefix).Files</PackageId>
+    <Description>Folder indexing for OneIndex: walks, extracts, chunks and cites documents through OnePDF, onehtml and onearchive. Part of the OneIndex embedded search engine; unaffiliated with other products named OneIndex, OneSearch or similar.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../OneIndex/OneIndex.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="RecursiveAI.OnePdf" />
+    <PackageReference Include="RecursiveAI.OneHtml" />
+    <PackageReference Include="RecursiveAI.OneArchive" />
+  </ItemGroup>
+
+</Project>

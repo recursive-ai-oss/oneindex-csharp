@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>OneIndex.Models</RootNamespace>
+    <PackageId>$(PackagePrefix).Models</PackageId>
+    <Description>Embedders, reranker and learned sparse encoders for OneIndex, running on OneModel. Part of the OneIndex embedded search engine; unaffiliated with other products named OneIndex, OneSearch or similar.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../OneIndex/OneIndex.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="RecursiveAI.OneModel" />
+  </ItemGroup>
+
+</Project>

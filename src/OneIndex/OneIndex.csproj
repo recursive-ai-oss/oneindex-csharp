@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>OneIndex</RootNamespace>
+    <PackageId>$(PackagePrefix)</PackageId>
+    <Description>An embedded search engine for .NET: full-text (BM25F), vector (HNSW) and hybrid search in one in-process library with no native code and no server. Unaffiliated with other products named OneIndex, OneSearch or similar.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="OneIndex.Tests" />
+    <InternalsVisibleTo Include="OneIndex.Fuzz" />
+    <InternalsVisibleTo Include="OneIndex.Bench" />
+  </ItemGroup>
+
+  <!-- The source generator ships inside this package as an analyzer; it is built first and is not a runtime dependency. -->
+  <ItemGroup>
+    <ProjectReference Include="../OneIndex.Generators/OneIndex.Generators.csproj" ReferenceOutputAssembly="false" OutputItemType="Analyzer" />
+    <None Include="$(ArtifactsPath)/bin/OneIndex.Generators/$(Configuration.ToLowerInvariant())/OneIndex.Generators.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+  </ItemGroup>
+
+</Project>

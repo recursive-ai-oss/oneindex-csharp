@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>OneIndex.Files.Ocr</RootNamespace>
+    <PackageId>$(PackagePrefix).Files.Ocr</PackageId>
+    <Description>OCR for OneIndex folder indexing, through oneocr. Part of the OneIndex embedded search engine; unaffiliated with other products named OneIndex, OneSearch or similar.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../OneIndex/OneIndex.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="RecursiveAI.OneOcr" />
+  </ItemGroup>
+
+</Project>

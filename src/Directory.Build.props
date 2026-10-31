@@ -1,0 +1,39 @@
+<Project>
+
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <PropertyGroup Label="Reproducible packages">
+    <!-- Path mapping applies to the packages only (projects under src/). Test projects keep real paths because some tests locate
+         their data from [CallerFilePath]. -->
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Package metadata">
+    <Authors>Recursive AI, LLC</Authors>
+    <Company>Recursive AI, LLC</Company>
+    <Copyright>Copyright (c) Recursive AI, LLC</Copyright>
+    <PackageLicenseExpression>MIT OR Apache-2.0</PackageLicenseExpression>
+    <PackageReadmeFile>PACKAGE.md</PackageReadmeFile>
+    <PackageTags>search;full-text;vector;hnsw;bm25;embedded;lucene;lucene.net;meilisearch-alternative;tantivy-alternative;nativeaot;trimmable</PackageTags>
+    <PackageReleaseNotes>See CHANGELOG.md in the repository.</PackageReleaseNotes>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/recursive-ai-oss/oneindex-csharp</RepositoryUrl>
+    <PackageProjectUrl>https://recursiveai.org/oneindex/</PackageProjectUrl>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <EnablePackageValidation>true</EnablePackageValidation>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)../PACKAGE.md" Pack="true" PackagePath="/" Visible="false" />
+    <None Include="$(MSBuildThisFileDirectory)../LICENSE-MIT" Pack="true" PackagePath="/" Visible="false" />
+    <None Include="$(MSBuildThisFileDirectory)../LICENSE-APACHE" Pack="true" PackagePath="/" Visible="false" />
+    <None Include="$(MSBuildThisFileDirectory)../THIRD-PARTY-NOTICES.md" Pack="true" PackagePath="/" Visible="false" />
+  </ItemGroup>
+
+</Project>
