@@ -150,7 +150,25 @@ public static class QueryJson
 
         using (doc)
         {
-            return new QueryJsonReader(schema).ReadRequest(doc.RootElement);
+            QueryRequest request = new QueryJsonReader(schema).ReadRequest(doc.RootElement);
+            CheckWrittenDepth(request, schema);
+            return request;
+        }
+    }
+
+    // Text, strict and filter nodes are compiled when read and written back as their expanded trees. The expansion
+    // must stay inside the same depth bound, so that every accepted document writes a document that reads back.
+    private static void CheckWrittenDepth(QueryRequest request, Schema schema)
+    {
+        byte[] written = Encoding.UTF8.GetBytes(Write(request));
+        try
+        {
+            using JsonDocument again = JsonDocument.Parse(written, new JsonDocumentOptions { MaxDepth = 4 * MaxNodeDepth });
+            _ = new QueryJsonReader(schema).ReadRequest(again.RootElement);
+        }
+        catch (Exception e) when (e is JsonException or QueryParseException)
+        {
+            throw QueryParseException.AtPath("$", $"The queries expand to a tree nested deeper than the limit of {MaxNodeDepth.ToString(CultureInfo.InvariantCulture)} levels.", null, null);
         }
     }
 

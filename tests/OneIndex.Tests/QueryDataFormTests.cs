@@ -261,6 +261,26 @@ public class QueryDataFormTests
     }
 
     [Fact]
+    public void JsonSugarThatExpandsPastTheDepthLimitIsRejectedAtRead()
+    {
+        // Found by the query JSON fuzz target: a strict text of stacked NOTs is within the input depth but writes a much deeper tree.
+        string path = Path.Combine(Path.GetDirectoryName(ThisFile())!, "..", "..", "testdata", "fuzz", "queryjson-strict-depth.json");
+        byte[] bytes = File.ReadAllBytes(path);
+        if (QueryJson.TryRead(Encoding.UTF8.GetString(bytes), Schema, out QueryRequest? request, out QueryParseException? error))
+        {
+            Assert.True(QueryJson.TryRead(QueryJson.Write(request), Schema, out QueryRequest? again, out _));
+            Assert.True(request.Equals(again));
+        }
+        else
+        {
+            Assert.DoesNotContain("not valid JSON", error.Detail, StringComparison.Ordinal);
+            Assert.Equal("$", error.Path);
+        }
+    }
+
+    private static string ThisFile([System.Runtime.CompilerServices.CallerFilePath] string path = "") => path;
+
+    [Fact]
     public void JsonErrorsNameThePath()
     {
         var f = new List<string>();
