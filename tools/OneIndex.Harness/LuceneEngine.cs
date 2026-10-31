@@ -145,6 +145,27 @@ public sealed class LuceneEngine : ITextEngine
 
                 all.Add(new LucenePrefixQuery(new Term("text", px.Prefix)), Occur.MUST);
                 return Run(searcher.Search(all, k));
+            case TypoQuery ty:
+                // Lucene has no Levenshtein over word beginnings: a typed word is matched as a beginning or as a whole word with typos
+                // (the first character fixed, which is the one-typo case of the first-character rule). An approximation, reported as such.
+                int edits = ty.Word.Length >= 9 ? 2 : ty.Word.Length >= 5 ? 1 : 0;
+                Query typo = edits == 0 ? new TermQuery(new Term("text", ty.Word)) : new LuceneFuzzyQuery(new Term("text", ty.Word), edits, 1);
+                if (ty.Prefix)
+                {
+                    var either = new BooleanQuery();
+                    either.Add(new LucenePrefixQuery(new Term("text", ty.Word)), Occur.SHOULD);
+                    either.Add(typo, Occur.SHOULD);
+                    typo = either;
+                }
+
+                var withRequired = new BooleanQuery();
+                foreach (var term in ty.Required)
+                {
+                    withRequired.Add(new TermQuery(new Term("text", term)), Occur.MUST);
+                }
+
+                withRequired.Add(typo, Occur.MUST);
+                return Run(searcher.Search(withRequired, k));
             case FuzzyQuery f:
                 return Run(searcher.Search(new LuceneFuzzyQuery(new Term("text", f.Term), f.MaxEdits), k));
             case FilteredQuery fq:

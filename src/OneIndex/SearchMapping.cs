@@ -113,6 +113,9 @@ public abstract class SearchMapping<T>
     /// <exception cref="InvalidOperationException">The type has no <see cref="SearchIdAttribute"/> member, or an analyzer is not registered.</exception>
     public Schema Schema => _schema ??= BuildSchema();
 
+    /// <summary>The text settings the type's class-level attributes declare. The generated mapping overrides this; the default is <see cref="TextSettings.Default"/>.</summary>
+    protected virtual TextSettings CreateSettings() => TextSettings.Default;
+
     /// <summary>Finds a member by property name.</summary>
     /// <param name="name">The property name.</param>
     /// <param name="member">The member when found.</param>
@@ -136,7 +139,7 @@ public abstract class SearchMapping<T>
 
     private Schema BuildSchema()
     {
-        var builder = new SchemaBuilder();
+        var builder = new SchemaBuilder { Settings = CreateSettings() };
         MappedMember? id = null;
         foreach (MappedMember m in _members)
         {

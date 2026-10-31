@@ -92,3 +92,9 @@ BEIR-convention variants of 24 runs): four decimals and far beyond.
 
 Indexing time (8 threads, one commit): SciFact 1.8 s, ArguAna 1.0 s, SCIDOCS 1.6 s, NQ 26.8 s (index 1.1 GiB). All six settings for NQ
 answered 3,452 queries in 15 to 22 s each.
+
+## Typo tolerance on (information)
+
+`ONEINDEX_TYPO=on` makes the OneIndex adapter match the Bm25F layout with `TypoTermQuery` (default typo budgets on the analyzed word, the
+typo and exactness factors, no prefix matching). It is information only; the gated runs leave it off, where queries are exactly the plain
+BM25F term queries.

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
 using System.Text;
@@ -170,10 +171,97 @@ public sealed class MappingGenerator : IIncrementalGenerator
         result.HintName = safe + ".Mapping.g.cs";
         if (result.Diagnostics.Count == 0)
         {
-            result.Source = Emit(type, safe, members);
+            result.Source = Emit(type, safe, members, DescribeSettings(type));
         }
 
         return result;
+    }
+
+    // Class-level settings attributes become an object initializer over the runtime TextSettings, so the generated code holds plain
+    // literals and nothing is discovered by reflection at run time.
+    private static string? DescribeSettings(INamedTypeSymbol type)
+    {
+        string? typo = null;
+        string? prefix = null;
+        var synonyms = new List<string>();
+        var stop = new List<string>();
+        foreach (AttributeData a in type.GetAttributes())
+        {
+            if (!IsOurs(a))
+            {
+                continue;
+            }
+
+            switch (a.AttributeClass!.Name)
+            {
+                case "TypoToleranceAttribute":
+                    var parts = new List<string>();
+                    foreach (KeyValuePair<string, TypedConstant> n in a.NamedArguments)
+                    {
+                        string? value = n.Value.Kind == TypedConstantKind.Array ? StringArray(n.Value) : n.Value.Value is bool b ? (b ? "true" : "false") : n.Value.Value is int i ? i.ToString(CultureInfo.InvariantCulture) : null;
+                        if (value is not null)
+                        {
+                            parts.Add(n.Key + " = " + value);
+                        }
+                    }
+
+                    typo = "new global::OneIndex.Index.TypoSettings { " + string.Join(", ", parts) + " }";
+                    break;
+                case "PrefixSearchAttribute":
+                    prefix = a.ConstructorArguments.Length == 0 || a.ConstructorArguments[0].Value is not false ? "true" : "false";
+                    break;
+                case "SynonymsAttribute":
+                    synonyms.Add("new global::OneIndex.Index.SynonymRule(" + ParamsArray(a, 0) + ", global::System.Array.Empty<string>())");
+                    break;
+                case "OneWaySynonymsAttribute":
+                    synonyms.Add("new global::OneIndex.Index.SynonymRule(new string[] { " + Lit(a.ConstructorArguments[0].Value as string ?? string.Empty) + " }, " + ParamsArray(a, 1) + ")");
+                    break;
+                case "StopWordsAttribute":
+                    stop.AddRange(ParamsItems(a, 0));
+                    break;
+            }
+        }
+
+        if (typo is null && prefix is null && synonyms.Count == 0 && stop.Count == 0)
+        {
+            return null;
+        }
+
+        var init = new List<string>();
+        if (typo is not null)
+        {
+            init.Add("Typo = " + typo);
+        }
+
+        if (prefix is not null)
+        {
+            init.Add("PrefixSearch = " + prefix);
+        }
+
+        if (synonyms.Count > 0)
+        {
+            init.Add("Synonyms = new global::System.Collections.Generic.List<global::OneIndex.Index.SynonymRule> { " + string.Join(", ", synonyms) + " }");
+        }
+
+        if (stop.Count > 0)
+        {
+            init.Add("StopWords = new string[] { " + string.Join(", ", stop) + " }");
+        }
+
+        return "new global::OneIndex.Index.TextSettings { " + string.Join(", ", init) + " }";
+    }
+
+    private static string StringArray(TypedConstant c)
+        => "new string[] { " + string.Join(", ", c.Values.Select(v => Lit(v.Value as string ?? string.Empty))) + " }";
+
+    // The arguments of a params string[] constructor parameter starting at the given index, as an array expression.
+    private static string ParamsArray(AttributeData a, int from) => "new string[] { " + string.Join(", ", ParamsItems(a, from)) + " }";
+
+    private static List<string> ParamsItems(AttributeData a, int from)
+    {
+        ImmutableArray<TypedConstant> args = a.ConstructorArguments;
+        IEnumerable<TypedConstant> items = args.Length == from + 1 && args[from].Kind == TypedConstantKind.Array ? args[from].Values : args.Skip(from);
+        return items.Select(v => Lit(v.Value as string ?? string.Empty)).ToList();
     }
 
     private static List<string> ContainingChain(INamedTypeSymbol type)
@@ -418,7 +506,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
         return sb.Append('"').ToString();
     }
 
-    private static string Emit(INamedTypeSymbol type, string safe, List<Member> members)
+    private static string Emit(INamedTypeSymbol type, string safe, List<Member> members, string? settings)
     {
         string t = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
         var sb = new StringBuilder();
@@ -442,6 +530,12 @@ public sealed class MappingGenerator : IIncrementalGenerator
         sb.AppendLine("        {");
         sb.AppendLine("        }");
         sb.AppendLine();
+        if (settings is not null)
+        {
+            sb.AppendLine("        protected override global::OneIndex.Index.TextSettings CreateSettings() => " + settings + ";");
+            sb.AppendLine();
+        }
+
         sb.AppendLine("        public override string? GetId(" + t + " value) => " + (members.FirstOrDefault(m => m.IsId) is { } id ? "value." + id.Name : "null") + ";");
         sb.AppendLine();
         sb.AppendLine("        public override global::OneIndex.Index.Document ToDocument(" + t + " value)");

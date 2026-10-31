@@ -47,6 +47,22 @@ The paper gives no rule for the two constants (it reports that 0.5 < b < 0.8 and
 
 `null` means the document does not match.
 
+## Typo and exactness factors
+
+User text with typo tolerance or as-you-type expands a query word to the indexed words it can match (`docs/typo-tolerance.md`). Each
+expanded word is an ordinary BM25F term (its own idf) with a boost:
+
+    boost = typo factor * exactness factor
+    typo factor      = 1 / (1 + typos)        typos 0, 1, 2 -> 1, 0.5, 0.333
+    exactness factor = 1 whole word, 0.8 a longer word that only begins like the query word
+
+A document's score is the sum over the expansions it contains, as for any disjunction. `Explain` lists every matched expansion:
+
+    query word 'planet' matched 'plnaet' (whole word with typos, 1 typos): typo factor 0.5 = 1 / (1 + typos), exactness factor 1, boost 0.5
+
+with the term's own explanation below it. With typos and prefix matching off the query is a plain term query: no factor, same scores
+as before. Proximity and the other Meilisearch-style rules are not part of this; they belong to the optional ranking rules.
+
 ## Relevance results
 
 See the results table at the end of [relevance.md](relevance.md) for the measured nDCG@10 per set, the baselines and Lucene.NET.

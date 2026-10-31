@@ -81,6 +81,12 @@ public sealed record PrefixQuery(string[] Required, string Prefix) : HarnessQuer
 /// <summary>Documents containing a term within <paramref name="MaxEdits"/> Levenshtein edits of <paramref name="Term"/> (transpositions count as one edit unless the engine cannot).</summary>
 public sealed record FuzzyQuery(string Term, int MaxEdits) : HarnessQuery;
 
+/// <summary>
+/// A word with typo tolerance (Meilisearch's default budgets: one typo from 5 characters, two from 9, a first-character typo counting as
+/// two), alone or as the word being typed after <paramref name="Required"/> terms (<paramref name="Prefix"/>: it also matches words that begin like it).
+/// </summary>
+public sealed record TypoQuery(string[] Required, string Word, bool Prefix) : HarnessQuery;
+
 /// <summary>A terms query restricted to documents with the numeric column in range and the keyword column among the categories.</summary>
 public sealed record FilteredQuery(string[] Terms, long MinLength, long MaxLength, string[] Categories) : HarnessQuery;
 

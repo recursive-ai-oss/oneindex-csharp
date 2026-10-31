@@ -99,6 +99,103 @@ public sealed class QueryEngine : IWeightFactory
             return TermWeight.Create(context, options.Bm25, fields, query.Term, query.Boost);
         }
 
+        public override Weight VisitTypoTerm(TypoTermQuery query)
+        {
+            CheckBoost(query);
+            if (query.Fields.Count == 0)
+            {
+                throw new QueryException("A typo-tolerant term query needs at least one field.");
+            }
+
+            if (query.MaxTypos is < 0 or > 2)
+            {
+                throw new QueryException($"The typos of a term query are 0 to 2, got {query.MaxTypos}.");
+            }
+
+            var defs = new List<FieldDefinition>();
+            foreach (string name in query.Fields)
+            {
+                FieldDefinition f = RequireTextField(name);
+                if (defs.Contains(f))
+                {
+                    throw new QueryException($"Field '{name}' is listed twice in a typo-tolerant term query.");
+                }
+
+                defs.Add(f);
+            }
+
+            // Gather the candidate words per field, then cost each once with the reference computation (the automata only narrow the scan).
+            var candidates = new SortedDictionary<byte[], (List<FieldDefinition> Fields, long DocFreq)>(ByteArrayOrder.Instance);
+            foreach (FieldDefinition def in defs)
+            {
+                int budget = query.ExactFields.Contains(def.Name) ? 0 : query.MaxTypos;
+                int scanned = 0;
+                foreach (LeafContext leaf in context.Leaves)
+                {
+                    if (leaf.Reader.GetTextField(def.Name) is not { } reader)
+                    {
+                        continue;
+                    }
+
+                    TypoCandidates.Collect(reader, query.Term, budget, query.Prefix, (term, df) =>
+                    {
+                        if (++scanned > ScanCeiling)
+                        {
+                            return;
+                        }
+
+                        if (!candidates.TryGetValue(term, out var entry))
+                        {
+                            entry = ([], 0);
+                        }
+
+                        if (!entry.Fields.Contains(def))
+                        {
+                            entry.Fields.Add(def);
+                        }
+
+                        candidates[term] = (entry.Fields, entry.DocFreq + df);
+                    });
+                }
+            }
+
+            var accepted = new List<(byte[] Term, string Text, TypoMatch Match, List<FieldDefinition> Fields, long DocFreq)>();
+            foreach ((byte[] term, (List<FieldDefinition> fields, long df)) in candidates)
+            {
+                string text = Encoding.UTF8.GetString(term);
+                TypoMatch? m = TypoRanking.Match(query.Term, text, query.MaxTypos, query.Prefix);
+                if (m is not { } match)
+                {
+                    continue;
+                }
+
+                // A field that allows no typos only takes matches without them.
+                List<FieldDefinition> allowed = fields.FindAll(f => match.Typos == 0 || !query.ExactFields.Contains(f.Name));
+                if (allowed.Count > 0)
+                {
+                    accepted.Add((term, text, match, allowed, df));
+                }
+            }
+
+            // Past the limit keep the closest and then the most frequent words; unlike the other expansions this never throws, because it
+            // serves user text, which must not fail on a short word.
+            IEnumerable<(byte[] Term, string Text, TypoMatch Match, List<FieldDefinition> Fields, long DocFreq)> chosen = accepted;
+            if (accepted.Count > options.MaxExpandedTerms)
+            {
+                chosen = accepted.OrderBy(static a => a.Match.Typos).ThenBy(static a => a.Match.IsPrefixExtension).ThenByDescending(static a => a.DocFreq)
+                    .ThenBy(static a => a.Term, ByteArrayOrder.Instance).Take(options.MaxExpandedTerms).OrderBy(static a => a.Term, ByteArrayOrder.Instance);
+            }
+
+            var children = new List<(Weight, Occur)>();
+            foreach ((byte[] term, string text, TypoMatch match, List<FieldDefinition> fields, _) in chosen)
+            {
+                Weight w = TermWeight.Create(context, options.Bm25, fields, term, query.Boost * match.Factor);
+                children.Add((new TypoMatchWeight(w, query.Term, text, match), Occur.Should));
+            }
+
+            return children.Count == 0 ? EmptyWeight.Instance : children.Count == 1 ? children[0].Item1 : new BooleanWeight(children, 0, 1f);
+        }
+
         public override Weight VisitPhrase(PhraseQuery query)
         {
             CheckBoost(query);

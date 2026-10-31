@@ -39,7 +39,7 @@ public sealed class OneIndexEngine : ITextEngine
     }
 
     /// <inheritdoc/>
-    public bool Supports(Type queryType) => queryType == typeof(MatchQuery) || queryType == typeof(TermsQuery) || queryType == typeof(FacetQuery) || queryType == typeof(StatsQuery);
+    public bool Supports(Type queryType) => queryType == typeof(MatchQuery) || queryType == typeof(PrefixQuery) || queryType == typeof(FuzzyQuery) || queryType == typeof(TypoQuery) || queryType == typeof(TermsQuery) || queryType == typeof(FacetQuery) || queryType == typeof(StatsQuery);
 
     /// <inheritdoc/>
     public void Create(EngineSettings settings)
@@ -134,6 +134,9 @@ public sealed class OneIndexEngine : ITextEngine
             TermsQuery t => TermsOf(t.Terms),
             FacetQuery f => TermsOf(f.Terms),
             StatsQuery st => TermsOf(st.Terms),
+            PrefixQuery px => With(px.Required, new global::OneIndex.Search.PrefixQuery("text", px.Prefix)),
+            FuzzyQuery fz => new global::OneIndex.Search.FuzzyQuery("text", fz.Term) { MaxEdits = fz.MaxEdits },
+            TypoQuery ty => With(ty.Required, new TypoTermQuery(["text"], ty.Word) { MaxTypos = new TypoSettings().Budget(ty.Word.Length), Prefix = ty.Prefix }),
             _ => throw new NotSupportedException(query.GetType().Name),
         };
         if (query is FacetQuery)
@@ -207,9 +210,16 @@ public sealed class OneIndexEngine : ITextEngine
         _writer?.Dispose();
     }
 
+    // The required terms must all appear; the last clause is the one whose expansion is being measured.
+    private static BooleanQuery With(string[] required, Query last)
+        => new([.. required.Select(t => new BooleanClause(new TermQuery("text", t), Occur.Must)), new BooleanClause(last, Occur.Must)]);
+
     private static BooleanQuery TermsOf(string[] terms) => new([.. terms.Select(x => new BooleanClause(new TermQuery("text", x), Occur.Should))]);
 
     private QueryEngineOptions Engine() => new() { Bm25 = new Bm25Parameters(_k1, _b) };
+
+    // Information runs only: ONEINDEX_TYPO=on matches the Bm25F layout's words with the default typo budgets and the typo factor.
+    private static readonly bool TypoTolerant = Environment.GetEnvironmentVariable("ONEINDEX_TYPO") == "on";
 
     private static BooleanQuery Match(MatchQuery m)
     {
@@ -225,6 +235,7 @@ public sealed class OneIndexEngine : ITextEngine
         IEnumerable<Query> perTerm = m.Layout switch
         {
             FieldLayout.Flat => terms.Select(t => new TermQuery("all", t)),
+            FieldLayout.Bm25F when TypoTolerant => terms.Select(t => (Query)new TypoTermQuery(["title", "text"], t) { MaxTypos = new TypoSettings().Budget(t.Length) }),
             FieldLayout.Bm25F => terms.Select(t => new MultiFieldTermQuery(["title", "text"], t)),
             FieldLayout.MultiFieldSum => terms.SelectMany(t => new Query[] { new TermQuery("title", t), new TermQuery("text", t) }),
             _ => throw new NotSupportedException($"{m.Layout} needs a dis-max query, which OneIndex does not have; its default is {FieldLayout.Bm25F}."),

@@ -31,6 +31,8 @@ otherwise. Query rows run after the last commit, single-threaded, with the index
 | Prefix | a three-letter prefix | all |
 | AsYouType | one full term plus a partial last word | all |
 | Fuzzy1 / Fuzzy2 | one term with one / two edits, edit distance 1 / 2 | Lucene.NET, tantivy |
+| Typo | one word of 6+ characters with one substituted letter (not the first), default typo budgets | Lucene.NET (FuzzyQuery, first character fixed) |
+| TypoAsYouType | one full term plus a typed 6-letter beginning with a substituted letter, matched as a beginning with typos | Lucene.NET (prefix OR fuzzy: Lucene has no Levenshtein over word beginnings, so its side matches less) |
 | Filtered | two terms, numeric range on `len` and three categories | Lucene.NET, tantivy |
 | Facets | two terms, top ten `cat` counts over all matches | Lucene.NET |
 | Stats | two terms, count/min/max/sum of `len` over all matches | Lucene.NET |
