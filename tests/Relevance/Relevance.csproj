@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/OneIndex/OneIndex.csproj" />
+    <ProjectReference Include="../../tools/OneIndex.Harness/OneIndex.Harness.csproj" />
   </ItemGroup>
 
 </Project>

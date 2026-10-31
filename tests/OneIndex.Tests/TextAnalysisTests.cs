@@ -125,18 +125,9 @@ public class TextAnalysisTests
         {
             Analyzer analyzer = AnalyzerRegistry.Create(name);
             ReadOnlyMemory<char> memory = text.AsMemory();
-            Drain(analyzer, memory); // warm up: buffers grow once
-            Drain(analyzer, memory);
-            long before = GC.GetAllocatedBytesForCurrentThread();
             int tokens = 0;
-            for (int i = 0; i < 20; i++)
-            {
-                tokens += Drain(analyzer, memory);
-            }
-
-            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            TestHelpers.AssertNoAllocation(name, () => tokens += Drain(analyzer, memory), windows: 10);
             Assert.True(tokens > 1000);
-            Assert.True(allocated == 0, $"{name}: {allocated} bytes for {tokens} tokens");
         }
     }
 

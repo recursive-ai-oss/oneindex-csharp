@@ -18,12 +18,14 @@
     <Project Path="tests/AotSmoke/AotSmoke.csproj" />
     <Project Path="tests/WasmSmoke/WasmSmoke.csproj" />
   </Folder>
-  <Folder Name="/bench/">
-    <Project Path="bench/OneIndex.Bench/OneIndex.Bench.csproj" />
-  </Folder>
   <Folder Name="/tools/">
+    <Project Path="tools/OneIndex.Harness/OneIndex.Harness.csproj" />
+    <Project Path="tools/OneIndex.Harness.Cli/OneIndex.Harness.Cli.csproj" />
     <Project Path="tools/UcdTables/UcdTables.csproj" />
     <Project Path="tools/SnowballGen/SnowballGen.csproj" />
+  </Folder>
+  <Folder Name="/bench/">
+    <Project Path="bench/OneIndex.Bench/OneIndex.Bench.csproj" />
   </Folder>
   <Folder Name="/fuzz/">
     <Project Path="fuzz/OneIndex.Fuzz/OneIndex.Fuzz.csproj" />
