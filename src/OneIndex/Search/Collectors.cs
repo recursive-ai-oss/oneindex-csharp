@@ -23,17 +23,29 @@ public sealed class TopScoreCollector : Collector
     private int _size;
     private long _totalHits;
 
-    /// <summary>Creates a collector.</summary>
+    private readonly bool _countExactly;
+    private bool _thresholdSent;
+
+    /// <summary>Creates a collector that counts every match.</summary>
     /// <param name="count">How many documents to keep, at least 1.</param>
     public TopScoreCollector(int count)
+        : this(count, true)
+    {
+    }
+
+    /// <summary>Creates a collector.</summary>
+    /// <param name="count">How many documents to keep, at least 1.</param>
+    /// <param name="countExactly">Whether every match must be counted. When <see langword="false"/> the scorer may skip documents that cannot enter the top <paramref name="count"/>.</param>
+    public TopScoreCollector(int count, bool countExactly)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
         _scores = new float[count];
         _docs = new int[count];
+        _countExactly = countExactly;
     }
 
     /// <inheritdoc/>
-    public override ScoreMode ScoreMode => ScoreMode.Complete;
+    public override ScoreMode ScoreMode => _countExactly ? ScoreMode.Complete : ScoreMode.TopScores;
 
     /// <inheritdoc/>
     public override LeafCollector GetLeafCollector(LeafContext leaf) => new Leaf(this, leaf.DocBase);
@@ -53,7 +65,8 @@ public sealed class TopScoreCollector : Collector
             int byScore = b.Score.CompareTo(a.Score);
             return byScore != 0 ? byScore : a.DocId.CompareTo(b.DocId);
         });
-        return new TopDocs(_totalHits, true, hits);
+        // A scorer was only told to skip once the heap had filled; before that nothing can have been skipped.
+        return new TopDocs(_totalHits, _countExactly || !_thresholdSent, hits);
     }
 
     // Heap order: the root is the worst kept document (lowest score; for equal scores, the highest document id).
@@ -141,7 +154,11 @@ public sealed class TopScoreCollector : Collector
             if (owner._size == owner._scores.Length && owner._scores[0] > _threshold)
             {
                 _threshold = owner._scores[0];
-                _scorer.SetMinCompetitiveScore(_threshold);
+                if (!owner._countExactly)
+                {
+                    owner._thresholdSent = true;
+                    _scorer.SetMinCompetitiveScore(_threshold);
+                }
             }
         }
     }

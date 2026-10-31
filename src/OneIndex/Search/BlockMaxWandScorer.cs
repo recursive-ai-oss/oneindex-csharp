@@ -94,6 +94,7 @@ public sealed class BlockMaxWandScorer : Scorer
         ArgumentNullException.ThrowIfNull(clauses);
         _clauses = [.. clauses];
         _docs = new int[_clauses.Length];
+        Array.Fill(_docs, -1); // so that Advance before the first NextDoc positions every clause
         _order = new int[_clauses.Length];
         _maxScores = new float[_clauses.Length];
         for (int i = 0; i < _clauses.Length; i++)
@@ -128,6 +129,43 @@ public sealed class BlockMaxWandScorer : Scorer
 
             return (float)sum;
         }
+    }
+
+    /// <inheritdoc/>
+    public override int AdvanceShallow(int target)
+    {
+        // The run every clause can bound together ends at the earliest block end; a clause already past the target bounds from where it is.
+        int end = NoMoreDocs;
+        for (int i = 0; i < _clauses.Length; i++)
+        {
+            if (_docs[i] == NoMoreDocs)
+            {
+                continue;
+            }
+
+            int e = _clauses[i].AdvanceShallow(Math.Max(target, _docs[i]));
+            if (e < end)
+            {
+                end = e;
+            }
+        }
+
+        return end;
+    }
+
+    /// <inheritdoc/>
+    public override float GetMaxScore(int upTo)
+    {
+        float sum = 0f;
+        for (int i = 0; i < _clauses.Length; i++)
+        {
+            if (_docs[i] != NoMoreDocs)
+            {
+                sum += _clauses[i].GetMaxScore(upTo);
+            }
+        }
+
+        return sum;
     }
 
     /// <inheritdoc/>

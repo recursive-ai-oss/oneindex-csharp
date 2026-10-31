@@ -43,7 +43,7 @@ public sealed class IndexSnapshot : IDisposable
 
     /// <summary>Opens a snapshot of the newest commit of a storage without a writer. Nothing is ever deleted on behalf of such a snapshot.</summary>
     /// <param name="storage">The index storage.</param>
-    /// <param name="codecs">The codecs to open parts with.</param>
+    /// <param name="codecs">The codecs to open parts with; defaults to the text codec.</param>
     /// <param name="limits">The limits to enforce; defaults to <see cref="IndexLimits.Default"/>.</param>
     /// <param name="cancellationToken">Cancels the open.</param>
     /// <returns>The snapshot.</returns>
@@ -55,12 +55,12 @@ public sealed class IndexSnapshot : IDisposable
         CommitInfo commit = CommitProtocol.OpenLatest(storage, limits, cancellationToken)
             ?? throw new InvalidOperationException("The storage holds no committed index.");
         Schema schema = commit.SchemaBytes.IsEmpty ? Schema.Empty : Schema.Deserialize(commit.SchemaBytes.Span, limits);
-        return new IndexSnapshot(storage, commit, schema, codecs ?? [], limits, null);
+        return new IndexSnapshot(storage, commit, schema, codecs ?? [new OneIndex.Codecs.TextSegmentCodec()], limits, null);
     }
 
     /// <summary>Opens a snapshot of the newest commit without a writer.</summary>
     /// <param name="storage">The index storage.</param>
-    /// <param name="codecs">The codecs to open parts with.</param>
+    /// <param name="codecs">The codecs to open parts with; defaults to the text codec.</param>
     /// <param name="limits">The limits to enforce.</param>
     /// <param name="cancellationToken">Cancels the open.</param>
     /// <returns>The snapshot.</returns>
@@ -70,7 +70,7 @@ public sealed class IndexSnapshot : IDisposable
         CommitInfo commit = await CommitProtocol.OpenLatestAsync(storage, limits, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException("The storage holds no committed index.");
         Schema schema = commit.SchemaBytes.IsEmpty ? Schema.Empty : Schema.Deserialize(commit.SchemaBytes.Span, limits);
-        return new IndexSnapshot(storage, commit, schema, codecs ?? [], limits, null);
+        return new IndexSnapshot(storage, commit, schema, codecs ?? [new OneIndex.Codecs.TextSegmentCodec()], limits, null);
     }
 
     /// <summary>Gets (opening on first use) one segment's reader. The reader belongs to the snapshot; do not dispose it.</summary>
