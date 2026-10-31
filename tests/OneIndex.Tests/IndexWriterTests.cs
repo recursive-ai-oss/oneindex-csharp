@@ -4,6 +4,7 @@ using OneIndex.Storage;
 
 namespace OneIndex.Tests;
 
+[Collection(AllocationMeasurement.Name)]
 public class IndexWriterTests
 {
     private static readonly string[] Deleted = ["d1", "d5", "d9"];

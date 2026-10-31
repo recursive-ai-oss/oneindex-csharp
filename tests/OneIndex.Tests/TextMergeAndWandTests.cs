@@ -6,6 +6,7 @@ using OneIndex.Storage;
 
 namespace OneIndex.Tests;
 
+[Collection(AllocationMeasurement.Name)]
 public sealed class TextMergeAndWandTests
 {
     [Theory]

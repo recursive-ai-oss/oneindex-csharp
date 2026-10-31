@@ -2,6 +2,7 @@ using OneIndex.Analysis;
 
 namespace OneIndex.Tests;
 
+[Collection(AllocationMeasurement.Name)]
 public class TextAnalysisTests
 {
     private static string[] Terms(string analyzer, string text)

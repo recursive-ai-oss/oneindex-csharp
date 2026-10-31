@@ -5,6 +5,7 @@ using OneIndex.Storage;
 
 namespace OneIndex.Tests;
 
+[Collection(AllocationMeasurement.Name)]
 public class SearchContractTests
 {
     /// <summary>A segment that only has live docs; enough to drive the searcher.</summary>

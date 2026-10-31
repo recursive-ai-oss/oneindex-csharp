@@ -7,6 +7,7 @@ using OneIndex.Suggest;
 
 namespace OneIndex.Tests;
 
+[Collection(AllocationMeasurement.Name)]
 public class DidYouMeanTests
 {
     private static readonly Analyzer Ws = new WhitespaceLowercaseAnalyzer();
