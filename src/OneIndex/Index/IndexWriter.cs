@@ -49,7 +49,7 @@ public sealed class IndexWriterOptions
 public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
 {
     /// <summary>Whether a file name is one the engine itself creates: <c>commit-&lt;16 hex&gt;.oic|tmp</c> or <c>s&lt;16 hex&gt;.&lt;anything&gt;</c>.</summary>
-    private static bool IsOwnedFile(string name)
+    internal static bool IsOwnedFile(string name)
     {
         static bool Hex(ReadOnlySpan<char> text)
         {
@@ -80,6 +80,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
     private readonly IReadOnlyList<ISegmentCodec> _codecs;
     private readonly IMergeScheduler _scheduler;
     private readonly FileReferences _refs;
+    private readonly IStorageLock? _writerLock;
     private readonly CancellationTokenSource _closing = new();
     private readonly List<WorkSegment> _segments = [];
     private readonly List<Document?> _buffer = [];
@@ -96,16 +97,18 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
     private Exception? _failed;
     private Exception? _mergeError;
     private bool _disposed;
+    private long _changeStamp;
 
-    private IndexWriter(IStorage storage, Schema schema, IndexWriterOptions options)
+    private IndexWriter(IStorage storage, Schema schema, IndexWriterOptions options, IStorageLock? writerLock)
     {
+        _writerLock = writerLock;
         _storage = storage;
         _schema = schema;
         _options = options;
         _limits = options.Limits;
         _codecs = options.Codecs;
         _scheduler = options.MergeScheduler ?? new CooperativeMergeScheduler();
-        _refs = new FileReferences(storage);
+        _refs = new FileReferences(storage, storage.SupportsLocks ? () => IndexLocks.LivePinnedFiles(storage, options.Limits, default) : null);
     }
 
     /// <summary>The schema documents are validated against.</summary>
@@ -183,11 +186,13 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
     /// <param name="options">Settings; defaults apply when <see langword="null"/>.</param>
     /// <param name="cancellationToken">Cancels the open.</param>
     /// <returns>The writer.</returns>
+    /// <exception cref="IndexLockedException">Another writer, in this or another process, has the index open. The lock is released if that process dies.</exception>
     /// <exception cref="CorruptIndexException">The newest commit or a file it lists is damaged. The writer never falls back to an older commit.</exception>
     /// <exception cref="ArgumentException">The codecs are inconsistent, or there is no schema, or it differs from the committed one.</exception>
     /// <remarks>
-    /// Recovery deletes leftover temporary commit files, commit files older than the newest, and segment files no commit lists.
-    /// Other files in the storage are left alone.
+    /// Recovery deletes leftover temporary commit files, commit files older than the newest, and segment files no commit lists,
+    /// except files that a live reader in another process still pins (they go when that reader lets go). Other files in the storage
+    /// are left alone.
     /// </remarks>
     public static IndexWriter Open(IStorage storage, Schema? schema = null, IndexWriterOptions? options = null, CancellationToken cancellationToken = default)
     {
@@ -199,6 +204,20 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
 
         options ??= new IndexWriterOptions();
         ValidateCodecs(options.Codecs);
+        IStorageLock? writerLock = IndexLocks.AcquireWriterLock(storage, cancellationToken);
+        try
+        {
+            return OpenLocked(storage, schema, options, writerLock, cancellationToken);
+        }
+        catch
+        {
+            writerLock?.Dispose();
+            throw;
+        }
+    }
+
+    private static IndexWriter OpenLocked(IStorage storage, Schema? schema, IndexWriterOptions options, IStorageLock? writerLock, CancellationToken cancellationToken)
+    {
         CommitInfo? commit = CommitProtocol.OpenLatest(storage, options.Limits, cancellationToken);
         Schema effective;
         if (commit is not null && !commit.SchemaBytes.IsEmpty)
@@ -216,7 +235,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
             effective = schema ?? throw new ArgumentException("A new index needs a schema.", nameof(schema));
         }
 
-        var writer = new IndexWriter(storage, effective, options);
+        var writer = new IndexWriter(storage, effective, options, writerLock);
         try
         {
             writer.Recover(commit, cancellationToken);
@@ -224,7 +243,8 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
         }
         catch
         {
-            writer.Dispose();
+            // The caller releases the lock it handed in, so the writer must not.
+            writer.DisposeCore(releaseLock: false);
             throw;
         }
     }
@@ -272,6 +292,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
 
             _buffer.Add(document);
             _bufferLive++;
+            _changeStamp++;
             if (_bufferLive >= _options.MaxBufferedDocuments)
             {
                 FlushLocked(cancellationToken);
@@ -517,14 +538,33 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
             ThrowIfUnusable();
             CommitInfo commit = _current ?? throw new InvalidOperationException("Nothing has been committed yet.");
             List<string> names = FilesOf(commit);
+            // A lease as well as the in-process count: a reader process reclaiming superseded files looks only at leases.
+            ReaderLease? lease = _storage.SupportsLocks ? IndexLocks.AcquireLease(_storage, default, out _) : null;
             _refs.Acquire(names);
-            return new IndexSnapshot(_storage, commit, _schema, _codecs, _limits, () => _refs.Release(names));
+            return new IndexSnapshot(_storage, commit, _schema, _codecs, _limits, () =>
+            {
+                lease?.Dispose();
+                _refs.Release(names);
+            });
         }
     }
 
     /// <summary>Opens a snapshot of the newest commit.</summary>
     /// <returns>The snapshot.</returns>
     public ValueTask<IndexSnapshot> OpenSnapshotAsync() => ValueTask.FromResult(OpenSnapshot());
+
+    /// <summary>
+    /// Deletes files that were kept only because a reader in another process pinned them and that reader has since gone. The writer
+    /// does this at every commit and when it closes; call it to reclaim sooner.
+    /// </summary>
+    public void ReclaimFiles()
+    {
+        lock (_gate)
+        {
+            ThrowIfUnusable();
+            _refs.ReclaimDeferred();
+        }
+    }
 
     /// <summary>Asks the merge policy for merges now and queues them.</summary>
     public void MaybeMerge()
@@ -605,7 +645,9 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
     }
 
     /// <summary>Discards uncommitted work, cancels merges and releases handles. The last commit is untouched.</summary>
-    public void Dispose()
+    public void Dispose() => DisposeCore(releaseLock: true);
+
+    private void DisposeCore(bool releaseLock)
     {
         lock (_gate)
         {
@@ -625,6 +667,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
             {
                 // Uncommitted outputs (flushed segments, finished merges, delete files) are garbage no commit names.
                 _refs.Release(_pending.ToList());
+                _refs.ReclaimDeferred();
             }
 
             _pending.Clear();
@@ -638,6 +681,10 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
         }
 
         _closing.Dispose();
+        if (releaseLock)
+        {
+            _writerLock?.Dispose();
+        }
     }
 
     /// <summary>Disposes the writer.</summary>
@@ -668,7 +715,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
         }
     }
 
-    private static List<string> FilesOf(CommitInfo commit)
+    internal static List<string> FilesOf(CommitInfo commit)
     {
         var names = new List<string> { CommitFileNames.For(commit.Generation) };
         foreach (SegmentInfo s in commit.Segments)
@@ -714,6 +761,8 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
             referenced.UnionWith(FilesOf(commit));
         }
 
+        // Always look at the leases: it also deletes those of readers that died, so a quiet index does not collect them.
+        HashSet<string>? pinned = IndexLocks.LivePinnedFiles(_storage, _limits, cancellationToken);
         foreach (string name in _storage.List(cancellationToken))
         {
             // A segment name is never reused, even when its files are leftovers about to be deleted: a deleted name that a
@@ -726,6 +775,13 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
 
             if (!referenced.Contains(name) && IsOwnedFile(name))
             {
+                // A reader in another process may still be reading an older commit; its files go later (ReclaimFiles).
+                if (pinned is not null && pinned.Contains(name))
+                {
+                    _refs.Defer(name);
+                    continue;
+                }
+
                 _storage.Delete(name, cancellationToken);
             }
         }
@@ -784,6 +840,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
         }
 
         _metaDirty = false;
+        _refs.ReclaimDeferred();
     }
 
     private SegmentInfo WriteDeletes(WorkSegment seg, List<string> written, CancellationToken cancellationToken)
@@ -944,6 +1001,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
     private void RemoveFromBuffer(int index)
     {
         Document d = _buffer[index]!;
+        _changeStamp++;
         _buffer[index] = null;
         _bufferLive--;
         if (_schema.IdField is { } idField)
@@ -972,6 +1030,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
             return false;
         }
 
+        _changeStamp++;
         seg.Words[doc >> 6] |= bit;
         seg.DeletedCount++;
         seg.Dirty = true;

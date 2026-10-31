@@ -64,6 +64,23 @@ internal static class SmokeScenario
             writer.Commit();
             using IndexSnapshot snapshot = writer.OpenSnapshot();
             Require(snapshot.LiveDocCount == 9 && snapshot.TryFindById("doc4", out _, out _) && !snapshot.TryFindById("doc3", out _, out _), "writer lifecycle");
+
+            bool refused = false;
+            try
+            {
+                IndexWriter.Open(storage, schema).Dispose();
+            }
+            catch (IndexLockedException)
+            {
+                refused = true;
+            }
+
+            Require(refused, "second writer refused");
+            writer.Upsert(new Document().Add("id", "fresh").Add("body", "uncommitted"));
+            using IndexReader nearRealTime = writer.OpenNearRealTimeReader();
+            using IndexSnapshot view = nearRealTime.Acquire();
+            Require(!view.IsDurable && view.TryFindById("fresh", out _, out _), "near-real-time view");
+            writer.DeleteById("fresh");
         }
 
         using IndexSnapshot reopened = IndexSnapshot.Open(storage);

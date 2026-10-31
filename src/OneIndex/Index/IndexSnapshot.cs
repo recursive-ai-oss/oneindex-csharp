@@ -4,7 +4,9 @@ namespace OneIndex.Index;
 
 /// <summary>
 /// A pinned, immutable view of one commit. While a snapshot is open, every file its commit lists stays on storage, however many
-/// commits and merges the writer makes afterwards. Dispose it to release the files. Safe for concurrent reads.
+/// commits and merges the writer makes afterwards, even when the writer is another process (see docs/processes.md). Dispose it
+/// to release the files. Safe for concurrent reads. A snapshot taken from a near-real-time reader is not a commit: see
+/// <see cref="IsDurable"/>.
 /// </summary>
 public sealed class IndexSnapshot : IDisposable
 {
@@ -13,10 +15,13 @@ public sealed class IndexSnapshot : IDisposable
     private readonly IndexLimits _limits;
     private readonly Action? _release;
     private readonly SegmentReader?[] _readers;
-    private int _disposed;
+    private readonly LiveDocs?[]? _liveOverrides;
+    private int _references = 1;
 
-    internal IndexSnapshot(IStorage storage, CommitInfo commit, Schema schema, IReadOnlyList<ISegmentCodec> codecs, IndexLimits limits, Action? release)
+    internal IndexSnapshot(IStorage storage, CommitInfo commit, Schema schema, IReadOnlyList<ISegmentCodec> codecs, IndexLimits limits, Action? release, LiveDocs?[]? liveOverrides = null, long stamp = 0)
     {
+        _liveOverrides = liveOverrides;
+        Stamp = stamp;
         _storage = storage;
         Commit = commit;
         Schema = schema;
@@ -25,6 +30,14 @@ public sealed class IndexSnapshot : IDisposable
         _release = release;
         _readers = new SegmentReader?[commit.Segments.Count];
     }
+
+    /// <summary>
+    /// Whether the snapshot is a committed state that survives a crash. <see langword="false"/> for a near-real-time snapshot, which
+    /// also shows flushed and deleted-but-uncommitted changes; <see cref="Generation"/> is then the last commit it extends.
+    /// </summary>
+    public bool IsDurable => _liveOverrides is null;
+
+    internal long Stamp { get; }
 
     /// <summary>The commit this snapshot pins.</summary>
     public CommitInfo Commit { get; }
@@ -41,7 +54,13 @@ public sealed class IndexSnapshot : IDisposable
     /// <summary>The number of live documents across all segments.</summary>
     public long LiveDocCount => Commit.LiveDocCount;
 
-    /// <summary>Opens a snapshot of the newest commit of a storage without a writer. Nothing is ever deleted on behalf of such a snapshot.</summary>
+    /// <summary>
+    /// Opens a snapshot of the newest commit of a storage, from any process, whether or not a writer is running. On a storage that
+    /// supports locks the commit is pinned with a lease file for as long as the snapshot is open, so a writer in another process
+    /// keeps its files; if this process is killed the operating system drops the lease and the files become reclaimable. A read-only
+    /// storage cannot pin; opening a commit while a writer is active can then fail with <see cref="CorruptIndexException"/> naming a
+    /// vanished file (open again).
+    /// </summary>
     /// <param name="storage">The index storage.</param>
     /// <param name="codecs">The codecs to open parts with; defaults to the text codec.</param>
     /// <param name="limits">The limits to enforce; defaults to <see cref="IndexLimits.Default"/>.</param>
@@ -51,11 +70,44 @@ public sealed class IndexSnapshot : IDisposable
     /// <exception cref="CorruptIndexException">The newest commit or a file it lists is damaged.</exception>
     public static IndexSnapshot Open(IStorage storage, IReadOnlyList<ISegmentCodec>? codecs = null, IndexLimits? limits = null, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(storage);
         limits ??= IndexLimits.Default;
-        CommitInfo commit = CommitProtocol.OpenLatest(storage, limits, cancellationToken)
+        if (!storage.SupportsLocks)
+        {
+            CommitInfo commit = CommitProtocol.OpenLatest(storage, limits, cancellationToken)
+                ?? throw new InvalidOperationException("The storage holds no committed index.");
+            return new IndexSnapshot(storage, commit, SchemaOf(commit, limits), codecs ?? OneIndex.Codecs.SegmentCodecs.CreateDefault(), limits, null);
+        }
+
+        ReaderLease lease = IndexLocks.AcquireLease(storage, cancellationToken, out long generation)
             ?? throw new InvalidOperationException("The storage holds no committed index.");
-        Schema schema = commit.SchemaBytes.IsEmpty ? Schema.Empty : Schema.Deserialize(commit.SchemaBytes.Span, limits);
-        return new IndexSnapshot(storage, commit, schema, codecs ?? OneIndex.Codecs.SegmentCodecs.CreateDefault(), limits, null);
+        try
+        {
+            CommitInfo commit = CommitProtocol.OpenNamed(storage, CommitFileNames.For(generation), limits, cancellationToken);
+            return new IndexSnapshot(storage, commit, SchemaOf(commit, limits), codecs ?? OneIndex.Codecs.SegmentCodecs.CreateDefault(), limits, () => ReleaseLease(storage, lease, limits));
+        }
+        catch
+        {
+            lease.Dispose();
+            throw;
+        }
+    }
+
+    private static Schema SchemaOf(CommitInfo commit, IndexLimits limits)
+        => commit.SchemaBytes.IsEmpty ? Schema.Empty : Schema.Deserialize(commit.SchemaBytes.Span, limits);
+
+    /// <summary>Lets go of a lease, then reclaims the files of superseded commits nobody pins any more (the writer may be gone).</summary>
+    internal static void ReleaseLease(IStorage storage, ReaderLease lease, IndexLimits limits)
+    {
+        lease.Dispose();
+        try
+        {
+            IndexMaintenance.CollectGarbage(storage, limits);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or CorruptIndexException)
+        {
+            // Housekeeping only: the writer's next commit or open reclaims whatever this missed.
+        }
     }
 
     /// <summary>Opens a snapshot of the newest commit without a writer.</summary>
@@ -66,7 +118,14 @@ public sealed class IndexSnapshot : IDisposable
     /// <returns>The snapshot.</returns>
     public static async ValueTask<IndexSnapshot> OpenAsync(IStorage storage, IReadOnlyList<ISegmentCodec>? codecs = null, IndexLimits? limits = null, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(storage);
         limits ??= IndexLimits.Default;
+        if (storage.SupportsLocks)
+        {
+            // Locks and leases are local file operations; there is nothing to await.
+            return Open(storage, codecs, limits, cancellationToken);
+        }
+
         CommitInfo commit = await CommitProtocol.OpenLatestAsync(storage, limits, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException("The storage holds no committed index.");
         Schema schema = commit.SchemaBytes.IsEmpty ? Schema.Empty : Schema.Deserialize(commit.SchemaBytes.Span, limits);
@@ -81,7 +140,7 @@ public sealed class IndexSnapshot : IDisposable
     /// <exception cref="CorruptIndexException">A file of the segment is damaged.</exception>
     public SegmentReader GetSegment(int index, CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _references) <= 0, this);
         SegmentReader? r = Volatile.Read(ref _readers[index]);
         if (r is not null)
         {
@@ -93,7 +152,7 @@ public sealed class IndexSnapshot : IDisposable
             r = _readers[index];
             if (r is null)
             {
-                r = SegmentReader.Open(_storage, Schema, Commit.Segments[index], _codecs, _limits, null, cancellationToken);
+                r = SegmentReader.Open(_storage, Schema, Commit.Segments[index], _codecs, _limits, _liveOverrides?[index], cancellationToken);
                 Volatile.Write(ref _readers[index], r);
             }
 
@@ -143,14 +202,36 @@ public sealed class IndexSnapshot : IDisposable
                 }
             }
 
-            _ = SegmentReader.LoadLiveDocs(_storage, seg, _limits, cancellationToken);
+            if (_liveOverrides is null)
+            {
+                _ = SegmentReader.LoadLiveDocs(_storage, seg, _limits, cancellationToken);
+            }
         }
     }
 
-    /// <summary>Closes the segment readers and releases the pinned files.</summary>
+    /// <summary>Takes another reference to the snapshot; each reference is released by one <see cref="Dispose"/>.</summary>
+    /// <returns><see langword="true"/> if the snapshot was still open.</returns>
+    internal bool TryAddReference()
+    {
+        while (true)
+        {
+            int current = Volatile.Read(ref _references);
+            if (current <= 0)
+            {
+                return false;
+            }
+
+            if (Interlocked.CompareExchange(ref _references, current + 1, current) == current)
+            {
+                return true;
+            }
+        }
+    }
+
+    /// <summary>Closes the segment readers and releases the pinned files once the last reference is released.</summary>
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        if (Interlocked.Decrement(ref _references) != 0)
         {
             return;
         }

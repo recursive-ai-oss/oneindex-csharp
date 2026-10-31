@@ -12,11 +12,32 @@ namespace OneIndex.Durability;
 /// </summary>
 public static class KillHarness
 {
-    public static int RunChild(string directory, int seed, int maxOps)
+    /// <summary>Exit code of a writer child that found the index locked by another writer.</summary>
+    public const int LockedExitCode = 3;
+
+    public static int RunChild(string directory, int seed, int maxOps, string? expectDirectory = null, int paceMs = 0)
     {
         var storage = new FileSystemStorage(directory);
         IndexWriterOptions options = Workload.Options(seed % 2 == 0 ? new ThreadedMergeScheduler() : null, maxBuffered: 8);
-        using IndexWriter writer = IndexWriter.Open(storage, Workload.Schema, options);
+        IndexWriter writer;
+        try
+        {
+            writer = IndexWriter.Open(storage, Workload.Schema, options);
+        }
+        catch (IndexLockedException)
+        {
+            Console.Out.WriteLine("LOCKED");
+            return LockedExitCode;
+        }
+
+        using (writer)
+        {
+            return RunWriter(writer, seed, maxOps, expectDirectory, paceMs);
+        }
+    }
+
+    private static int RunWriter(IndexWriter writer, int seed, int maxOps, string? expectDirectory, int paceMs)
+    {
         var model = new Workload.Model();
         if (writer.Generation > 0)
         {
@@ -28,6 +49,7 @@ public static class KillHarness
         }
 
         Console.Out.WriteLine("READY");
+        using IndexReader? nrt = expectDirectory is not null ? writer.OpenNearRealTimeReader() : null;
         var rng = new Random(seed);
         int sinceCommit = 0;
         for (int i = 0; i < maxOps; i++)
@@ -50,6 +72,17 @@ public static class KillHarness
 
             Workload.Apply(writer, op);
             model.Apply(op);
+            if (nrt is not null && rng.Next(15) == 0)
+            {
+                // The near-real-time view must show exactly the model, committed or not.
+                nrt.Refresh();
+                using IndexSnapshot view = nrt.Acquire();
+                if (Workload.HashRows(Workload.ReadContent(view)) != model.Hash())
+                {
+                    throw new InvalidDataException("the near-real-time view differs from the writer's state");
+                }
+            }
+
             sinceCommit++;
             if (sinceCommit >= 3 + rng.Next(30))
             {
@@ -60,7 +93,18 @@ public static class KillHarness
                 }
 
                 Console.Out.WriteLine("PRE " + model.Hash());
+                if (expectDirectory is not null)
+                {
+                    // Readers in other processes check every generation they open against this, so it is written before the commit can land.
+                    ProcessHarness.PublishExpected(expectDirectory, writer.Generation + 1, model.Hash());
+                }
+
                 long gen = writer.Commit();
+                if (paceMs > 0)
+                {
+                    Thread.Sleep(paceMs);
+                }
+
                 Console.Out.WriteLine($"ACK {gen} {model.Hash()}");
             }
         }
@@ -193,7 +237,7 @@ public static class KillHarness
         return new Summary(done, messages.Count, messages, commits, duringCommit, landed);
     }
 
-    private static string? Verify(string directory, long ackGen, string ackHash, string? pre, out long gen, out string hash)
+    internal static string? Verify(string directory, long ackGen, string ackHash, string? pre, out long gen, out string hash)
     {
         gen = 0;
         hash = new Workload.Model().Hash();

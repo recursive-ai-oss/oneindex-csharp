@@ -66,27 +66,45 @@ public static class FaultSweep
         var model = new Workload.Model();
         using (IndexWriter w = IndexWriter.Open(fi, Workload.Schema, Workload.Options()))
         {
-            Drive(w, ops, model, (gen, hash) => states[gen] = hash);
+            Drive(w, fi, ops, model, (gen, hash) => states[gen] = hash);
         }
 
         return (states, fi.OperationCount);
     }
 
-    private static void Drive(IndexWriter writer, List<Workload.Op> ops, Workload.Model model, Action<long, string> acknowledged)
+    /// <summary>
+    /// Runs the script. After each commit a snapshot is opened (alternately by the writer and as a separate reader, which creates
+    /// and later deletes a lease file through the same storage, so faults and power cuts also land on lease files) and held across the
+    /// next commit; it must still verify then, which proves its files were kept.
+    /// </summary>
+    private static void Drive(IndexWriter writer, IStorage storage, List<Workload.Op> ops, Workload.Model model, Action<long, string> acknowledged)
     {
-        foreach (Workload.Op op in ops)
+        IndexSnapshot? held = null;
+        int commits = 0;
+        try
         {
-            if (op.Kind == Workload.Kind.Commit)
+            foreach (Workload.Op op in ops)
             {
-                writer.WaitForMerges();
-                long gen = writer.Commit();
-                acknowledged(gen, model.Hash());
+                if (op.Kind == Workload.Kind.Commit)
+                {
+                    writer.WaitForMerges();
+                    long gen = writer.Commit();
+                    acknowledged(gen, model.Hash());
+                    held?.Verify();
+                    held?.Dispose();
+                    held = null;
+                    held = commits++ % 2 == 0 ? writer.OpenSnapshot() : IndexSnapshot.Open(storage, Workload.Codecs);
+                }
+                else
+                {
+                    Workload.Apply(writer, op);
+                    model.Apply(op);
+                }
             }
-            else
-            {
-                Workload.Apply(writer, op);
-                model.Apply(op);
-            }
+        }
+        finally
+        {
+            held?.Dispose();
         }
     }
 
@@ -99,7 +117,7 @@ public static class FaultSweep
         try
         {
             using IndexWriter w = IndexWriter.Open(fi, Workload.Schema, Workload.Options());
-            Drive(w, ops, model, (gen, _) => acked = gen);
+            Drive(w, fi, ops, model, (gen, _) => acked = gen);
         }
         catch (IOException)
         {

@@ -33,7 +33,21 @@ static int Run(string[] args)
         }
 
         case "child":
-            return KillHarness.RunChild(Option("dir", "."), Number("seed", 1), Number("ops", 200_000));
+            return KillHarness.RunChild(Option("dir", "."), Number("seed", 1), Number("ops", 200_000), Option("expect", "") is { Length: > 0 } e ? e : null, Number("pace-ms", 0));
+
+        case "reader":
+            return ProcessHarness.RunReader(Option("dir", "."), Option("expect", "."), Number("seed", 1), Number("seconds", 0));
+
+        case "procs":
+            return ProcessHarness.Run(
+                Option("dir", Path.Combine(Path.GetTempPath(), "oneindex-procs")),
+                Number("seed", 1),
+                Number("readers", 4),
+                Number("steady-seconds", 20),
+                Number("kills", 200),
+                Number("max-delay-ms", 800),
+                Number("pace-ms", 2),
+                [Environment.ProcessPath!, .. Environment.GetCommandLineArgs().Take(1).Where(a => a.EndsWith(".dll", StringComparison.Ordinal))]);
 
         case "kill":
         {

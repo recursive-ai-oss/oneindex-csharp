@@ -20,6 +20,12 @@ public sealed class TransformingStorage(IStorage inner, IBlockTransform? transfo
     public bool IsReadOnly => _inner.IsReadOnly;
 
     /// <inheritdoc/>
+    public bool SupportsLocks => _inner.SupportsLocks;
+
+    /// <inheritdoc/>
+    public IStorageLock? TryLock(string name, CancellationToken cancellationToken = default) => _inner.TryLock(name, cancellationToken);
+
+    /// <inheritdoc/>
     public bool Exists(string name, CancellationToken cancellationToken = default) => _inner.Exists(name, cancellationToken);
 
     /// <inheritdoc/>

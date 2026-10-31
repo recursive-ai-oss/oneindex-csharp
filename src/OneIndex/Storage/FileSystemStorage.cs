@@ -13,7 +13,7 @@ namespace OneIndex.Storage;
 /// crash is garbage no commit refers to. See docs/storage.md.
 /// </para>
 /// </summary>
-public sealed class FileSystemStorage : StorageBase
+public sealed class FileSystemStorage : StorageBase, IStorage
 {
     private const int WriteBufferSize = 64 * 1024;
 
@@ -137,6 +137,60 @@ public sealed class FileSystemStorage : StorageBase
     }
 
     /// <inheritdoc/>
+    public bool SupportsLocks => !_readOnly;
+
+    /// <summary>
+    /// Opens the file with <see cref="FileShare.None"/>. On Linux and macOS the runtime takes a non-blocking <c>flock</c> on the
+    /// open file, on Windows the share mode is enforced by the kernel; both are released when the process dies. The lock is
+    /// per open handle, so it also excludes a second storage object of the same process.
+    /// </summary>
+    /// <inheritdoc/>
+    /// <exception cref="NotSupportedException">The storage is read-only, or file locking is switched off (<c>DOTNET_SYSTEM_IO_DISABLEFILELOCKING</c>), which would make the lock a silent no-op.</exception>
+    public IStorageLock? TryLock(string name, CancellationToken cancellationToken = default)
+    {
+        ThrowIfReadOnly();
+        cancellationToken.ThrowIfCancellationRequested();
+        string path = PathOf(name);
+        SafeFileHandle handle;
+        try
+        {
+            handle = File.OpenHandle(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        }
+        catch (Exception e) when (e is IOException and not (FileNotFoundException or DirectoryNotFoundException or PathTooLongException))
+        {
+            // A sharing violation (Windows) or EWOULDBLOCK from flock (Unix) surfaces as a plain IOException.
+            return null;
+        }
+
+        try
+        {
+            // If locking is disabled the open above ignores the share mode; a second exclusive open then succeeds. Refuse rather than
+            // let two writers believe they are alone.
+            SafeFileHandle? second = null;
+            try
+            {
+                second = File.OpenHandle(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException)
+            {
+            }
+
+            if (second is not null)
+            {
+                second.Dispose();
+                throw new NotSupportedException("File locking is switched off in this process (DOTNET_SYSTEM_IO_DISABLEFILELOCKING), so index locks cannot work.");
+            }
+        }
+        catch
+        {
+            handle.Dispose();
+            throw;
+        }
+
+        return new FileLock(name, handle);
+    }
+
+    /// <inheritdoc/>
     public override void SyncDirectory(CancellationToken cancellationToken = default)
     {
         ThrowIfReadOnly();
@@ -174,6 +228,13 @@ public sealed class FileSystemStorage : StorageBase
         {
             throw new NotSupportedException("The storage is read-only.");
         }
+    }
+
+    private sealed class FileLock(string name, SafeFileHandle handle) : IStorageLock
+    {
+        public string Name => name;
+
+        public void Dispose() => handle.Dispose();
     }
 
     private sealed class FileReader(string name, SafeFileHandle handle) : IRangeReader

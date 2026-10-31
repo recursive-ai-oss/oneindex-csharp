@@ -89,8 +89,20 @@ public sealed class CommitInfo
         ReadOnlyMemory<byte> schema = default,
         ReadOnlyMemory<byte> appliedPosition = default,
         IReadOnlyDictionary<string, string>? userData = null)
+        : this(generation, nextSegmentId, segments, schema, appliedPosition, userData, minimumGeneration: 1)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(generation, 1);
+    }
+
+    private CommitInfo(
+        long generation,
+        ulong nextSegmentId,
+        IReadOnlyList<SegmentInfo> segments,
+        ReadOnlyMemory<byte> schema,
+        ReadOnlyMemory<byte> appliedPosition,
+        IReadOnlyDictionary<string, string>? userData,
+        long minimumGeneration)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(generation, minimumGeneration);
         ArgumentNullException.ThrowIfNull(segments);
         Generation = generation;
         NextSegmentId = nextSegmentId;
@@ -116,6 +128,13 @@ public sealed class CommitInfo
 
     /// <summary>The opaque applied position; empty when none.</summary>
     public ReadOnlyMemory<byte> AppliedPosition { get; }
+
+    /// <summary>
+    /// The description of a near-real-time view: the segments as the writer holds them, extending the commit of the given
+    /// generation (0 before the first commit). Never written to storage.
+    /// </summary>
+    internal static CommitInfo NearRealTimeView(long extendedGeneration, ulong nextSegmentId, IReadOnlyList<SegmentInfo> segments, ReadOnlyMemory<byte> schema, ReadOnlyMemory<byte> appliedPosition, IReadOnlyDictionary<string, string> userData)
+        => new(extendedGeneration, nextSegmentId, segments, schema, appliedPosition, userData, minimumGeneration: 0);
 
     /// <summary>The application strings stored with the commit, in key order.</summary>
     public IReadOnlyDictionary<string, string> UserData { get; }

@@ -193,7 +193,7 @@ public static class Workload
 
         foreach (string name in storage.List())
         {
-            if (!listed.Contains(name))
+            if (!listed.Contains(name) && name != "write.lock")
             {
                 return name;
             }
