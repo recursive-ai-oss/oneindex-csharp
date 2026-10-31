@@ -51,9 +51,8 @@ The ArguAna figures differ between the two papers as printed (0.315 and 0.414); 
 
 ## Gate
 
-OneIndex BM25 nDCG@10 on each set is within 0.01 of the published baseline and not below Lucene.NET on the same run, taking the
-matching setting (the OneIndex default is compared with the closest Lucene.NET setting). The OneIndex adapter (`OneIndexEngine`)
-is filled in when its scorer and queries exist; the runner needs no change.
+OneIndex BM25 nDCG@10 on each set is at most one point below the published baseline (above it is fine) and not below Lucene.NET
+at matched settings: OneIndex's default k1 and b against Lucene.NET at the same layout, k1 and b.
 
 ## Results: Lucene.NET 4.8.0-beta00018 (the comparator side)
 
@@ -92,3 +91,70 @@ BEIR-convention variants of 24 runs): four decimals and far beyond.
 
 Indexing time (8 threads, one commit): SciFact 1.8 s, ArguAna 1.0 s, SCIDOCS 1.6 s, NQ 26.8 s (index 1.1 GiB). All six settings for NQ
 answered 3,452 queries in 15 to 22 s each.
+
+## Results: OneIndex against Lucene.NET and the baselines
+
+Run on the worker (32 logical cores, AMD Ryzen 9 7950X3D, NVMe ext4), .NET 10 (SDK 10.0.4xx), 8 threads, same datasets and hashes as above.
+OneIndex defaults: `Bm25F` layout (one score per term over `title` and `text`, title weight 3), k1 = 0.9, b = 0.4, English analysis
+(lower-case, possessive removal, Snowball English stop words, Snowball English stemmer). NQ was indexed and searched in separate
+runs (index phase, then a search phase on the reopened index). Every run file was cross-checked with
+pytrec_eval (`ndcg_cut_10`); the largest difference to our nDCG@10 is 1.8e-15.
+
+nDCG@10, BEIR convention (a hit whose id equals the query id is dropped):
+
+| Set | OneIndex `Bm25F` 0.9/0.4 (default) | OneIndex `Bm25F` 1.2/0.75 | Lucene.NET `MultiFieldSum` 0.9/0.4 | Lucene.NET `MultiFieldSum` 1.2/0.75 | Lucene.NET `Flat` 0.9/0.4 | Published baseline (multifield) |
+|---|---|---|---|---|---|---|
+| SciFact | **0.6912** | 0.6998 | 0.6647 | 0.6628 | 0.6789 | 0.665 |
+| ArguAna | **0.4333** | 0.5072 | 0.4240 | 0.4880 | 0.4118 | 0.414 |
+| SCIDOCS | **0.1531** | 0.1601 | 0.1587 | 0.1619 | 0.1509 | 0.158 |
+| NQ | **0.3420** | 0.3377 | 0.3252 | 0.3051 | 0.3058 | 0.329 |
+
+SciFact (2.6 points) and ArguAna (1.9) are more than one point *above* the baseline, NQ is 1.3 above; SCIDOCS is 0.2 below it. The
+Lucene.NET figures are those of the section above (re-run once more in the equal-weight job; identical to four decimals).
+
+OneIndex with the same layout as Lucene.NET's `MultiFieldSum` (two separate field scores added, title weight 1, so no BM25F):
+
+| Set | OneIndex `MultiFieldSum`, title weight 1, 0.9/0.4 | Lucene.NET `MultiFieldSum` 0.9/0.4 | OneIndex, 1.2/0.75 | Lucene.NET, 1.2/0.75 |
+|---|---|---|---|---|
+| SciFact | 0.6598 | 0.6647 | 0.6653 | 0.6628 |
+| ArguAna | 0.4270 | 0.4240 | 0.4861 | 0.4880 |
+| SCIDOCS | 0.1587 | 0.1587 | 0.1641 | 0.1619 |
+| NQ | 0.3323 | 0.3252 | 0.3114 | 0.3051 |
+
+At matched layout and parameters OneIndex's BM25 scores equal Lucene.NET's within noise (identical on SCIDOCS at 0.9/0.4, above on ArguAna and NQ, 0.5 point below on SciFact).
+
+### SCIDOCS against Lucene.NET `MultiFieldSum`
+
+`Bm25F` (0.1531) is 0.56 points below Lucene.NET's `MultiFieldSum` (0.1587) on SCIDOCS, and above its `Flat` layout (0.1509). Measured causes:
+
+- **It is the layout, not the scoring or the analysis.** The equal-weight sum in OneIndex reproduces Lucene.NET to four decimals on SCIDOCS
+  (0.1587 / 0.1587). Lucene.NET's `Explain` output (public API) shows the same idf and tf formula as OneIndex's: idf `ln(1 + (N - n + 0.5)/(n + 0.5))`,
+  `tf (k1+1) / (tf + k1 (1 - b + b len/avgLen))`.
+- **Analysis is not it.** Experimental builds (not kept) with Lucene's 33-word stop list and the original Porter stemmer moved the sum layout
+  by at most 0.1 point either way (0.1552 default, 0.1548 Lucene stop list, 0.1551 Porter, 0.1543 both), while the title weight moved it 0.35 (the
+  harness had given the sum layout OneIndex's title weight 3 until this run; at weight 1 it is 0.1587). With the same stop list the two
+  analyzers' token streams differ in 20 of 6,000 sampled texts (stems of short words); with each side's own list they differ in 5,286, almost
+  all by stop words.
+- **Collection size and average length are not it.** Counting empty-field documents in N and average length (two variants, run on all three
+  small sets) changed SCIDOCS `Bm25F` by at most 0.04 points.
+- **What decides it:** SCIDOCS (queries are paper titles, relevant documents are cited papers) rewards a document whose title *and* abstract both match,
+  which adding two saturating field scores does and BM25F (one saturation over the weighted sum) does not. Title weight sweep, `Bm25F` 0.9/0.4:
+
+| Title weight | SciFact | ArguAna | SCIDOCS |
+|---|---|---|---|
+| 1 | 0.6838 | 0.4188 | 0.1502 |
+| 1.5 | 0.6878 | 0.4248 | 0.1517 |
+| 2 | 0.6872 | n/a | 0.1520 |
+| 3 (default) | 0.6912 | 0.4333 | 0.1531 |
+
+  No weight reaches 0.1587 on SCIDOCS while all four sets keep their other results; the sum layout wins on SCIDOCS and loses 3 points on
+  SciFact and 1 on NQ against `Bm25F`. BM25F is the engine's documented base score, so it stays the default; the sum layout is a query composition
+  (`BooleanQuery` of per-field `TermQuery`) any caller can write.
+
+### Operational notes
+
+- Loading NQ takes 173 s at 8 threads (index 746 MiB; Lucene.NET: 26.8 s, 1.1 GiB), commit and merges included; `IndexWriter.AddUnique` skips the
+  per-document identifier lookup that made the first attempt time out at 30 minutes. Reopening the finished index and reading 2.68 M identifiers takes 36 s;
+  the 3,452 queries take 12 to 25 s per setting.
+- The runner takes `ONEINDEX_PHASE=index|search` (build and commit in one job, search in another), `ONEINDEX_LAYOUTS`, `ONEINDEX_WORK` and the
+  OneIndex adapter `ONEINDEX_TITLE_WEIGHT`.

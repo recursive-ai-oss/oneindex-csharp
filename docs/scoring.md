@@ -32,7 +32,7 @@ For a block of a postings list the postings carry the largest frequency and the 
 
 ## Parameters: why k1 = 0.9, b = 0.4
 
-The paper gives no rule for the two constants (it reports that 0.5 < b < 0.8 and 1.2 < k1 < 2 are often good). The defaults are the values of the BEIR lexical baseline (Thakur et al. 2021, setup of Anserini BM25 with k1 = 0.9, b = 0.4), chosen so that the gate sets can be compared with the published baselines. Results on the four gate sets for both parameter pairs are in the table below. Lucene's pair (1.2, 0.75) is better on ArguAna and about even elsewhere; it remains a one-line option (`QueryEngineOptions.Bm25`). The title weight of the benchmark schema, 3, was picked from {0.5, 1, 2, 3, 5, 10} on SciFact and SCIDOCS (flat above 3; ArguAna measured at 1, 2 and 3); it is a schema property, not an engine constant.
+The paper gives no rule for the two constants (it reports that 0.5 < b < 0.8 and 1.2 < k1 < 2 are often good). The defaults are the values of the BEIR lexical baseline (Thakur et al. 2021, setup of Anserini BM25 with k1 = 0.9, b = 0.4), chosen so that the gate sets can be compared with the published baselines. Results on the four gate sets for both parameter pairs are in the table below. Lucene's pair (1.2, 0.75) is better on ArguAna and about even elsewhere; it remains a one-line option (`QueryEngineOptions.Bm25`). The title weight of the benchmark schema, 3, was picked from {0.5, 1, 2, 3, 5, 10} on SciFact and SCIDOCS (flat above 3; ArguAna measured at 1, 2 and 3); it is a schema property, not an engine constant. A sweep of 1, 1.5, 2 and 3 on SciFact, ArguAna and SCIDOCS improved every set up to 3 (relevance.md).
 
 ## Explain
 

@@ -5,7 +5,7 @@ namespace OneIndex.Search;
 
 /// <summary>
 /// Builds the weight of a <see cref="RangeQuery"/>. A numeric, date or boolean field uses the segment's point index when it has one
-/// (<see cref="IPointIndexReader"/>, the fast path), and otherwise the numeric terms the text codec writes (<see cref="NumericTerms"/>):
+/// (<see cref="IPointIndexReader"/>, the fast path), and otherwise the numeric terms the text codec writes when its <see cref="TextSegmentCodec.IndexNumericTerms"/> is on (<see cref="NumericTerms"/>):
 /// a contiguous run of the term dictionary, found from the digits the two bounds share. A keyword field walks its terms in byte
 /// order between the bounds. Matches are collected into a bit set per segment and score as the boost.
 /// </summary>

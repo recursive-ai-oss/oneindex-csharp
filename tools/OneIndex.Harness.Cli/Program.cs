@@ -94,6 +94,54 @@ switch (args[0])
             Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{set} terms={n} queries={queries} identical_top10={queries - different}/{queries} scored/matching={scored}/{matching} fraction={(double)scored / Math.Max(1, matching):F4}"));
         }
 
+        // Allocation per query: every query's analyzed terms (at most 5), run once to warm up and once measured, on this thread.
+        var all = data.Queries.Select(q => OneIndexEngine.Analyze(q.Text).Take(5).ToList()).Where(t => t.Count > 0).ToList();
+        foreach (var t in all)
+        {
+            engine.MeasureSearchAllocation(t, 10);
+        }
+
+        var bytes = all.Select(t => engine.MeasureSearchAllocation(t, 10)).OrderBy(b => b).ToList();
+        Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{set} allocation per pruned top-10 search over {bytes.Count} queries: mean={bytes.Average():F0} B median={bytes[bytes.Count / 2]} B p95={bytes[(int)(bytes.Count * 0.95)]} B max={bytes[^1]} B"));
+        return 0;
+    }
+
+    case "analyze":
+    {
+        // Both English analyzers over every query and the first N documents of a BEIR set: one line per text, tab separated
+        // (kind, id, Lucene terms, OneIndex terms), for comparing the two analysis chains.
+        var data = BeirDataset.Open(Path.Combine(Req("data"), Req("set")));
+        using var w = new StreamWriter(Req("out"));
+        void Line(string kind, string id, string text) => w.WriteLine($"{kind}\t{id}\t{string.Join(' ', LuceneEngine.Analyze(text))}\t{string.Join(' ', OneIndexEngine.Analyze(text))}");
+        foreach (var q in data.Queries)
+        {
+            Line("q", q.Id, q.Text);
+        }
+
+        foreach (var d in data.ReadCorpus().Take(Int("docs", 3000)))
+        {
+            Line("d", d.Id, d.Title + " " + d.Text);
+        }
+
+        return 0;
+    }
+
+    case "explain-lucene":
+    {
+        var data = BeirDataset.Open(Path.Combine(Req("data"), Req("set")));
+        using var lucene = new LuceneEngine();
+        lucene.Create(new EngineSettings(Path.Combine(Req("work"), Req("set") + "-explain"), AnalysisKind.English, IndexProfile.Beir));
+        Parallel.ForEach(data.ReadCorpus(), new ParallelOptions { MaxDegreeOfParallelism = Int("threads", 4) }, lucene.Add);
+        lucene.Commit();
+        lucene.OpenSearcher();
+        lucene.SetBm25(0.9f, 0.4f);
+        foreach (var i in Req("queries").Split(','))
+        {
+            var q = data.Queries[int.Parse(i, CultureInfo.InvariantCulture)];
+            Console.WriteLine($"=== query {i} {q.Id}: {q.Text}");
+            Console.WriteLine(lucene.ExplainTop(new MatchQuery(q.Text, FieldLayout.MultiFieldSum)));
+        }
+
         return 0;
     }
 

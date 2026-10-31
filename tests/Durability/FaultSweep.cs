@@ -154,10 +154,15 @@ public static class FaultSweep
             {
                 using IndexSnapshot snap = IndexSnapshot.Open(fi, Workload.Codecs);
                 snap.Verify();
-                string actual = Workload.HashRows(Workload.ReadContent(snap));
-                if (actual != expected)
+                SortedDictionary<string, string> content = Workload.ReadContent(snap);
+                if (Workload.HashRows(content) != expected)
                 {
                     return $"silently wrong content at generation {gen}";
+                }
+
+                if (Workload.CheckSearch(snap, content) is { } searchFailure)
+                {
+                    return $"generation {gen}: {searchFailure}";
                 }
             }
 

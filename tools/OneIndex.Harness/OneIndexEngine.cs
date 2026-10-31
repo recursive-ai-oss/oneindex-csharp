@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using OneIndex.Aggregations;
 using OneIndex.Analysis;
 using OneIndex.Index;
@@ -21,7 +20,6 @@ public sealed class OneIndexEngine : ITextEngine
     private SearchContext? _context;
     private IndexSearcher? _searcher;
     private string[] _idOf = [];
-    private readonly ConcurrentQueue<string> _ids = new();
     private float _k1 = Bm25Parameters.Default.K1;
     private float _b = Bm25Parameters.Default.B;
 
@@ -61,7 +59,7 @@ public sealed class OneIndexEngine : ITextEngine
         {
             FieldDefinition Text(string name) => new(name, FieldType.Text) { Analyzer = "en", IndexOptions = IndexOptions.Freqs, Stored = false };
             // A match in the title says more than one in the body: its BM25F weight is 3 (chosen on the four BEIR gate sets, docs/scoring.md).
-            const float titleBoost = 3f;
+            float titleBoost = float.TryParse(Environment.GetEnvironmentVariable("ONEINDEX_TITLE_WEIGHT"), System.Globalization.CultureInfo.InvariantCulture, out float w) ? w : 3f;
             schema = new SchemaBuilder().Id("id").Add(new FieldDefinition("title", FieldType.Text) { Analyzer = "en", IndexOptions = IndexOptions.Freqs, Stored = false, Boost = titleBoost }).Add(Text("text")).Add(Text("all")).Build();
         }
         else
@@ -82,10 +80,9 @@ public sealed class OneIndexEngine : ITextEngine
         }
         else
         {
-            _writer!.Upsert(new Document().Add("id", doc.Id).Add("title", doc.Title).Add("text", doc.Text).Add("all", doc.Title + " " + doc.Text));
+            // Corpus identifiers are unique, so the bulk path skips the per-document lookup in every segment.
+            _writer!.AddUnique(new Document().Add("id", doc.Id).Add("title", doc.Title).Add("text", doc.Text).Add("all", doc.Title + " " + doc.Text));
         }
-
-        _ids.Enqueue(doc.Id);
     }
 
     /// <inheritdoc/>
@@ -101,13 +98,14 @@ public sealed class OneIndexEngine : ITextEngine
         _snapshot?.Dispose();
         _snapshot = _writer!.OpenSnapshot();
         _context = SnapshotSearch.CreateContext(_snapshot);
-        // Hits carry document numbers; until stored fields exist the adapter learns each document's identifier by looking it up.
+        // Hits carry document numbers; the identifier of each comes from the stored source, so a reopened index needs no side table.
         _idOf = new string[_context.MaxDoc];
-        foreach (string id in _ids)
+        foreach (LeafContext leaf in _context.Leaves)
         {
-            if (_snapshot.TryFindById(id, out int segment, out int docId))
+            IStoredFieldsReader stored = leaf.Reader.StoredFields ?? throw new InvalidOperationException("The index keeps no stored source.");
+            for (int d = 0; d < leaf.Reader.MaxDoc; d++)
             {
-                _idOf[_context.Leaves[segment].DocBase + docId] = id;
+                _idOf[leaf.DocBase + d] = stored.GetDocument(d).Get("id").AsText();
             }
         }
 
@@ -195,6 +193,18 @@ public sealed class OneIndexEngine : ITextEngine
         _searcher.Search(q, pruned);
         TopDocs page = pruned.Inner.GetTopDocs();
         return (exact.TotalHits, pruned.Collected, exact.Hits.SequenceEqual(page.Hits));
+    }
+
+    /// <summary>Bytes the calling thread allocates answering one pruned top-k BM25F disjunction (the search call only, after the query object exists).</summary>
+    /// <param name="terms">The analyzed query terms.</param>
+    /// <param name="k">The page size.</param>
+    /// <returns>Allocated bytes.</returns>
+    public long MeasureSearchAllocation(IReadOnlyList<string> terms, int k)
+    {
+        Query q = new BooleanQuery([.. terms.Select(t => new BooleanClause(new MultiFieldTermQuery(["title", "text"], t), Occur.Should))]);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        _ = _searcher!.Search(q, k, countExactly: false);
+        return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
     /// <inheritdoc/>

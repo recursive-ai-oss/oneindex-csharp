@@ -21,6 +21,14 @@ public sealed class TextSegmentCodec : ISegmentCodec
     /// <inheritdoc/>
     public string Name => "text";
 
+    /// <summary>
+    /// Whether numeric, date and boolean fields are also written as terms (<see cref="NumericTerms"/>). Default <see langword="false"/>: the point
+    /// index answers ranges, and terms for every number only add index size. Turn it on for an index written without the point codec, so
+    /// range queries still find documents.
+    /// </summary>
+    public bool IndexNumericTerms { get; init; }
+
+
     /// <inheritdoc/>
     public IReadOnlyList<string> Parts { get; } = [SegmentParts.Terms, SegmentParts.Postings, SegmentParts.Lengths];
 
@@ -39,7 +47,7 @@ public sealed class TextSegmentCodec : ISegmentCodec
                 buffer.DeclareField(f.Name, FeaturesOf(f));
                 analyzers[f.Name] = CreateAnalyzer(f);
             }
-            else if (NumericTerms.IsNumeric(f.Type) && f.Indexed)
+            else if (IndexNumericTerms && NumericTerms.IsNumeric(f.Type) && f.Indexed)
             {
                 // Numbers are terms too, so range queries work without a point index (see NumericTerms).
                 buffer.DeclareField(f.Name, PostingsFeatures.Frequencies);
@@ -190,13 +198,28 @@ public sealed class TextSegmentCodec : ISegmentCodec
         public void Dispose() => builder.Dispose();
     }
 
-    private sealed class PartReader(TextSegmentReader segment) : ISegmentPartReader, ITextFieldSource
+    private sealed class PartReader(TextSegmentReader segment) : ISegmentPartReader, ITextFieldSource, ITermDocLookup
     {
         public TextSegmentReader Segment { get; } = segment;
 
         public IReadOnlyList<string> FieldNames => Segment.FieldNames;
 
         public ITextFieldReader? GetTextField(string field) => Segment.GetTextField(field);
+
+        // Delete-by-value reaches committed segments through the keyword field's postings.
+        public void CollectDocs(string field, ReadOnlySpan<byte> term, List<int> destination)
+        {
+            if (Segment.GetTextField(field) is not { } reader || !reader.TryGetTerm(term, out TermInfo info))
+            {
+                return;
+            }
+
+            PostingsIterator postings = reader.GetPostings(info, PostingsFeatures.None);
+            for (int d = postings.NextDoc(); d != DocIdSetIterator.NoMoreDocs; d = postings.NextDoc())
+            {
+                destination.Add(d);
+            }
+        }
 
         public void Dispose() => Segment.Dispose();
     }
