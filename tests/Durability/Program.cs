@@ -56,7 +56,7 @@ static int Run(string[] args)
             KillHarness.Summary[] all = Task.WhenAll(tasks).GetAwaiter().GetResult();
             int total = all.Sum(s => s.Kills);
             int failed = all.Sum(s => s.Failures);
-            Console.WriteLine($"kill: {total} kills in {lanes} lanes (seed {seed}), {all.Sum(s => s.Commits)} commits acknowledged, {failed} failures, {clock.Elapsed.TotalSeconds:F0} s");
+            Console.WriteLine($"kill: {total} kills in {lanes} lanes (seed {seed}), {all.Sum(s => s.Commits)} commits acknowledged, {all.Sum(s => s.KilledDuringCommit)} kills landed inside a commit call ({all.Sum(s => s.CommitLandedUnacknowledged)} of those commits were already durable), {failed} failures, {clock.Elapsed.TotalSeconds:F0} s");
             foreach (string m in all.SelectMany(s => s.Messages).Take(20))
             {
                 Console.WriteLine("  " + m);
