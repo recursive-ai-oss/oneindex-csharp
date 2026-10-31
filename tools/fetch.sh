@@ -70,6 +70,8 @@ if wants wikipedia; then
     "$venv/bin/python" "$here/wikipedia_abstracts.py" --out "$out" "$root"/corpus/wikipedia/train-0000{0,1}-of-00041.parquet
   fi
   echo "abstracts  sha256 $(sha256_of "$out")  $(wc -l < "$out") lines"
+  # The generator is deterministic, so this is the same on every machine.
+  [ "$(sha256_of "$out")" = 1759e6517a7251ef3443b1419ec1f44f88c8bd3792310b4771fc2b5052c24893 ] || { echo "abstracts file differs from the pinned build" >&2; exit 1; }
 fi
 
 if wants oracles; then
@@ -83,5 +85,9 @@ if wants oracles; then
   esac
   install_requirements
   "$venv/bin/python" -c 'import tantivy, hnswlib, faiss, ir_measures, pytrec_eval; print("oracles import ok")'
-  "$venv/bin/python" -m pip freeze 2>/dev/null | grep -iE '^(tantivy|hnswlib|faiss-cpu|ir[-_]measures|pytrec[-_]eval|pyarrow)==' || true
+  "$venv/bin/python" - <<'PY'
+from importlib.metadata import version
+for name in ("tantivy", "hnswlib", "faiss-cpu", "ir_measures", "pytrec_eval-terrier", "pyarrow"):
+    print(f"{name}=={version(name)}")
+PY
 fi

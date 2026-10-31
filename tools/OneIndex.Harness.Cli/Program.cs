@@ -44,8 +44,8 @@ switch (args[0])
         foreach (var set in Req("sets").Split(','))
         {
             var data = BeirDataset.Open(Path.Combine(Req("data"), set));
-            var outDir = Path.Combine(Req("out"), set, engine.Name.ToLowerInvariant());
-            BeirRunner.Run(engine, data, Path.Combine(Req("work"), $"{set}-{engine.Name.ToLowerInvariant()}"), outDir, Int("threads", 4));
+            var outDir = Path.Combine(Req("out"), set, Req("engine"));
+            BeirRunner.Run(engine, data, Path.Combine(Req("work"), $"{set}-{Req("engine")}"), outDir, Int("threads", 4));
         }
 
         return 0;
