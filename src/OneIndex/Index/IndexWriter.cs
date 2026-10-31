@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.RegularExpressions;
 using OneIndex.Storage;
 
 namespace OneIndex.Index;
@@ -49,7 +48,29 @@ public sealed class IndexWriterOptions
 /// </remarks>
 public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
 {
-    private static readonly Regex OwnedFile = new(@"^(commit-[0-9a-f]{16}\.(oic|tmp)|s[0-9a-f]{16}\..+)$", RegexOptions.CultureInvariant | RegexOptions.ExplicitCapture, TimeSpan.FromSeconds(1));
+    /// <summary>Whether a file name is one the engine itself creates: <c>commit-&lt;16 hex&gt;.oic|tmp</c> or <c>s&lt;16 hex&gt;.&lt;anything&gt;</c>.</summary>
+    private static bool IsOwnedFile(string name)
+    {
+        static bool Hex(ReadOnlySpan<char> text)
+        {
+            foreach (char c in text)
+            {
+                if (!(c is (>= '0' and <= '9') or (>= 'a' and <= 'f')))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        if (name.StartsWith("commit-", StringComparison.Ordinal))
+        {
+            return name.Length == 7 + 16 + 4 && Hex(name.AsSpan(7, 16)) && (name.EndsWith(".oic", StringComparison.Ordinal) || name.EndsWith(".tmp", StringComparison.Ordinal));
+        }
+
+        return name.Length > 18 && name[0] == 's' && name[17] == '.' && Hex(name.AsSpan(1, 16));
+    }
 
     private readonly object _gate = new();
     private readonly IStorage _storage;
@@ -703,7 +724,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
                 _nextSegmentId = Math.Max(_nextSegmentId, used + 1);
             }
 
-            if (!referenced.Contains(name) && OwnedFile.IsMatch(name))
+            if (!referenced.Contains(name) && IsOwnedFile(name))
             {
                 _storage.Delete(name, cancellationToken);
             }

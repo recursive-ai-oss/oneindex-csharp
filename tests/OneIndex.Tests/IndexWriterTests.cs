@@ -369,6 +369,54 @@ public class IndexWriterTests
     }
 
     [Fact]
+    public void MergeOutputIsThrottledThroughTheScheduler()
+    {
+        var recorder = new PauseRecorder();
+        IndexWriterOptions baseOptions = Workload.Options(recorder, maxBuffered: 4);
+        var options = new IndexWriterOptions
+        {
+            Codecs = baseOptions.Codecs,
+            MaxBufferedDocuments = 4,
+            MergePolicy = baseOptions.MergePolicy,
+            MergeScheduler = recorder,
+            MaxMergeBytesPerSecond = 1_000,
+            TimeProvider = new FrozenClock(),
+        };
+        using IndexWriter w = IndexWriter.Open(new MemoryStorage(), Workload.Schema, options);
+        for (int i = 0; i < 12; i++)
+        {
+            w.Upsert(Workload.ToDocument(Put("d" + i)));
+        }
+
+        w.Commit();
+        w.WaitForMerges();
+        Assert.NotEmpty(recorder.Pauses);
+        Assert.All(recorder.Pauses, p => Assert.True(p > TimeSpan.Zero));
+    }
+
+    private sealed class FrozenClock : TimeProvider
+    {
+        public override long GetTimestamp() => 0;
+    }
+
+    private sealed class PauseRecorder : IMergeScheduler
+    {
+        private readonly CooperativeMergeScheduler _inner = new();
+
+        public List<TimeSpan> Pauses { get; } = [];
+
+        public void Enqueue(Action<CancellationToken> work) => _inner.Enqueue(work);
+
+        public void Poll(CancellationToken cancellationToken) => _inner.Poll(cancellationToken);
+
+        public void WaitForIdle(CancellationToken cancellationToken) => _inner.WaitForIdle(cancellationToken);
+
+        public void Pause(TimeSpan delay, CancellationToken cancellationToken) => Pauses.Add(delay);
+
+        public void Dispose() => _inner.Dispose();
+    }
+
+    [Fact]
     public void ShortFaultSweepFindsNoViolation()
     {
         FaultSweep.Result r = FaultSweep.Run([3], [1, 2], 30);
