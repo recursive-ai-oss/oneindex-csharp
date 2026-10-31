@@ -347,6 +347,28 @@ public class IndexWriterTests
     }
 
     [Fact]
+    public void TryReadersReportUnknownChecksumAlgorithmsAndNewerVersionsWithoutThrowing()
+    {
+        // Found by the fuzz target: a file with an unknown footer algorithm made a Try method throw.
+        var storage = new MemoryStorage();
+        var sink = new SegmentFileSink(storage, "s0000000000000001");
+        IdsFormat.Write(sink, [new KeyValuePair<byte[], int>([1, 2], 0)]);
+        byte[] ids = TestHelpers.ReadAll(storage, "s0000000000000001.ids");
+        ids[^8] = 9; // algorithm
+        Assert.False(IdsFormat.TryValidate("x", ids, 1, null, out string? error));
+        Assert.NotNull(error);
+        Assert.False(DeleteFileFormat.TryParse("x", ids, -1, -1, null, out _, out _));
+
+        // An intact file written by a newer version is "unsupported" from the throwing readers.
+        byte[] newer = TestHelpers.ReadAll(storage, "s0000000000000001.ids");
+        newer[4] = 2;
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(newer.AsSpan(newer.Length - 4), Crc32C.Compute(newer.AsSpan(0, newer.Length - 4)));
+        Assert.False(IdsFormat.TryValidate("x", newer, 1, null, out _));
+        using IdsReader reader = new(storage.OpenRead("s0000000000000001.ids"), 1);
+        Assert.True(reader.TryFind([1, 2], out int doc) && doc == 0);
+    }
+
+    [Fact]
     public void ShortFaultSweepFindsNoViolation()
     {
         FaultSweep.Result r = FaultSweep.Run([3], [1, 2], 30);

@@ -61,17 +61,12 @@ public static class IdsFormat
     /// <param name="limits">The limits to enforce.</param>
     /// <param name="error">What is wrong on failure.</param>
     /// <returns><see langword="true"/> if valid.</returns>
-    /// <exception cref="UnsupportedFormatException">The file is intact but of a newer version.</exception>
     public static bool TryValidate(string fileName, ReadOnlySpan<byte> file, int maxDoc, IndexLimits? limits, out string? error)
     {
         limits ??= IndexLimits.Default;
         try
         {
             IndexFile.Validate(fileName, file, Magic, FormatVersion);
-        }
-        catch (UnsupportedFormatException)
-        {
-            throw;
         }
         catch (CorruptIndexException e)
         {
@@ -306,6 +301,7 @@ public sealed class IdsReader : IDisposable
 
         var bytes = new byte[(int)_reader.Length];
         _reader.ReadExactly(0, bytes, cancellationToken);
+        IndexFile.Validate(_fileName, bytes, IdsFormat.Magic, IdsFormat.FormatVersion);
         if (!IdsFormat.TryValidate(_fileName, bytes, _maxDoc, null, out string? error))
         {
             throw new CorruptIndexException(_fileName, error!);

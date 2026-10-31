@@ -136,6 +136,7 @@ public sealed class IndexSnapshot : IDisposable
                 using IRangeReader reader = _storage.OpenRead(ids.FileName, cancellationToken);
                 var bytes = new byte[(int)reader.Length];
                 reader.ReadExactly(0, bytes, cancellationToken);
+                IndexFile.Validate(ids.FileName, bytes, IdsFormat.Magic, IdsFormat.FormatVersion);
                 if (!IdsFormat.TryValidate(ids.FileName, bytes, seg.DocCount, _limits, out string? error))
                 {
                     throw new CorruptIndexException(ids.FileName, error!);

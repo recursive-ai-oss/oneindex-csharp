@@ -164,8 +164,11 @@ public static class DeleteFileFormat
     /// <param name="limits">The limits to enforce.</param>
     /// <returns>The deleted set.</returns>
     /// <exception cref="CorruptIndexException">The file is damaged or disagrees with the commit.</exception>
+    /// <exception cref="UnsupportedFormatException">The file is intact but of a newer version.</exception>
     public static LiveDocs Parse(string fileName, ReadOnlySpan<byte> file, int expectedMaxDoc, int expectedDeleted, IndexLimits? limits = null)
     {
+        // The frame first, so that an intact file from a newer writer is reported as unsupported rather than corrupt.
+        IndexFile.Validate(fileName, file, Magic, FormatVersion);
         if (!TryParse(fileName, file, expectedMaxDoc, expectedDeleted, limits, out LiveDocs? live, out string? error))
         {
             throw new CorruptIndexException(fileName, error!);
@@ -183,7 +186,6 @@ public static class DeleteFileFormat
     /// <param name="live">The deleted set on success.</param>
     /// <param name="error">What is wrong on failure.</param>
     /// <returns><see langword="true"/> if the file is valid.</returns>
-    /// <exception cref="UnsupportedFormatException">The file is intact but of a newer version.</exception>
     public static bool TryParse(string fileName, ReadOnlySpan<byte> file, int expectedMaxDoc, int expectedDeleted, IndexLimits? limits, out LiveDocs? live, out string? error)
     {
         limits ??= IndexLimits.Default;
@@ -191,10 +193,6 @@ public static class DeleteFileFormat
         try
         {
             IndexFile.Validate(fileName, file, Magic, FormatVersion);
-        }
-        catch (UnsupportedFormatException)
-        {
-            throw;
         }
         catch (CorruptIndexException e)
         {
