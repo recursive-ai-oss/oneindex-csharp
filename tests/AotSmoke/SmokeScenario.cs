@@ -41,6 +41,35 @@ internal static class SmokeScenario
         Require(new TermQuery("body", "hello") == new TermQuery("body", "hello"), "query equality");
     }
 
+    /// <summary>The writer lifecycle: buffer, flush, delete, merge, commit, snapshot lookup; threads only when asked for.</summary>
+    public static void RunWriter(IStorage storage, bool threadedMerges)
+    {
+        Schema schema = new SchemaBuilder().Id("id").Text("body").Build();
+        var options = new IndexWriterOptions
+        {
+            MaxBufferedDocuments = 3,
+            MergePolicy = new TieredMergePolicy { SegmentsPerTier = 2, MaxMergeAtOnce = 2, FloorSegmentDocs = 2 },
+            MergeScheduler = threadedMerges ? new ThreadedMergeScheduler() : new CooperativeMergeScheduler(),
+        };
+        using (IndexWriter writer = IndexWriter.Open(storage, schema, options))
+        {
+            for (int i = 0; i < 10; i++)
+            {
+                writer.Upsert(new Document().Add("id", "doc" + i).Add("body", "text " + i));
+            }
+
+            writer.DeleteById("doc3");
+            writer.Commit();
+            writer.WaitForMerges();
+            writer.Commit();
+            using IndexSnapshot snapshot = writer.OpenSnapshot();
+            Require(snapshot.LiveDocCount == 9 && snapshot.TryFindById("doc4", out _, out _) && !snapshot.TryFindById("doc3", out _, out _), "writer lifecycle");
+        }
+
+        using IndexSnapshot reopened = IndexSnapshot.Open(storage);
+        Require(reopened.LiveDocCount == 9, "writer reopen");
+    }
+
     private static void Require(bool condition, string what)
     {
         if (!condition)
