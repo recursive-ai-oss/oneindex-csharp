@@ -21,6 +21,9 @@ internal static class Program
         ["postings"] = TextIndexTarget.RunPostings,
         ["segment"] = SegmentTarget.Run,
         ["query"] = QueryTarget.Run,
+        ["columns"] = DocValuesTarget.RunColumns,
+        ["points"] = DocValuesTarget.RunPoints,
+        ["stored"] = DocValuesTarget.RunStored,
     };
 
     private static int Main(string[] args)
@@ -56,6 +59,15 @@ internal static class Program
                     break;
                 case "query":
                     QueryTarget.WriteSeeds(args[2]);
+                    break;
+                case "columns":
+                    DocValuesTarget.WriteSeeds(args[2], 0);
+                    break;
+                case "points":
+                    DocValuesTarget.WriteSeeds(args[2], 1);
+                    break;
+                case "stored":
+                    DocValuesTarget.WriteSeeds(args[2], 2);
                     break;
                 default:
                     CommitTarget.WriteSeeds(args[2]);

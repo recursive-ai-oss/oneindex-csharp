@@ -55,7 +55,7 @@ public sealed class IndexSnapshot : IDisposable
         CommitInfo commit = CommitProtocol.OpenLatest(storage, limits, cancellationToken)
             ?? throw new InvalidOperationException("The storage holds no committed index.");
         Schema schema = commit.SchemaBytes.IsEmpty ? Schema.Empty : Schema.Deserialize(commit.SchemaBytes.Span, limits);
-        return new IndexSnapshot(storage, commit, schema, codecs ?? [new OneIndex.Codecs.TextSegmentCodec()], limits, null);
+        return new IndexSnapshot(storage, commit, schema, codecs ?? OneIndex.Codecs.SegmentCodecs.CreateDefault(), limits, null);
     }
 
     /// <summary>Opens a snapshot of the newest commit without a writer.</summary>
@@ -70,7 +70,7 @@ public sealed class IndexSnapshot : IDisposable
         CommitInfo commit = await CommitProtocol.OpenLatestAsync(storage, limits, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException("The storage holds no committed index.");
         Schema schema = commit.SchemaBytes.IsEmpty ? Schema.Empty : Schema.Deserialize(commit.SchemaBytes.Span, limits);
-        return new IndexSnapshot(storage, commit, schema, codecs ?? [new OneIndex.Codecs.TextSegmentCodec()], limits, null);
+        return new IndexSnapshot(storage, commit, schema, codecs ?? OneIndex.Codecs.SegmentCodecs.CreateDefault(), limits, null);
     }
 
     /// <summary>Gets (opening on first use) one segment's reader. The reader belongs to the snapshot; do not dispose it.</summary>

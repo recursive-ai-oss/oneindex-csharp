@@ -9,8 +9,8 @@ public sealed class IndexWriterOptions
     /// <summary>The limits every reader enforces. Default <see cref="IndexLimits.Default"/>.</summary>
     public IndexLimits Limits { get; init; } = IndexLimits.Default;
 
-    /// <summary>The codecs that write and read segment parts, registered explicitly. Default: the text codec (<see cref="OneIndex.Codecs.TextSegmentCodec"/>). An empty list leaves a segment holding only identifiers.</summary>
-    public IReadOnlyList<ISegmentCodec> Codecs { get; init; } = [new OneIndex.Codecs.TextSegmentCodec()];
+    /// <summary>The codecs that write and read segment parts, registered explicitly. Default: <see cref="OneIndex.Codecs.SegmentCodecs.CreateDefault"/> (text index, columns, points, stored source). An empty list leaves a segment holding only identifiers.</summary>
+    public IReadOnlyList<ISegmentCodec> Codecs { get; init; } = OneIndex.Codecs.SegmentCodecs.CreateDefault();
 
     /// <summary>Buffered documents that trigger a flush into a new segment. Default 10,000.</summary>
     public int MaxBufferedDocuments { get; init; } = 10_000;

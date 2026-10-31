@@ -4,7 +4,7 @@
 #   fuzz/run.sh <target> <seconds> [corpus dir] [extra libFuzzer flags...]
 #   fuzz/run.sh replay <target> <file>...      # run saved inputs once, without libFuzzer (reproduce a finding)
 #
-# Targets: commit, analysis, terms, postings, segment   (see fuzz/README.md)
+# Targets: commit, analysis, terms, postings, segment, columns, points, stored   (see fuzz/README.md)
 #
 # Environment (nothing is baked into the script):
 #   ONEINDEX_FUZZ_WORK    required: where builds, corpora and findings go. Keep it outside the checkout.
@@ -38,6 +38,7 @@ case "$target" in
   commit) maxlen=65536 ;;
   analysis|terms|postings) maxlen=65536 ;;
   segment) maxlen=16384 ;;
+  columns|points|stored) maxlen=65536 ;;
   *) echo "unknown target '$target'" >&2; exit 2 ;;
 esac
 
