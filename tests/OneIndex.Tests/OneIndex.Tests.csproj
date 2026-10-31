@@ -18,6 +18,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/OneIndex/OneIndex.csproj" />
+    <!-- The test codec and the seeded workload of the durability harness are shared with these tests. -->
+    <ProjectReference Include="../Durability/Durability.csproj" />
     <!-- The generator runs over this project's own attributed test types. -->
     <ProjectReference Include="../../src/OneIndex.Generators/OneIndex.Generators.csproj" ReferenceOutputAssembly="false" OutputItemType="Analyzer" />
   </ItemGroup>

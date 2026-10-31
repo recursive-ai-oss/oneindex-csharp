@@ -695,6 +695,14 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
 
         foreach (string name in _storage.List(cancellationToken))
         {
+            // A segment name is never reused, even when its files are leftovers about to be deleted: a deleted name that a
+            // crash brings back must not collide with a new segment of the same name.
+            if (name.Length > 17 && name[0] == 's' && name[17] == '.'
+                && ulong.TryParse(name.AsSpan(1, 16), System.Globalization.NumberStyles.AllowHexSpecifier, System.Globalization.CultureInfo.InvariantCulture, out ulong used))
+            {
+                _nextSegmentId = Math.Max(_nextSegmentId, used + 1);
+            }
+
             if (!referenced.Contains(name) && OwnedFile.IsMatch(name))
             {
                 _storage.Delete(name, cancellationToken);
@@ -707,7 +715,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
         }
 
         _current = commit;
-        _nextSegmentId = Math.Max(commit.NextSegmentId, 1);
+        _nextSegmentId = Math.Max(Math.Max(commit.NextSegmentId, _nextSegmentId), 1);
         _appliedPosition = commit.AppliedPosition.ToArray();
         _userData = new SortedDictionary<string, string>(commit.UserData.ToDictionary(p => p.Key, p => p.Value), StringComparer.Ordinal);
         _refs.Acquire(FilesOf(commit));

@@ -24,12 +24,23 @@ The commit protocol needs two promises: a synced file's bytes survive a crash, a
 
 | Platform | File data (`Sync`) | Names (`SyncDirectory`) |
 |---|---|---|
-| Linux (ext4, XFS, btrfs) | `fsync` on the file | .NET cannot open a directory to fsync it, so each file created or renamed into place since the last call is fsynced again. These file systems commit the directory entry in the same journal transaction, so that makes the entry durable. Deletions are not forced, which is harmless: a deleted file that returns after a crash is garbage no commit names. |
+| Linux (ext4, XFS, btrfs) | `fsync` on the file | .NET cannot open a directory to fsync it, so each file created or renamed into place since the last call is fsynced again. In practice these file systems commit the directory entry in the same journal transaction, which makes the entry durable (not a POSIX guarantee; see below). Deletions are not forced, which is harmless: a deleted file that returns after a crash is garbage no commit names. |
 | macOS | full sync of the file (`F_FULLFSYNC`, as .NET does for `FlushToDisk`) | the same file flushes |
 | Windows (NTFS) | `FlushFileBuffers` | the same file flushes; NTFS journals metadata |
 | Memory | nothing is ever durable beyond the process | no effect |
 
-This is the strongest the platform allows without native code. A file system or a virtualized disk that reorders metadata ahead of data, or ignores flushes, can still break any database; the fault injector tests the protocol against a stricter model than the common file systems provide.
+### Why `SyncDirectory` does not fsync the directory
+
+.NET has no managed way to open a directory for syncing. On Linux (.NET 10.0.11) every attempt throws `UnauthorizedAccessException`: `File.OpenHandle` and `FileStream` on the directory path, on `<dir>/.`, and on `/proc/self/cwd`, read-only or read-write. A `SafeFileHandle` can only wrap a descriptor that something else opened, and getting one needs `open(2)`, which means native interop; spawning `sync` as a child process is possible but absent in sandboxes and in the browser, so the engine does not do it. (Opening a directory is not possible with `FileStream` on Windows either; this was not tested here.) The BCL offers no other durable-directory call, so the engine does not claim one.
+
+What the engine does instead, and what that guarantees:
+
+- **Process kill, crash of the application, `kill -9`:** fully guaranteed on every platform. The operating system has every completed write and rename, whatever the disk does later. The kill harness exercises exactly this.
+- **Power loss or kernel crash, Linux:** POSIX asks for a directory fsync to make a created or renamed name durable. Without one, durability rests on how the file system journals: on ext4, XFS and btrfs, fsync of a file also commits the journal or log entry that created or renamed it, so syncing each new file, then the renamed commit file, after the rename makes the name durable in practice. That is a property of those implementations, not of POSIX; it was not tested by pulling power, and a file system that behaves differently (some network and FUSE file systems) can lose a rename it acknowledged. The loss is a rollback to the previous commit, never a corrupt index: the commit protocol only ever lists files that were synced and verified, and a reader checks every listed file's length and checksum.
+- **Power loss, macOS and Windows:** `FlushToDisk` (`F_FULLFSYNC` / `FlushFileBuffers`) of the file, and the same reliance on the file system's metadata journal. Nothing here was tested with a power cut; the worst case is the same rollback.
+- **Memory:** nothing outlives the process.
+
+The fault injector models the strict case (a rename survives only after `SyncDirectory`), and the engine passes it, so an application that can run a directory fsync of its own (for instance from a supervising process) can add it without changing the engine.
 
 ## The fault-injecting wrapper
 

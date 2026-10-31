@@ -16,6 +16,7 @@ internal static class Program
     private static readonly Dictionary<string, Target> Targets = new(StringComparer.Ordinal)
     {
         ["commit"] = CommitTarget.Run,
+        ["segment"] = SegmentTarget.Run,
     };
 
     private static int Main(string[] args)
@@ -35,7 +36,15 @@ internal static class Program
         if (args.Length > 2 && args[0] == "seeds")
         {
             Directory.CreateDirectory(args[2]);
-            CommitTarget.WriteSeeds(args[2]);
+            if (args[1] == "segment")
+            {
+                SegmentTarget.WriteSeeds(args[2]);
+            }
+            else
+            {
+                CommitTarget.WriteSeeds(args[2]);
+            }
+
             return 0;
         }
 
