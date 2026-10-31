@@ -30,6 +30,9 @@ public static class SegmentParts
 
     /// <summary>The delete bitmap of one generation.</summary>
     public const string Deletes = "deletes";
+
+    /// <summary>The map from document identifier to document id, written by the index itself for every segment of a schema with an identifier.</summary>
+    public const string Ids = "ids";
 }
 
 /// <summary>
@@ -55,6 +58,8 @@ public static class CodecRegistry
         new(SegmentParts.Stored, 1),
 
         new(SegmentParts.Deletes, 1),
+
+        new(SegmentParts.Ids, 1),
     ];
 
     /// <summary>Every registered codec with its newest version, in a fixed order.</summary>
