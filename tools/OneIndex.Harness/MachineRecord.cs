@@ -12,7 +12,7 @@ public static class MachineRecord
     /// <summary>Captures CPU, cores, instruction sets, storage, runtime and SDK. <paramref name="workDir"/> is where the index lives.</summary>
     public static Dictionary<string, string> Capture(string workDir)
     {
-        var drive = new DriveInfo(Path.GetFullPath(workDir));
+        Directory.CreateDirectory(workDir);
         return new Dictionary<string, string>
         {
             ["cpu"] = CpuModel(),
@@ -20,7 +20,7 @@ public static class MachineRecord
             ["isa"] = Isa(),
             ["os"] = RuntimeInformation.OSDescription,
             ["arch"] = RuntimeInformation.OSArchitecture.ToString(),
-            ["storage"] = $"{drive.DriveFormat} on {drive.Name} ({drive.TotalSize / (1L << 30)} GiB, {drive.AvailableFreeSpace / (1L << 30)} GiB free)",
+            ["storage"] = Storage(workDir),
             ["runtime"] = RuntimeInformation.FrameworkDescription,
             ["sdk"] = Tool("dotnet", "--version"),
             ["totalMemoryGiB"] = (GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / (1L << 30)).ToString(CultureInfo.InvariantCulture),
@@ -32,6 +32,18 @@ public static class MachineRecord
     public static string LoadAverage() => File.Exists("/proc/loadavg")
         ? string.Join(' ', File.ReadAllText("/proc/loadavg").Split(' ').Take(3))
         : Tool("sysctl", "-n vm.loadavg");
+
+    // The volume holding the index: file system type, device, size and free space, as df reports them.
+    private static string Storage(string dir)
+    {
+        var text = Tool("df", $"-PT \"{dir}\"");
+        if (!text.Contains('\n', StringComparison.Ordinal))
+        {
+            text = Tool("df", $"-P \"{dir}\"");
+        }
+
+        return text.Split('\n').LastOrDefault()?.Trim() ?? "unknown";
+    }
 
     private static string CpuModel()
     {
