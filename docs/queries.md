@@ -70,3 +70,7 @@ The count includes terms that occur only in deleted documents until a merge remo
 ## Statistics scope
 
 Document counts, document frequencies and average field lengths are summed over all segments of the snapshot when the weight is made, so a document scores the same whichever segment it is in. Deleted documents still count until a merge rewrites their segment. Scores of a snapshot therefore change slightly across merges that drop deletes, and are identical for two snapshots with identical segments and deletes.
+
+## Other ways to write a query
+
+The same query objects are written by four text and data forms: forgiving [user text](user-text.md), the opt-in [strict syntax](query-syntax.md) with positioned errors, [filter strings](filter-strings.md), and versioned [query JSON](query-json.md), whose schema for language models is described in [search-tool.md](search-tool.md).
