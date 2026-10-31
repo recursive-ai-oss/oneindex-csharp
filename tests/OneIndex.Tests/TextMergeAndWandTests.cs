@@ -283,37 +283,26 @@ public sealed class TextMergeAndWandTests
         field.TryGetTerm(top, out TermInfo info);
         var postings = (TermPostings)field.GetPostings(info, PostingsFeatures.Offsets);
 
-        // Warm up (JIT) then measure.
-        for (int i = 0; i < 3; i++)
-        {
-            Lookup(field, terms);
-            Iterate(postings, info);
-        }
-
-        long before = GC.GetAllocatedBytesForCurrentThread();
         long lookups = 0;
-        for (int i = 0; i < 50; i++)
-        {
-            lookups += Lookup(field, terms);
-        }
-
-        long afterLookups = GC.GetAllocatedBytesForCurrentThread();
         long docsRead = 0;
-        for (int i = 0; i < 50; i++)
-        {
-            docsRead += Iterate(postings, info);
-        }
-
-        long afterPostings = GC.GetAllocatedBytesForCurrentThread();
+        int lookupWindows = TestHelpers.AssertNoAllocation("term lookup", () => lookups += Lookup(field, terms));
+        int iterateWindows = TestHelpers.AssertNoAllocation("postings iteration", () => docsRead += Iterate(postings, info));
         long beforeCreate = GC.GetAllocatedBytesForCurrentThread();
         _ = field.GetPostings(info, PostingsFeatures.Offsets);
         long perIterator = GC.GetAllocatedBytesForCurrentThread() - beforeCreate;
-        Assert.True(lookups >= 50 * 200);
-        Assert.Equal(50 * 3000, docsRead);
-        Assert.Equal(0, afterLookups - before);
-        Assert.Equal(0, afterPostings - afterLookups);
-        System.Diagnostics.Trace.WriteLine($"allocation: {lookups} lookups 0 bytes, {docsRead} documents with positions and offsets 0 bytes, creating one iterator {perIterator} bytes");
-        WandReport.Add($"allocation: {lookups} term lookups and {docsRead} postings iterated with positions and offsets allocated 0 bytes; creating an iterator {perIterator} bytes");
+        Assert.True(lookups >= 200L * lookupWindows);
+        Assert.True(docsRead >= 3000L * iterateWindows);
+        System.Diagnostics.Trace.WriteLine($"allocation: {lookups} lookups 0 bytes in {lookupWindows} windows, {docsRead} documents with positions and offsets 0 bytes in {iterateWindows} windows, creating one iterator {perIterator} bytes");
+        WandReport.Add($"allocation: {lookups} term lookups and {docsRead} postings iterated with positions and offsets allocated 0 bytes in every collection-free window; creating an iterator {perIterator} bytes");
+    }
+
+    private static object? _sink;
+
+    [Fact]
+    public void AllocationHelperStillCatchesAnAllocation()
+    {
+        // The measurement must not be blunted: one small allocation per window is a failure.
+        Assert.ThrowsAny<Exception>(() => TestHelpers.AssertNoAllocation("allocating operation", () => _sink = new byte[24], windows: 5));
     }
 
     private static long Lookup(ITextFieldReader field, byte[][] terms)

@@ -96,17 +96,9 @@ public class AnalysisTests
             return n;
         }
 
-        _ = Drain(analyzer, text);
-        long before = GC.GetAllocatedBytesForCurrentThread();
         int total = 0;
-        for (int i = 0; i < 10_000; i++)
-        {
-            total += Drain(analyzer, text);
-        }
-
-        long after = GC.GetAllocatedBytesForCurrentThread();
+        TestHelpers.AssertNoAllocation("analysis", () => total += Drain(analyzer, text), windows: 10);
         Assert.True(total > 0);
-        Assert.Equal(0, after - before);
     }
 
     [Fact]

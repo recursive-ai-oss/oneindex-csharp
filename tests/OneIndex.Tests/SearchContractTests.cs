@@ -149,13 +149,18 @@ public class SearchContractTests
             leaf.Collect(scorer.NextDoc());
         }
 
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        for (int doc = scorer.NextDoc(); doc != DocIdSetIterator.NoMoreDocs; doc = scorer.NextDoc())
+        // Each window collects a stretch of documents; the scorer is not rewound, so the windows walk it through.
+        TestHelpers.AssertNoAllocation("top-k collection", () =>
         {
-            leaf.Collect(doc);
-        }
-
-        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+            for (int n = 0; n < 100; n++)
+            {
+                int doc = scorer.NextDoc();
+                if (doc != DocIdSetIterator.NoMoreDocs)
+                {
+                    leaf.Collect(doc);
+                }
+            }
+        }, windows: 30);
     }
 
     [Fact]
