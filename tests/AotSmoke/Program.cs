@@ -4,6 +4,8 @@ using OneIndex.Storage;
 SmokeScenario.Run(new MemoryStorage());
 AnalysisScenario.Run();
 HappyPathScenario.Run();
+QueryFormsScenario.Run();
+QueryFormsLowLevelScenario.Run();
 SmokeScenario.RunWriter(new MemoryStorage(), threadedMerges: true);
 SmokeScenario.RunWriter(new MemoryStorage(), threadedMerges: false);
 

@@ -261,7 +261,7 @@ public sealed class UserTextCompiler
     private static Search.Query AnyOf(List<Search.Query> alternatives)
         => alternatives.Count == 1 ? alternatives[0] : new BooleanQuery(alternatives.ConvertAll(static q => new BooleanClause(q, Occur.Should))) { MinimumShouldMatch = 1 };
 
-    private Search.Query? CompileOperand(UserTextOperand operand)
+    internal Search.Query? CompileOperand(UserTextOperand operand)
     {
         var perGroup = new List<Search.Query>();
         foreach ((string analyzerName, List<string> fields) in _groups)
