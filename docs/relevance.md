@@ -55,6 +55,43 @@ OneIndex BM25 nDCG@10 on each set is within 0.01 of the published baseline and n
 matching setting (the OneIndex default is compared with the closest Lucene.NET setting). The OneIndex adapter (`OneIndexEngine`)
 is filled in when its scorer and queries exist; the runner needs no change.
 
-## Results
+## Results: Lucene.NET 4.8.0-beta00018 (the comparator side)
 
-See the tables below, appended per run with the worker job that produced them.
+Engine: Lucene.NET `4.8.0-beta00018` (assembly build `commit:[df99b8abd9]`; packages Lucene.Net, Lucene.Net.Analysis.Common, Lucene.Net.Facet) on .NET 10.0.13 (SDK 10.0.402), Linux x64.
+Analysis: `EnglishAnalyzer` (lower-case, possessive removal, English stop words, Porter stemming) for documents and queries. Top 1,000 per
+query, test split. Worker: 32 logical cores (AMD Ryzen 9 7950X3D), NVMe ext4, 8 indexing and search threads. Jobs: one queue job
+(`wq` job 000970, `remote_run` job princessDonut.3gjc8klr) ran all four sets and the pytrec_eval cross-check; the first attempt
+(jobs 000951 and 000952) produced identical nDCG values and only failed its cross-check step on a result-directory name, fixed in the
+runner. Code at commit `1956a0d` of branch `wip/u4`.
+
+Datasets (SHA-256 of the zip, MD5 matches BEIR): SciFact `536e1444…0165` (5,183 documents, 300 queries), ArguAna `cfdf79ad…557b` (8,674; 1,406),
+SCIDOCS `96640201…17ef1` (25,657; 1,000), NQ `2553bf7b…e752` (2,681,468; 3,452). Full hashes: `tools/pins.tsv`.
+
+nDCG@10 (BEIR convention in parentheses where it differs; it drops a hit whose id equals the query id):
+
+| Run (layout, k1/b) | SciFact | ArguAna | SCIDOCS | NQ |
+|---|---|---|---|---|
+| Flat, 0.9/0.4 | 0.6789 | 0.3111 (0.4118) | 0.1509 | 0.3058 |
+| Flat, 1.2/0.75 | 0.6848 | 0.3642 (0.4882) | 0.1566 | 0.2775 |
+| MultiFieldSum, 0.9/0.4 | 0.6647 | 0.3217 (0.4240) | 0.1587 | 0.3252 |
+| MultiFieldSum, 1.2/0.75 | 0.6628 | 0.3632 (0.4880) | 0.1619 | 0.3051 |
+| MultiFieldMax, 0.9/0.4 | 0.6685 | 0.2877 (0.3784) | 0.1461 | 0.2437 |
+| MultiFieldMax, 1.2/0.75 | 0.6684 | 0.3414 (0.4584) | 0.1480 | 0.2309 |
+| **Published: BEIR paper Table 2** | 0.665 | 0.315 | 0.158 | 0.329 |
+| **Published: Kamalloo Table 3 multifield** | 0.665 | 0.414 | 0.158 | 0.329 |
+| **Published: Kamalloo Table 3 flat** | 0.679 | 0.397 | 0.149 | 0.306 |
+
+Reading: with k1=0.9, b=0.4, Lucene.NET reproduces the Kamalloo flat column on SciFact (0.6789 vs 0.679) and NQ (0.3058 vs 0.306) to three
+decimals and its multifield column on SciFact (0.6647 vs 0.665), SCIDOCS (0.1587 vs 0.158) and, with the BEIR convention, ArguAna
+(0.4240 vs 0.414, 1.0 point high). NQ MultiFieldSum is 0.3252 against the published 0.329 (0.4 point low). The BEIR paper's ArguAna
+value (0.315) is close to the raw, convention-free figure (0.3217), the Kamalloo values to the BEIR-convention figures; the two papers'
+ArguAna numbers do not agree with each other, so the gate on ArguAna should be read against Kamalloo with the convention applied.
+`MultiFieldMax` (Elasticsearch best_fields over the two fields) is clearly worst on NQ, where the title field alone matches many
+irrelevant documents; it is reported for completeness, not as a target. Lucene defaults (1.2/0.75) beat 0.9/0.4 on ArguAna and SCIDOCS
+and SciFact-flat, 0.9/0.4 on NQ.
+
+pytrec_eval 0.5.11 (`ndcg_cut_10`) on the same run files agrees with our nDCG to better than 2e-15 on all 48 run files (raw and
+BEIR-convention variants of 24 runs): four decimals and far beyond.
+
+Indexing time (8 threads, one commit): SciFact 1.8 s, ArguAna 1.0 s, SCIDOCS 1.6 s, NQ 26.8 s (index 1.1 GiB). All six settings for NQ
+answered 3,452 queries in 15 to 22 s each.
