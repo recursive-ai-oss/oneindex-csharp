@@ -231,6 +231,8 @@ public sealed class LuceneEngine : ITextEngine
                 dm.Add(Field("title"));
                 dm.Add(Field("text"));
                 return dm;
+            case FieldLayout.Bm25F:
+                throw new NotSupportedException("Lucene.NET has no BM25F query in 4.8.");
             default:
                 var sum = new BooleanQuery();
                 sum.Add(Field("title"), Occur.SHOULD);

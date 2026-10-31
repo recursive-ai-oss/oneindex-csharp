@@ -84,7 +84,7 @@ public class LuceneComparatorTests : IDisposable
         engine.Add(new Doc("b", "Cooking", "Pasta and sauce recipes."));
         engine.Commit();
         engine.OpenSearcher();
-        foreach (var layout in Enum.GetValues<FieldLayout>())
+        foreach (var layout in Enum.GetValues<FieldLayout>().Where(l => l != FieldLayout.Bm25F))
         {
             var result = engine.Search(new MatchQuery("the runners run", layout), 10);
             Assert.Equal(["a"], result.Hits.Select(h => h.Id));
@@ -123,15 +123,39 @@ public class LuceneComparatorTests : IDisposable
     }
 }
 
-public class OneIndexAdapterTests
+public class OneIndexAdapterTests : IDisposable
 {
+    private readonly string _dir = Path.Combine(Path.GetTempPath(), "oneindex-adapter-" + Guid.NewGuid().ToString("N"));
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_dir))
+        {
+            Directory.Delete(_dir, true);
+        }
+
+        GC.SuppressFinalize(this);
+    }
+
     [Fact]
-    public void ReportsUnavailableUntilTheEngineLands()
+    public void StemsAndScoresEveryLayoutItSupports()
     {
         using var engine = new OneIndexEngine();
-        Assert.False(engine.IsAvailable(out var reason));
-        Assert.NotEmpty(reason);
-        Assert.Contains("lucene", Engines.Available());
-        Assert.DoesNotContain("oneindex", Engines.Available());
+        Assert.True(engine.IsAvailable(out _));
+        engine.Create(new EngineSettings(_dir, AnalysisKind.English, IndexProfile.Beir));
+        engine.Add(new Doc("a", "Running shoes", "A guide to buying shoes for the runner."));
+        engine.Add(new Doc("b", "Cooking", "Pasta and sauce recipes."));
+        engine.Commit();
+        engine.OpenSearcher();
+        foreach (var layout in new[] { FieldLayout.Flat, FieldLayout.MultiFieldSum, FieldLayout.Bm25F })
+        {
+            var result = engine.Search(new MatchQuery("the runners run", layout), 10);
+            Assert.Equal(["a"], result.Hits.Select(h => h.Id));
+            Assert.True(result.Hits[0].Score > 0);
+        }
+
+        engine.SetBm25(1.2f, 0.75f);
+        Assert.Single(engine.Search(new MatchQuery("pasta", FieldLayout.Bm25F), 10).Hits);
+        Assert.Throws<NotSupportedException>(() => engine.Search(new MatchQuery("pasta", FieldLayout.MultiFieldMax), 10));
     }
 }

@@ -30,7 +30,7 @@ public static class BeirRunner
 
     /// <summary>All reported settings: three field layouts times the two parameter sets.</summary>
     public static IEnumerable<Bm25Setting> Settings() =>
-        from layout in new[] { FieldLayout.Flat, FieldLayout.MultiFieldMax, FieldLayout.MultiFieldSum }
+        from layout in new[] { FieldLayout.Flat, FieldLayout.MultiFieldMax, FieldLayout.MultiFieldSum, FieldLayout.Bm25F }
         from p in Parameters
         select new Bm25Setting(layout, p.K1, p.B);
 
@@ -71,8 +71,17 @@ public static class BeirRunner
             engine.SetBm25(setting.K1, setting.B);
             var results = new IReadOnlyList<Hit>[data.Queries.Count];
             var searchWatch = Stopwatch.StartNew();
-            Parallel.For(0, data.Queries.Count, options, i =>
-                results[i] = engine.Search(new MatchQuery(data.Queries[i].Text, setting.Layout), depth).Hits);
+            try
+            {
+                Parallel.For(0, data.Queries.Count, options, i =>
+                    results[i] = engine.Search(new MatchQuery(data.Queries[i].Text, setting.Layout), depth).Hits);
+            }
+            catch (AggregateException e) when (e.InnerExceptions.All(x => x is NotSupportedException))
+            {
+                Console.Error.WriteLine($"{data.Name} {engine.Name}: skipping {setting.Name}: {e.InnerExceptions[0].Message}");
+                continue;
+            }
+
             var searchSeconds = searchWatch.Elapsed.TotalSeconds;
 
             var name = $"{engine.Name.ToLowerInvariant()}.{setting.Name}";
