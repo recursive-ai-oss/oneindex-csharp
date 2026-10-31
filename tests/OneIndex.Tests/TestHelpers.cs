@@ -72,8 +72,8 @@ internal static class TestHelpers
         int held = 0;
         for (int attempt = 0; attempt < maxAttempts && held < windows; attempt++)
         {
-            long allocated;
-            bool kept;
+            long allocated = 0;
+            bool kept = false;
             lock (NoGcGate)
             {
                 if (!GC.TryStartNoGCRegion(16 * 1024 * 1024))
@@ -81,18 +81,26 @@ internal static class TestHelpers
                     continue;
                 }
 
-                long before = GC.GetAllocatedBytesForCurrentThread();
-                operation();
-                allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-                kept = System.Runtime.GCSettings.LatencyMode == System.Runtime.GCLatencyMode.NoGCRegion;
                 try
                 {
-                    GC.EndNoGCRegion();
+                    long before = GC.GetAllocatedBytesForCurrentThread();
+                    operation();
+                    allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+                    kept = System.Runtime.GCSettings.LatencyMode == System.Runtime.GCLatencyMode.NoGCRegion;
                 }
-                catch (InvalidOperationException)
+                finally
                 {
-                    // The runtime already left the region (a collection was forced); the window is thrown away below.
-                    kept = false;
+                    // Always end the region, also when the operation throws: if other threads' allocations overran the budget the
+                    // runtime has already left the mode but keeps its "in progress" flag until EndNoGCRegion is called (which then
+                    // throws), and the next start would fail.
+                    try
+                    {
+                        GC.EndNoGCRegion();
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        kept = false;
+                    }
                 }
             }
 

@@ -44,7 +44,7 @@ internal static class SmokeScenario
     /// <summary>The writer lifecycle: buffer, flush, delete, merge, commit, snapshot lookup; threads only when asked for.</summary>
     public static void RunWriter(IStorage storage, bool threadedMerges)
     {
-        Schema schema = new SchemaBuilder().Id("id").Text("body").Build();
+        Schema schema = new SchemaBuilder().Id("id").Text("body").Integral("year").Build();
         var options = new IndexWriterOptions
         {
             MaxBufferedDocuments = 3,
@@ -55,7 +55,7 @@ internal static class SmokeScenario
         {
             for (int i = 0; i < 10; i++)
             {
-                writer.Upsert(new Document().Add("id", "doc" + i).Add("body", "text " + i));
+                writer.Upsert(new Document().Add("id", "doc" + i).Add("body", "text " + i).Add("year", 2000L + i));
             }
 
             writer.DeleteById("doc3");
@@ -68,6 +68,37 @@ internal static class SmokeScenario
 
         using IndexSnapshot reopened = IndexSnapshot.Open(storage);
         Require(reopened.LiveDocCount == 9, "writer reopen");
+        RequireDocValues(reopened);
+    }
+
+    // Columns, the point index and stored source, read back through a reopened snapshot (the merged segments included).
+    private static void RequireDocValues(IndexSnapshot snapshot)
+    {
+        int matches = 0;
+        int stored = 0;
+        for (int s = 0; s < snapshot.SegmentCount; s++)
+        {
+            SegmentReader segment = snapshot.GetSegment(s);
+            IColumnReader year = segment.GetPart<IColumnSource>()!.GetColumn("year")!;
+            IPointIndexReader points = segment.GetPart<IPointSource>()!.GetPoints("year")!;
+            IStoredFieldsReader fields = segment.GetPart<IStoredFieldsSource>()!.StoredFields;
+            for (DocIdSetIterator it = points.GetRange(2004, 2006); it.NextDoc() != DocIdSetIterator.NoMoreDocs;)
+            {
+                matches += segment.Live.IsDeleted(it.DocId) ? 0 : 1;
+                Require(year.GetInt64(it.DocId) is >= 2004 and <= 2006, "column value in range");
+            }
+
+            for (int d = 0; d < segment.MaxDoc; d++)
+            {
+                if (!segment.Live.IsDeleted(d))
+                {
+                    Require(fields.GetDocument(d).Get("year").AsInt64() == year.GetInt64(d), "stored source matches column");
+                    stored++;
+                }
+            }
+        }
+
+        Require(matches == 3 && stored == 9, "doc values");
     }
 
     private static void Require(bool condition, string what)

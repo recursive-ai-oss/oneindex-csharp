@@ -10,6 +10,9 @@
 | `postings` | the postings file of a segment (same first byte) | the postings reader: every term's documents, frequencies, positions and offsets, advances and look-aheads |
 | `segment` | arbitrary bytes | the delete-file reader and the identifier-map reader (validation and binary-search lookup); what parses must agree with itself |
 | `query` | the bytes choose a small random corpus (segments, deletes, optional merge), a random query tree of every kind, and the checks | query execution against a brute-force BM25F reference (docs/queries.md): same hit set, scores within tolerance, pruned top-k pages bit-identical to the exhaustive list, explanations equal to scores; only `QueryException` for the queries meant to be invalid |
+| `columns` | the columns file of a segment (first byte: odd repairs the header, footer and checksum) | the column directory and sections: every document's values, dictionaries, bulk decodes |
+| `points` | the points file of a segment (same first byte) | the point-index directory and leaves: range iteration, advances, leaf reads |
+| `stored` | the stored-source file of a segment (same first byte) | the block table and the compressed blocks: every document fetched as a document and as source bytes |
 
 Only `CorruptIndexException` (and its subclass `UnsupportedFormatException`) may come out of a reader. Any other exception, a failed invariant, a hang (`-timeout`) or a memory blow-up (`-rss_limit_mb`) is a finding.
 
