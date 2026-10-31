@@ -8,7 +8,7 @@ namespace OneIndex.Index;
 /// The documents of one segment that are deleted, as an immutable view. Deleted documents keep their ids until a merge rewrites
 /// the segment. A set that is mostly empty is held as a sorted list of ids; a larger one as a bitmap.
 /// </summary>
-public sealed class LiveDocs
+public sealed class LiveDocs : OneIndex.Search.ILiveDocs
 {
     private readonly ulong[]? _words;
     private readonly int[]? _sorted;

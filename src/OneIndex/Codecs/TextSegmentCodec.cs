@@ -31,6 +31,7 @@ public sealed class TextSegmentCodec : ISegmentCodec
         ArgumentNullException.ThrowIfNull(sink);
         var buffer = new InvertedBuffer(context.Limits);
         var analyzers = new Dictionary<string, Analyzer>(StringComparer.Ordinal);
+        var numeric = new Dictionary<string, FieldType>(StringComparer.Ordinal);
         foreach (FieldDefinition f in context.Schema.Fields)
         {
             if (IsTextIndexed(f))
@@ -38,12 +39,20 @@ public sealed class TextSegmentCodec : ISegmentCodec
                 buffer.DeclareField(f.Name, FeaturesOf(f));
                 analyzers[f.Name] = CreateAnalyzer(f);
             }
+            else if (NumericTerms.IsNumeric(f.Type) && f.Indexed)
+            {
+                // Numbers are terms too, so range queries work without a point index (see NumericTerms).
+                buffer.DeclareField(f.Name, PostingsFeatures.Frequencies);
+                numeric[f.Name] = f.Type;
+            }
         }
 
-        if (analyzers.Count == 0)
+        if (analyzers.Count == 0 && numeric.Count == 0)
         {
             return;
         }
+
+        Span<byte> numericTerm = stackalloc byte[NumericTerms.TermLength]; // fixed buffer, one numeric term
 
         for (int d = 0; d < context.Documents.Count; d++)
         {
@@ -57,6 +66,11 @@ public sealed class TextSegmentCodec : ISegmentCodec
                 if (analyzers.TryGetValue(field.Name, out Analyzer? analyzer) && field.Value.Kind == FieldValueKind.Text)
                 {
                     buffer.AddField(d, field.Name, analyzer.GetTokens(field.Value.AsText().AsMemory()));
+                }
+                else if (numeric.TryGetValue(field.Name, out FieldType type))
+                {
+                    NumericTerms.Write(NumericTerms.Ordered(type, field.Value), numericTerm);
+                    buffer.AddToken(d, field.Name, numericTerm, 0);
                 }
             }
         }
@@ -147,8 +161,9 @@ public sealed class TextSegmentCodec : ISegmentCodec
         }
     }
 
+    // A keyword field is searchable by term whenever it is indexed (it has no positions to choose); a text field also needs index options.
     private static bool IsTextIndexed(FieldDefinition f)
-        => (f.Type is FieldType.Text or FieldType.Keyword) && f.Indexed && f.IndexOptions != IndexOptions.None;
+        => f.Indexed && (f.Type == FieldType.Keyword || (f.Type == FieldType.Text && f.IndexOptions != IndexOptions.None));
 
     private static PostingsFeatures FeaturesOf(FieldDefinition f) => f.IndexOptions switch
     {

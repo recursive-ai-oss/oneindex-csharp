@@ -122,7 +122,7 @@ public class SearchContractTests
     {
         var seg = new FakeSegment(100);
         var scorer = new FakeScorer(100, d => d);
-        var collector = new TopScoreCollector(3);
+        var collector = new TopScoreCollector(3, countExactly: false);
         LeafCollector leaf = collector.GetLeafCollector(new LeafContext(seg, 0, 0));
         leaf.SetScorer(scorer);
         float last = float.NegativeInfinity;

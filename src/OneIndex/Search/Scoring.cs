@@ -164,6 +164,13 @@ public abstract class Weight
     /// <param name="leaf">The segment.</param>
     /// <returns>The scorer, or <see langword="null"/> when nothing in the segment can match.</returns>
     public abstract Scorer? GetScorer(LeafContext leaf);
+
+    /// <summary>Explains why a document of a segment matches and how its score is made up.</summary>
+    /// <param name="leaf">The segment.</param>
+    /// <param name="docId">The segment-local document id.</param>
+    /// <returns>The breakdown, whose value equals what the scorer returns for the document, or <see langword="null"/> when the document does not match.</returns>
+    /// <exception cref="NotSupportedException">The weight cannot explain (the default).</exception>
+    public virtual Explanation? Explain(LeafContext leaf, int docId) => throw new NotSupportedException($"{GetType().Name} cannot explain.");
 }
 
 /// <summary>Turns queries into weights. The query engine implements it with a <see cref="QueryVisitor{TResult}"/>.</summary>
@@ -251,7 +258,34 @@ public sealed class IndexSearcher(SearchContext context, IWeightFactory factory)
         }
     }
 
-    /// <summary>Searches for the best-scoring documents.</summary>
+    /// <summary>Explains the score of a document.</summary>
+    /// <param name="query">The query.</param>
+    /// <param name="globalDocId">The global document id (a segment's offset plus the local id).</param>
+    /// <returns>The breakdown, or <see langword="null"/> when the document does not match the query.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The id is outside the snapshot.</exception>
+    public Explanation? Explain(Query query, int globalDocId)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentOutOfRangeException.ThrowIfNegative(globalDocId);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(globalDocId, Context.MaxDoc);
+        Weight weight = Factory.CreateWeight(query, Context, ScoreMode.Complete);
+        foreach (LeafContext leaf in Context.Leaves)
+        {
+            if (globalDocId >= leaf.DocBase && globalDocId - leaf.DocBase < leaf.Reader.MaxDoc)
+            {
+                if (leaf.Reader.LiveDocs is { } live && !live.IsLive(globalDocId - leaf.DocBase))
+                {
+                    return null;
+                }
+
+                return weight.Explain(leaf, globalDocId - leaf.DocBase);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Searches for the best-scoring documents, counting every match so the total is exact.</summary>
     /// <param name="query">The query.</param>
     /// <param name="count">How many documents to return, at least 1.</param>
     /// <param name="cancellationToken">Cancels the search.</param>
@@ -259,6 +293,19 @@ public sealed class IndexSearcher(SearchContext context, IWeightFactory factory)
     public TopDocs Search(Query query, int count, CancellationToken cancellationToken = default)
     {
         var collector = new TopScoreCollector(count);
+        Search(query, collector, cancellationToken);
+        return collector.GetTopDocs();
+    }
+
+    /// <summary>Searches for the best-scoring documents.</summary>
+    /// <param name="query">The query.</param>
+    /// <param name="count">How many documents to return, at least 1.</param>
+    /// <param name="countExactly"><see langword="true"/> visits every match so <see cref="TopDocs.TotalHits"/> is exact; <see langword="false"/> lets block-max WAND skip documents that cannot reach the top, and the total is then a lower bound (unless nothing was skipped).</param>
+    /// <param name="cancellationToken">Cancels the search.</param>
+    /// <returns>The top documents by score; the same documents in the same order either way.</returns>
+    public TopDocs Search(Query query, int count, bool countExactly, CancellationToken cancellationToken = default)
+    {
+        var collector = new TopScoreCollector(count, countExactly);
         Search(query, collector, cancellationToken);
         return collector.GetTopDocs();
     }
