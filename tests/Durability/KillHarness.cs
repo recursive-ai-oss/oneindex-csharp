@@ -49,6 +49,7 @@ public static class KillHarness
         }
 
         Console.Out.WriteLine("READY");
+        using IndexReader? nrt = expectDirectory is not null ? writer.OpenNearRealTimeReader() : null;
         var rng = new Random(seed);
         int sinceCommit = 0;
         for (int i = 0; i < maxOps; i++)
@@ -71,6 +72,17 @@ public static class KillHarness
 
             Workload.Apply(writer, op);
             model.Apply(op);
+            if (nrt is not null && rng.Next(15) == 0)
+            {
+                // The near-real-time view must show exactly the model, committed or not.
+                nrt.Refresh();
+                using IndexSnapshot view = nrt.Acquire();
+                if (Workload.HashRows(Workload.ReadContent(view)) != model.Hash())
+                {
+                    throw new InvalidDataException("the near-real-time view differs from the writer's state");
+                }
+            }
+
             sinceCommit++;
             if (sinceCommit >= 3 + rng.Next(30))
             {
