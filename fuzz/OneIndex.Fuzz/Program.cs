@@ -19,6 +19,7 @@ internal static class Program
         ["analysis"] = AnalysisTarget.Run,
         ["terms"] = TextIndexTarget.RunTerms,
         ["postings"] = TextIndexTarget.RunPostings,
+        ["segment"] = SegmentTarget.Run,
     };
 
     private static int Main(string[] args)
@@ -48,6 +49,9 @@ internal static class Program
                     break;
                 case "postings":
                     TextIndexTarget.WriteSeeds(args[2], terms: false);
+                    break;
+                case "segment":
+                    SegmentTarget.WriteSeeds(args[2]);
                     break;
                 default:
                     CommitTarget.WriteSeeds(args[2]);

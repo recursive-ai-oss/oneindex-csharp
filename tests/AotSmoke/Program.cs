@@ -3,6 +3,8 @@ using OneIndex.Storage;
 
 SmokeScenario.Run(new MemoryStorage());
 AnalysisScenario.Run();
+SmokeScenario.RunWriter(new MemoryStorage(), threadedMerges: true);
+SmokeScenario.RunWriter(new MemoryStorage(), threadedMerges: false);
 
 string directory = Path.Combine(Path.GetTempPath(), "oneindex-aot-smoke-" + Guid.NewGuid().ToString("N"));
 try

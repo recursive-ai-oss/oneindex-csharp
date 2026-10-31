@@ -58,6 +58,14 @@ internal sealed class ByteSink
         _length += value.Length;
     }
 
+    /// <summary>Appends bytes without a length prefix.</summary>
+    public void WriteBytesRaw(ReadOnlySpan<byte> value)
+    {
+        Ensure(value.Length);
+        value.CopyTo(_buffer.AsSpan(_length));
+        _length += value.Length;
+    }
+
     public void WriteString(string value)
     {
         int n = Utf8.GetByteCount(value);

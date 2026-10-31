@@ -33,7 +33,7 @@ File name `commit-<generation as 16 lowercase hex digits>.oic`. Body:
       varint  deleted count    at most the document count
       varint  delete generation   0 when the segment has no delete bitmap
       varint  file count       at most 1,024
-        string part            "terms", "postings", "lengths", "columns", "points", "stored", "deletes"
+        string part            "terms", "postings", "lengths", "columns", "points", "stored", "deletes", "ids"
         string file name       a valid storage name; no file is listed twice in a commit
         string codec name
         varint codec version
@@ -77,7 +77,7 @@ A crash before step 5 leaves the previous commit as the newest. A crash after it
 
 `OpenLatest` finds the highest generation among `commit-*.oic` names, parses it, checks that the name and the recorded generation agree, and checks that every listed file exists with the recorded length and footer checksum. It returns `null` for storage that holds no commit. If the newest commit or a file it lists is damaged it throws `CorruptIndexException` naming that file; it never falls back to an older commit silently, because that would drop acknowledged data without a word. `TryOpenLatest` reports the same as a return value. `VerifyFiles` additionally reads every byte of every listed file and checks the checksums.
 
-Older commit files and the segment files only they list are removed by the writer, after no reader snapshot refers to them. Leftover `*.tmp` files are ignored by readers and deleted by the next commit of the same generation or by cleanup.
+Older commit files and the segment files only they list are removed by the writer, after no reader snapshot refers to them (reference counts per file; see `segments.md`). The `ids` and `deletes` parts and the naming of segment files are defined there. Leftover `*.tmp` files are ignored by readers and deleted by the next commit of the same generation or by cleanup.
 
 ## How this is tested
 
