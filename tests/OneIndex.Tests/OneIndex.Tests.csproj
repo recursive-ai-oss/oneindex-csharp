@@ -15,6 +15,7 @@
   <ItemGroup>
     <!-- The fuzz target's reader exerciser doubles as a corruption test here. -->
     <Compile Include="../../fuzz/OneIndex.Fuzz/TextIndexTarget.cs" Link="Fuzz/TextIndexTarget.cs" />
+    <Compile Include="../../fuzz/OneIndex.Fuzz/QueryTarget.cs" Link="Fuzz/QueryTarget.cs" />
   </ItemGroup>
 
   <ItemGroup>

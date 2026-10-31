@@ -39,6 +39,9 @@ public enum FieldLayout
 
     /// <summary>Title and text scored separately; the document score is the sum.</summary>
     MultiFieldSum,
+
+    /// <summary>Title and text combined per term before saturation (BM25F, Robertson and Zaragoza section 3.5), equal field weights.</summary>
+    Bm25F,
 }
 
 /// <summary>Index-time settings shared by every engine.</summary>

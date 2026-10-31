@@ -63,6 +63,40 @@ switch (args[0])
         return 0;
     }
 
+    case "wand":
+    {
+        // Block-max WAND against exhaustive scoring on a BEIR set: same top 10, and how much was scored.
+        var set = Req("set");
+        var data = BeirDataset.Open(Path.Combine(Req("data"), set));
+        using var engine = new OneIndexEngine();
+        engine.Create(new EngineSettings(Path.Combine(Req("work"), set + "-wand"), AnalysisKind.English, IndexProfile.Beir));
+        Parallel.ForEach(data.ReadCorpus(), new ParallelOptions { MaxDegreeOfParallelism = Int("threads", 4) }, engine.Add);
+        engine.Commit();
+        engine.OpenSearcher();
+        foreach (var n in new[] { 1, 2, 5 })
+        {
+            long queries = 0, matching = 0, scored = 0, different = 0;
+            foreach (var q in data.Queries)
+            {
+                var terms = OneIndexEngine.Analyze(q.Text);
+                if (terms.Count < n)
+                {
+                    continue;
+                }
+
+                var (m, s, same) = engine.MeasureWand(terms.Take(n).ToList(), 10);
+                queries++;
+                matching += m;
+                scored += s;
+                different += same ? 0 : 1;
+            }
+
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{set} terms={n} queries={queries} identical_top10={queries - different}/{queries} scored/matching={scored}/{matching} fraction={(double)scored / Math.Max(1, matching):F4}"));
+        }
+
+        return 0;
+    }
+
     case "driver":
         return BenchDriver.Run(new DriverOptions(
             Req("engine"), Req("corpus"), Int("docs", 50_000), Req("work"), Req("out"), Int("seed", 1), Int("queries", 200),

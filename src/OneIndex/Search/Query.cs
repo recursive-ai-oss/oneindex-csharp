@@ -58,6 +58,16 @@ public abstract class QueryVisitor<TResult>
     /// <returns>The result.</returns>
     public virtual TResult VisitMatchAll(MatchAllQuery query) => VisitUnknown(query);
 
+    /// <summary>Visits a <see cref="MultiFieldTermQuery"/>.</summary>
+    /// <param name="query">The query.</param>
+    /// <returns>The result.</returns>
+    public virtual TResult VisitMultiFieldTerm(MultiFieldTermQuery query) => VisitUnknown(query);
+
+    /// <summary>Visits a <see cref="RegexQuery"/>.</summary>
+    /// <param name="query">The query.</param>
+    /// <returns>The result.</returns>
+    public virtual TResult VisitRegex(RegexQuery query) => VisitUnknown(query);
+
     /// <summary>Called for a kind the visitor does not handle.</summary>
     /// <param name="query">The query.</param>
     /// <returns>Never returns normally.</returns>
@@ -214,4 +224,46 @@ public sealed record MatchAllQuery : Query
 {
     /// <inheritdoc/>
     public override TResult Accept<TResult>(QueryVisitor<TResult> visitor) => visitor.VisitMatchAll(this);
+}
+
+/// <summary>
+/// Documents that contain the exact term in any of several fields, scored as one BM25F term: the fields' weights and length
+/// normalizations are combined before saturation (Robertson and Zaragoza 2009, section 3.6, equations 3.19 to 3.21), not summed after it.
+/// </summary>
+/// <param name="Fields">The field names; each uses its schema boost as its weight.</param>
+/// <param name="Term">The term text, already analyzed.</param>
+public sealed record MultiFieldTermQuery(IReadOnlyList<string> Fields, string Term) : Query
+{
+    /// <summary>Compares fields one by one (the generated record equality would compare the list by reference).</summary>
+    /// <param name="other">The other query.</param>
+    /// <returns><see langword="true"/> when equal.</returns>
+    public bool Equals(MultiFieldTermQuery? other)
+        => other is not null && Term == other.Term && Boost.Equals(other.Boost) && Fields.SequenceEqual(other.Fields);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        // In-process hash tables only; never persisted.
+        var hash = default(HashCode);
+        hash.Add(Term);
+        hash.Add(Boost);
+        foreach (string f in Fields)
+        {
+            hash.Add(f);
+        }
+
+        return hash.ToHashCode();
+    }
+
+    /// <inheritdoc/>
+    public override TResult Accept<TResult>(QueryVisitor<TResult> visitor) => visitor.VisitMultiFieldTerm(this);
+}
+
+/// <summary>Documents whose field contains a term that a regular expression matches in full. The syntax is the one in the term dictionary notes.</summary>
+/// <param name="Field">The field name.</param>
+/// <param name="Pattern">The regular expression; it must match the whole term.</param>
+public sealed record RegexQuery(string Field, string Pattern) : Query
+{
+    /// <inheritdoc/>
+    public override TResult Accept<TResult>(QueryVisitor<TResult> visitor) => visitor.VisitRegex(this);
 }
