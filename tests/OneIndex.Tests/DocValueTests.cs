@@ -9,6 +9,7 @@ using OneIndex.Storage;
 namespace OneIndex.Tests;
 
 /// <summary>Columns, the point index and stored source through the index writer: flush, merge with deletes, reopen.</summary>
+[Collection(AllocationMeasurement.Name)]
 public sealed class DocValueTests
 {
     private static readonly Schema TestSchema = DocValuesFixture.CreateSchema();

@@ -5,6 +5,7 @@ using OneIndex.Storage;
 
 namespace OneIndex.Tests;
 
+[Collection(AllocationMeasurement.Name)]
 public sealed class QueryExecutionTests
 {
     private static readonly Schema Schema = new SchemaBuilder().Id("id")
