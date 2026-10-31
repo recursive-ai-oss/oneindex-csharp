@@ -4,7 +4,7 @@
 #   fuzz/run.sh <target> <seconds> [corpus dir] [extra libFuzzer flags...]
 #   fuzz/run.sh replay <target> <file>...      # run saved inputs once, without libFuzzer (reproduce a finding)
 #
-# Targets: commit   (see fuzz/README.md)
+# Targets: commit, analysis   (see fuzz/README.md)
 #
 # Environment (nothing is baked into the script):
 #   ONEINDEX_FUZZ_WORK    required: where builds, corpora and findings go. Keep it outside the checkout.
@@ -36,6 +36,7 @@ shift
 # Maximum input length per target.
 case "$target" in
   commit) maxlen=65536 ;;
+  analysis) maxlen=65536 ;;
   *) echo "unknown target '$target'" >&2; exit 2 ;;
 esac
 
