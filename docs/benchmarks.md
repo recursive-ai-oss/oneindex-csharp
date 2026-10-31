@@ -90,7 +90,7 @@ to every row. Rows with no managed comparator pass, with the reason recorded.
 
 A first run of the driver on 50,000 abstracts, to prove the rows run end to end and to capture memory and size. It ran as a shared-queue
 job on the worker beside other jobs (load average 11 to 12 on 32 logical cores before and after; the machine was **not** quiet), so the
-absolute numbers are indicative only and no ratio may be drawn from them. Queue job 000972 (`remote_run` princessDonut.f5i6rtuh), code at
+absolute numbers are indicative only and no ratio may be drawn from them. Code at
 commit `1956a0d`. Machine: AMD Ryzen 9 7950X3D (32 logical cores; SSE4.2, AVX, AVX2, FMA, BMI2, AVX-512 F/BW), 124 GiB, NVMe ext4, Linux Mint
 22.3, .NET SDK 10.0.402, runtime 10.0.13, workstation GC; Lucene.NET 4.8.0-beta00018; tantivy-py 0.27.0; SQLite 3.54.1. Dataset: abstracts
 SHA-256 `1759e651…4893` (the generator was run twice on the worker with identical output), first 50,000 lines,

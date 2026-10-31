@@ -59,10 +59,7 @@ is filled in when its scorer and queries exist; the runner needs no change.
 
 Engine: Lucene.NET `4.8.0-beta00018` (assembly build `commit:[df99b8abd9]`; packages Lucene.Net, Lucene.Net.Analysis.Common, Lucene.Net.Facet) on .NET 10.0.13 (SDK 10.0.402), Linux x64.
 Analysis: `EnglishAnalyzer` (lower-case, possessive removal, English stop words, Porter stemming) for documents and queries. Top 1,000 per
-query, test split. Worker: 32 logical cores (AMD Ryzen 9 7950X3D), NVMe ext4, 8 indexing and search threads. Jobs: one queue job
-(`wq` job 000970, `remote_run` job princessDonut.3gjc8klr) ran all four sets and the pytrec_eval cross-check; the first attempt
-(jobs 000951 and 000952) produced identical nDCG values and only failed its cross-check step on a result-directory name, fixed in the
-runner. Code at commit `1956a0d` of branch `wip/u4`.
+query, test split. Worker: 32 logical cores (AMD Ryzen 9 7950X3D), NVMe ext4, 8 indexing and search threads. One run covered all four sets and the pytrec_eval cross-check; an earlier attempt produced identical nDCG values. Code at commit `1956a0d`.
 
 Datasets (SHA-256 of the zip, MD5 matches BEIR): SciFact `536e1444…0165` (5,183 documents, 300 queries), ArguAna `cfdf79ad…557b` (8,674; 1,406),
 SCIDOCS `96640201…17ef1` (25,657; 1,000), NQ `2553bf7b…e752` (2,681,468; 3,452). Full hashes: `tools/pins.tsv`.
