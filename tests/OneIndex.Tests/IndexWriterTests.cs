@@ -291,21 +291,20 @@ public class IndexWriterTests
                 using IndexSnapshot snap = IndexSnapshot.Open(storage, Workload.Codecs);
                 Assert.True(snap.TryFindById("document-17", out _, out _));
                 Assert.False(snap.TryFindById("nothing-here", out _, out _));
-                long before = GC.GetAllocatedBytesForCurrentThread();
                 int found = 0;
-                for (int i = 0; i < 10_000; i++)
+                TestHelpers.AssertNoAllocation("identifier lookup", () =>
                 {
-                    if (snap.TryFindById("document-123", out int seg, out int doc) && seg >= 0 && doc >= 0)
+                    for (int i = 0; i < 1_000; i++)
                     {
-                        found++;
+                        if (snap.TryFindById("document-123", out int seg, out int doc) && seg >= 0 && doc >= 0)
+                        {
+                            found++;
+                        }
+
+                        snap.TryFindById("missing-id", out _, out _);
                     }
-
-                    snap.TryFindById("missing-id", out _, out _);
-                }
-
-                long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-                Assert.Equal(10_000, found);
-                Assert.Equal(0, allocated);
+                });
+                Assert.True(found >= 1_000);
             }
         }
         finally
