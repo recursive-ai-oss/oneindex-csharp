@@ -21,6 +21,7 @@ internal static class Program
         ["postings"] = TextIndexTarget.RunPostings,
         ["segment"] = SegmentTarget.Run,
         ["query"] = QueryTarget.Run,
+        ["usertext"] = UserTextTarget.Run,
     };
 
     private static int Main(string[] args)
@@ -56,6 +57,9 @@ internal static class Program
                     break;
                 case "query":
                     QueryTarget.WriteSeeds(args[2]);
+                    break;
+                case "usertext":
+                    UserTextTarget.WriteSeeds(args[2]);
                     break;
                 default:
                     CommitTarget.WriteSeeds(args[2]);

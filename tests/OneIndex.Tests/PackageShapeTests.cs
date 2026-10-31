@@ -10,9 +10,8 @@ public class PackageShapeTests
     }
 
     [Fact]
-    public void TheHappyPathEntryPointsExistAndSayTheyAreNotBuiltYet()
+    public void TheToolSchemaSaysItIsNotBuiltYet()
     {
-        Assert.Throws<NotImplementedException>(() => SearchIndex.InMemory<Invoice>());
         Assert.Throws<NotImplementedException>(() => SearchTool.For<Invoice>());
     }
 }

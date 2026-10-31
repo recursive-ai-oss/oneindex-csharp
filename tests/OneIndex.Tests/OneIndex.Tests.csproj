@@ -20,6 +20,8 @@
 
   <ItemGroup>
     <PackageReference Include="xunit.v3" />
+    <!-- The generator tests run the generator over small compilations. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
   </ItemGroup>
 
   <ItemGroup>
@@ -27,7 +29,7 @@
     <!-- The test codec and the seeded workload of the durability harness are shared with these tests. -->
     <ProjectReference Include="../Durability/Durability.csproj" />
     <!-- The generator runs over this project's own attributed test types. -->
-    <ProjectReference Include="../../src/OneIndex.Generators/OneIndex.Generators.csproj" ReferenceOutputAssembly="false" OutputItemType="Analyzer" />
+    <ProjectReference Include="../../src/OneIndex.Generators/OneIndex.Generators.csproj" OutputItemType="Analyzer" />
   </ItemGroup>
 
 </Project>
