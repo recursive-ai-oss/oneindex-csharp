@@ -322,6 +322,11 @@ public static class KillHarness
             gen = commit.Generation;
             using IndexSnapshot snap = IndexSnapshot.Open(storage, evolving ? null : Workload.Codecs);
             snap.Verify();
+            if (snap.Commit.Segments.Any(s => s.SchemaEpoch != snap.Commit.SchemaEpoch))
+            {
+                return $"generation {gen} serves segments of two schema epochs";
+            }
+
             hash = Workload.HashRows(Workload.ReadContent(snap));
             if (gen < ackGen)
             {

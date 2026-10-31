@@ -8,13 +8,99 @@ public sealed partial class IndexWriter
     /// <summary>Segments whose rebuild one commit starts at most, so that a commit stays short and progress is recorded often.</summary>
     private const int ConversionsPerPass = 4;
 
-    private bool IsStale(WorkSegment segment) => segment.Info.SchemaEpoch < _schemaEpoch;
+    /// <summary>A segment rebuilt for the pending schema, written ahead of the swap and not served until the swap.</summary>
+    private sealed class Shadow(SegmentInfo info, string source, int sourceDeleted, bool isNew)
+    {
+        public SegmentInfo Info { get; } = info;
+
+        public string Source { get; } = source;
+
+        public int SourceDeleted { get; } = sourceDeleted;
+
+        /// <summary>Not yet listed by a commit: its files are held by the writer's pending set.</summary>
+        public bool IsNew { get; set; } = isNew;
+    }
+
+    private Shadow? ShadowOf(WorkSegment segment)
+        => _shadows.FirstOrDefault(x => string.Equals(x.Source, segment.Info.Name, StringComparison.Ordinal));
+
+    /// <summary>Drops rebuilt segments whose source changed (it gained deletes, or is gone) since they were built; they are rebuilt again.</summary>
+    private void PruneShadowsLocked()
+    {
+        for (int i = _shadows.Count - 1; i >= 0; i--)
+        {
+            Shadow x = _shadows[i];
+            WorkSegment? source = _segments.FirstOrDefault(s => string.Equals(s.Info.Name, x.Source, StringComparison.Ordinal));
+            if (source is null || source.DeletedCount != x.SourceDeleted)
+            {
+                DropShadowLocked(x);
+            }
+        }
+    }
+
+    private void DropShadowLocked(Shadow x)
+    {
+        _shadows.Remove(x);
+        _metaDirty = true;
+        if (x.IsNew)
+        {
+            List<string> names = x.Info.Files.Select(f => f.FileName).ToList();
+            foreach (string n in names)
+            {
+                _pending.Remove(n);
+            }
+
+            _refs.Release(names);
+        }
+
+        // A listed shadow's files are held by the commit that lists it and go when the next commit no longer does.
+    }
 
     /// <summary>
-    /// Rebuilds, in the background, every segment written before the last schema change that needed it, and commits as it goes. Each
-    /// rebuilt segment replaces its original in one commit, so a crash at any point leaves an index that opens, holds every document
-    /// and either has or has not yet rebuilt that segment; the next open continues (docs/schema-evolution.md). Returns at once when
-    /// nothing is waiting. With the default cooperative scheduler the work runs on the calling thread.
+    /// Makes the rebuilt segments the served ones when every segment has a current rebuilt twin and nothing is in flight. The swap is
+    /// part of the commit that follows, so a reader sees all of the old schema or all of the new one.
+    /// </summary>
+    private void TrySwapLocked()
+    {
+        if (_target is not { } target || _busy.Count != 0 || _completedMerges.Count != 0)
+        {
+            return;
+        }
+
+        var order = new List<Shadow>(_segments.Count);
+        foreach (WorkSegment s in _segments)
+        {
+            Shadow? x = ShadowOf(s);
+            if (x is null)
+            {
+                return;
+            }
+
+            order.Add(x);
+        }
+
+        for (int i = _segments.Count - 1; i >= 0; i--)
+        {
+            RemoveSegment(i);
+        }
+
+        _schemaEpoch++;
+        foreach (Shadow x in order)
+        {
+            _segments.Add(new WorkSegment(x.Info) { IsNew = x.IsNew });
+        }
+
+        _shadows.Clear();
+        _schema = target;
+        _target = null;
+        _metaDirty = true;
+    }
+
+    /// <summary>
+    /// Rebuilds, in the background, every segment for the schema the application declared and commits as it goes. The rebuilt segments
+    /// are written ahead and listed by commits so that a restart resumes, but they are not served: queries keep seeing the old schema
+    /// on every segment until the commit that makes the new one visible on all of them (docs/schema-evolution.md). Returns at once when
+    /// nothing is pending. With the default cooperative scheduler the work runs on the calling thread.
     /// </summary>
     /// <param name="cancellationToken">Cancels between segments; what was committed stays.</param>
     /// <exception cref="IOException">A rebuild failed; the index is unchanged by it.</exception>
@@ -25,7 +111,7 @@ public sealed partial class IndexWriter
             lock (_gate)
             {
                 ThrowIfUnusable();
-                if (!_segments.Any(IsStale))
+                if (_target is null)
                 {
                     return;
                 }
@@ -38,7 +124,7 @@ public sealed partial class IndexWriter
         }
     }
 
-    /// <summary>Rebuilds segments awaiting a schema change (see <see cref="CompleteSchemaEvolution(CancellationToken)"/>).</summary>
+    /// <summary>Rebuilds segments for a pending schema change (see <see cref="CompleteSchemaEvolution(CancellationToken)"/>).</summary>
     /// <param name="cancellationToken">Cancels between segments.</param>
     /// <returns>A completed task.</returns>
     public ValueTask CompleteSchemaEvolutionAsync(CancellationToken cancellationToken = default)
@@ -51,6 +137,11 @@ public sealed partial class IndexWriter
 
     private void StartConversionsLocked(int limit)
     {
+        if (_target is null)
+        {
+            return;
+        }
+
         int started = 0;
         foreach (WorkSegment s in _segments.ToList())
         {
@@ -59,7 +150,7 @@ public sealed partial class IndexWriter
                 return;
             }
 
-            if (IsStale(s) && !_busy.Contains(s.Info.Name))
+            if (!_busy.Contains(s.Info.Name) && ShadowOf(s) is null && s.Info.DocCount > s.DeletedCount)
             {
                 StartConversionLocked(s);
                 started++;
@@ -68,7 +159,7 @@ public sealed partial class IndexWriter
     }
 
     // Queues the rebuild of one segment. It reads the segment's live documents from its stored source and flushes them again under the
-    // current schema; installing the result is the same step as installing a merge, so deletes made meanwhile are carried over.
+    // pending schema. The result is kept beside the source, not in place of it (see TrySwapLocked).
     private void StartConversionLocked(WorkSegment source)
     {
         string name = NewSegmentName();
@@ -96,7 +187,12 @@ public sealed partial class IndexWriter
             {
                 IStoredFieldsReader stored = reader.GetPart<IStoredFieldsSource>()?.StoredFields
                     ?? throw new InvalidOperationException($"Segment {info.Name} has no stored source, so it cannot be rebuilt for the new schema.");
-                Schema target = _schema;
+                Schema target;
+                lock (_gate)
+                {
+                    target = _target ?? _schema;
+                }
+
                 var documents = new List<Document>(total);
                 for (int d = 0; d < info.DocCount; d++)
                 {
@@ -115,8 +211,11 @@ public sealed partial class IndexWriter
                 Schema flushSchema;
                 lock (_gate)
                 {
-                    expanded = DynamicFields.Expand(_schema, documents, _limits, out flushSchema);
-                    _schema = flushSchema;
+                    expanded = DynamicFields.Expand(_target ?? _schema, documents, _limits, out flushSchema);
+                    if (_target is not null)
+                    {
+                        _target = flushSchema;
+                    }
                 }
 
                 sink = new SegmentFileSink(_storage, name, MakeThrottle(cancellationToken));
@@ -138,7 +237,7 @@ public sealed partial class IndexWriter
                     IdsFormat.Write(sink, entries, cancellationToken);
                 }
 
-                result = new SegmentInfo(name, total, 0, 0, sink.Files, _schemaEpoch);
+                result = new SegmentInfo(name, total, 0, 0, sink.Files, _schemaEpoch + 1);
             }
 
             lock (_gate)
@@ -160,7 +259,13 @@ public sealed partial class IndexWriter
                         _refs.Acquire(names);
                     }
 
-                    _completedMerges.Add(new MergeResult(name, [info.Name], result, [map], [captured]));
+                    if (result is not null)
+                    {
+                        _shadows.Add(new Shadow(result, info.Name, info.DocCount - total, isNew: true));
+                        _metaDirty = true;
+                    }
+
+                    _busy.Remove(info.Name);
                 }
 
                 _refs.Release(held);

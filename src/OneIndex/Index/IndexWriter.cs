@@ -78,6 +78,8 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
     private readonly IndexLimits _limits;
     private volatile Schema _schema;
     private long _schemaEpoch;
+    private volatile Schema? _target;
+    private readonly List<Shadow> _shadows = [];
     private readonly IReadOnlyList<ISegmentCodec> _codecs;
     private readonly IMergeScheduler _scheduler;
     private readonly FileReferences _refs;
@@ -100,8 +102,9 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
     private bool _disposed;
     private long _changeStamp;
 
-    private IndexWriter(IStorage storage, Schema schema, long schemaEpoch, IndexWriterOptions options, IStorageLock? writerLock)
+    private IndexWriter(IStorage storage, Schema schema, long schemaEpoch, Schema? target, IndexWriterOptions options, IStorageLock? writerLock)
     {
+        _target = target;
         _schemaEpoch = schemaEpoch;
         _writerLock = writerLock;
         _storage = storage;
@@ -113,7 +116,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
         _refs = new FileReferences(storage, storage.SupportsLocks ? () => IndexLocks.LivePinnedFiles(storage, options.Limits, default) : null);
     }
 
-    /// <summary>The schema documents are validated against. It grows as the paths of indexed JSON fields appear (docs/dynamic.md).</summary>
+    /// <summary>The schema queries are answered under and documents are validated against. While a schema change is being rebuilt it is the old schema (<see cref="SchemaEvolution"/>); a write completes the rebuild first. It grows as the paths of indexed JSON fields appear (docs/dynamic.md).</summary>
     public Schema Schema => _schema;
 
     /// <summary>Where the background rebuild after a schema change stands (docs/schema-evolution.md).</summary>
@@ -123,7 +126,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
         {
             lock (_gate)
             {
-                return new SchemaEvolutionStatus(_schemaEpoch, _segments.Count, _segments.Count(IsStale));
+                return new SchemaEvolutionStatus(_schemaEpoch, _segments.Count, _target is null ? 0 : _segments.Count(x => ShadowOf(x) is null), _target is not null);
             }
         }
     }
@@ -235,22 +238,49 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
     {
         CommitInfo? commit = CommitProtocol.OpenLatest(storage, options.Limits, cancellationToken);
         Schema effective;
+        Schema? target = null;
         long epoch = commit?.SchemaEpoch ?? 0;
         bool adopt = false;
+        bool resumePending = false;
         if (commit is not null && !commit.SchemaBytes.IsEmpty)
         {
             Schema committed = Schema.Deserialize(commit.SchemaBytes.Span, options.Limits);
             effective = committed;
-            if (schema is not null && !schema.Equals(committed))
+            Schema? pending = commit.Pending is { } p ? Schema.Deserialize(p.SchemaBytes.Span, options.Limits) : null;
+            if (schema is not null && pending is not null && pending.WithoutDynamicFields().Equals(schema.WithoutDynamicFields()))
+            {
+                resumePending = true;
+                // The same change as the interrupted run: keep the segments it already rebuilt and go on.
+                target = pending;
+            }
+            else if (schema is not null && !schema.Equals(committed))
             {
                 SchemaDiff.Plan plan = SchemaDiff.Compare(committed, schema.WithoutDynamicFields(), options.Limits);
-                effective = plan.Effective;
                 if (plan.Rebuild && commit.Segments.Count > 0)
                 {
-                    epoch++;
+                    target = plan.Effective;
+                    adopt = pending is not null;
                 }
+                else
+                {
+                    effective = plan.Effective;
+                    adopt = true;
+                }
+            }
+            else
+            {
+                // The application is back on the schema being served: the rebuild is abandoned.
+                adopt = pending is not null;
+            }
 
-                adopt = !effective.Equals(committed) || epoch != commit.SchemaEpoch;
+            if (target is null && commit.Pending is not null)
+            {
+                adopt = true;
+            }
+
+            if (target is not null && target != pending)
+            {
+                adopt = true;
             }
         }
         else
@@ -258,11 +288,11 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
             effective = schema ?? throw new ArgumentException("A new index needs a schema.", nameof(schema));
         }
 
-        var writer = new IndexWriter(storage, effective, epoch, options, writerLock);
+        var writer = new IndexWriter(storage, effective, epoch, target, options, writerLock);
         try
         {
-            writer.Recover(commit, cancellationToken);
-            if (adopt)
+            writer.Recover(commit, resumePending, cancellationToken);
+            if (adopt || (target is not null && commit!.Pending is null))
             {
                 // Make the new schema (and the epoch that marks the old segments for rebuild) durable before anything else happens.
                 writer._metaDirty = true;
@@ -309,6 +339,12 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
     public void Upsert(Document document, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(document);
+        if (_target is not null)
+        {
+            // New documents are written under one schema only, so the rebuild ends first (docs/schema-evolution.md).
+            CompleteSchemaEvolution(cancellationToken);
+        }
+
         _schema.Validate(document);
         string? id = _schema.IdField is { } idField ? document.Get(idField).AsText() : null;
         lock (_gate)
@@ -498,6 +534,8 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
             InstallMergesLocked();
             FlushLocked(cancellationToken);
             DropEmptySegmentsLocked();
+            PruneShadowsLocked();
+            TrySwapLocked();
             bool dirty = _metaDirty || _current is null || _current.SchemaEpoch != _schemaEpoch || _segments.Any(s => s.Dirty || s.IsNew) || SegmentSetChanged() || !_schema.Serialize().AsSpan().SequenceEqual(_current.SchemaBytes.Span);
             if (!dirty)
             {
@@ -514,7 +552,10 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
                     infos.Add(s.Dirty ? WriteDeletes(s, written, cancellationToken) : s.Info);
                 }
 
-                next = new CommitInfo((_current?.Generation ?? 0) + 1, _nextSegmentId, infos, _schema.Serialize(), _appliedPosition, _userData, _schemaEpoch);
+                PendingEvolution? pendingEvolution = _target is { } t
+                    ? new PendingEvolution(t.Serialize(), _shadows.Select(x => new RebuiltSegment(x.Info, x.Source, x.SourceDeleted)).ToList())
+                    : null;
+                next = new CommitInfo((_current?.Generation ?? 0) + 1, _nextSegmentId, infos, _schema.Serialize(), _appliedPosition, _userData, _schemaEpoch, pendingEvolution);
             }
             catch
             {
@@ -543,6 +584,11 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
             }
 
             AfterCommit(next);
+            foreach (Shadow x in _shadows)
+            {
+                x.IsNew = false;
+            }
+
             MaybeBackfillLocked();
             if (_options.AutoMerge)
             {
@@ -641,6 +687,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
     public void ForceMerge(int maxSegments = 1, CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(maxSegments, 1);
+        CompleteSchemaEvolution(cancellationToken);
         Flush(cancellationToken);
         WaitForMerges(cancellationToken);
         while (true)
@@ -650,7 +697,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
                 ThrowIfUnusable();
                 InstallMergesLocked();
                 DropEmptySegmentsLocked();
-                var idle = _segments.Where(s => !_busy.Contains(s.Info.Name) && !IsStale(s)).OrderBy(s => s.Info.DocCount - s.DeletedCount).ThenBy(s => s.Info.Name, StringComparer.Ordinal).ToList();
+                var idle = _segments.Where(s => !_busy.Contains(s.Info.Name)).OrderBy(s => s.Info.DocCount - s.DeletedCount).ThenBy(s => s.Info.Name, StringComparer.Ordinal).ToList();
                 bool rewrite = idle.Count == 1 && maxSegments == 1 && idle[0].DeletedCount > 0 && _segments.Count == 1;
                 if (_segments.Count <= maxSegments && !rewrite)
                 {
@@ -757,6 +804,17 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
             }
         }
 
+        if (commit.Pending is { } pending)
+        {
+            foreach (RebuiltSegment r in pending.Rebuilt)
+            {
+                foreach (SegmentFile f in r.Info.Files)
+                {
+                    names.Add(f.FileName);
+                }
+            }
+        }
+
         return names;
     }
 
@@ -784,7 +842,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
 
     private string NewSegmentName() => $"s{_nextSegmentId++:x16}";
 
-    private void Recover(CommitInfo? commit, CancellationToken cancellationToken)
+    private void Recover(CommitInfo? commit, bool resumePending, CancellationToken cancellationToken)
     {
         var referenced = new HashSet<string>(StringComparer.Ordinal);
         if (commit is not null)
@@ -830,6 +888,16 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
         foreach (SegmentInfo info in commit.Segments)
         {
             _segments.Add(new WorkSegment(info));
+        }
+
+        if (commit.Pending is { } pending && resumePending)
+        {
+            foreach (RebuiltSegment r in pending.Rebuilt)
+            {
+                _shadows.Add(new Shadow(r.Info, r.Source, r.SourceDeleted, isNew: false));
+            }
+
+            PruneShadowsLocked();
         }
     }
 

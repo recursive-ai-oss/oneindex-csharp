@@ -34,7 +34,7 @@ public static class CommitFileFormat
         Check(commit.UserData.Count <= limits.MaxUserDataEntries, "user data entry count");
 
         var sink = new ByteSink();
-        bool evolved = commit.SchemaEpoch != 0 || commit.Segments.Any(static s => s.SchemaEpoch != 0);
+        bool evolved = commit.SchemaEpoch != 0 || commit.Pending is not null || commit.Segments.Any(static s => s.SchemaEpoch != 0);
         sink.WriteUInt32(Magic);
         sink.WriteUInt32(evolved ? 2u : 1u);
         sink.WriteUInt64((ulong)commit.Generation);
@@ -57,30 +57,26 @@ public static class CommitFileFormat
         var names = new HashSet<string>(StringComparer.Ordinal);
         foreach (SegmentInfo segment in commit.Segments)
         {
-            Check(names.Add(segment.Name), "segment names being unique");
-            Check(segment.Files.Count <= limits.MaxFilesPerSegment, "files per segment");
-            Check(segment.DocCount <= limits.MaxDocsPerSegment, "documents per segment");
-            sink.WriteString(segment.Name);
-            sink.WriteVarUInt((ulong)segment.DocCount);
-            sink.WriteVarUInt((ulong)segment.DeletedCount);
-            sink.WriteVarUInt((ulong)segment.DeleteGeneration);
-            sink.WriteVarUInt((ulong)segment.Files.Count);
-            foreach (SegmentFile file in segment.Files)
-            {
-                StorageNames.Validate(file.FileName);
-                Check(names.Add(file.FileName), "file names being unique");
-                CodecRegistry.EnsureSupported(file.FileName, file.Codec);
-                sink.WriteString(file.Part);
-                sink.WriteString(file.FileName);
-                sink.WriteString(file.Codec.Name);
-                sink.WriteVarUInt((ulong)file.Codec.Version);
-                sink.WriteVarUInt((ulong)file.Length);
-                sink.WriteUInt32(file.Checksum);
-            }
+            WriteSegment(sink, segment, limits, names, evolved);
+        }
 
-            if (evolved)
+        if (evolved)
+        {
+            PendingEvolution? pending = commit.Pending;
+            sink.WriteVarUInt(pending is null ? 0UL : 1UL);
+            if (pending is not null)
             {
-                sink.WriteVarUInt((ulong)segment.SchemaEpoch);
+                Check(pending.SchemaBytes.Length <= limits.MaxSchemaBytes, "pending schema size");
+                Check(commit.Segments.Count + pending.Rebuilt.Count <= limits.MaxSegments, "segment count");
+                sink.WriteBytes(pending.SchemaBytes.Span);
+                sink.WriteVarUInt((ulong)pending.Rebuilt.Count);
+                foreach (RebuiltSegment r in pending.Rebuilt)
+                {
+                    Check(r.Info.SchemaEpoch == commit.SchemaEpoch + 1, "rebuilt segments belonging to the next schema epoch");
+                    WriteSegment(sink, r.Info, limits, names, evolved);
+                    sink.WriteString(r.Source);
+                    sink.WriteVarUInt((ulong)r.SourceDeleted);
+                }
             }
         }
 
@@ -89,13 +85,42 @@ public static class CommitFileFormat
         sink.WriteUInt32(IndexFile.AlgorithmCrc32C);
         sink.WriteUInt32(Crc32C.Compute(sink.WrittenSpan));
         return sink.ToArray();
+    }
 
-        static void Check(bool ok, string what)
+    private static void WriteSegment(ByteSink sink, SegmentInfo segment, IndexLimits limits, HashSet<string> names, bool evolved)
+    {
+        Check(names.Add(segment.Name), "segment names being unique");
+        Check(segment.Files.Count <= limits.MaxFilesPerSegment, "files per segment");
+        Check(segment.DocCount <= limits.MaxDocsPerSegment, "documents per segment");
+        sink.WriteString(segment.Name);
+        sink.WriteVarUInt((ulong)segment.DocCount);
+        sink.WriteVarUInt((ulong)segment.DeletedCount);
+        sink.WriteVarUInt((ulong)segment.DeleteGeneration);
+        sink.WriteVarUInt((ulong)segment.Files.Count);
+        foreach (SegmentFile file in segment.Files)
         {
-            if (!ok)
-            {
-                throw new ArgumentException($"The commit's {what} exceeds the limits.");
-            }
+            StorageNames.Validate(file.FileName);
+            Check(names.Add(file.FileName), "file names being unique");
+            CodecRegistry.EnsureSupported(file.FileName, file.Codec);
+            sink.WriteString(file.Part);
+            sink.WriteString(file.FileName);
+            sink.WriteString(file.Codec.Name);
+            sink.WriteVarUInt((ulong)file.Codec.Version);
+            sink.WriteVarUInt((ulong)file.Length);
+            sink.WriteUInt32(file.Checksum);
+        }
+
+        if (evolved)
+        {
+            sink.WriteVarUInt((ulong)segment.SchemaEpoch);
+        }
+    }
+
+    private static void Check(bool ok, string what)
+    {
+        if (!ok)
+        {
+            throw new ArgumentException($"The commit's {what} exceeds the limits.");
         }
     }
 
@@ -199,64 +224,46 @@ public static class CommitFileFormat
         var seenFiles = new HashSet<string>(StringComparer.Ordinal);
         for (int s = 0; s < segmentCount; s++)
         {
-            string name = src.ReadString(limits.MaxFileNameLength, "segment name");
-            RequireName(name, "segment name");
-            if (!seenSegments.Add(name))
+            SegmentInfo info = ReadSegment(ref src, fileName, limits, evolved, commitEpoch, seenSegments, seenFiles);
+            anyEpoch |= info.SchemaEpoch != 0;
+            segments.Add(info);
+        }
+
+        PendingEvolution? pending = null;
+        if (evolved)
+        {
+            ulong hasPending = src.ReadVarUInt();
+            if (hasPending > 1)
             {
-                throw new MalformedInputException($"segment '{name}' is listed twice");
+                throw new MalformedInputException("the pending-rebuild flag is not 0 or 1");
             }
 
-            int docCount = src.ReadCount(limits.MaxDocsPerSegment, "document count");
-            int deleted = src.ReadCount(docCount, "deleted count");
-            ulong deleteGeneration = src.ReadVarUInt();
-            if (deleteGeneration > long.MaxValue)
+            if (hasPending == 1)
             {
-                throw new MalformedInputException("delete generation is out of range");
+                byte[] pendingSchema = src.ReadBytes(limits.MaxSchemaBytes, "pending schema").ToArray();
+                int rebuiltCount = src.ReadCount(limits.MaxSegments - segments.Count, "rebuilt segment count");
+                var rebuilt = new List<RebuiltSegment>(Math.Min(rebuiltCount, 1024));
+                var sources = new HashSet<string>(StringComparer.Ordinal);
+                for (int r = 0; r < rebuiltCount; r++)
+                {
+                    SegmentInfo info = ReadSegment(ref src, fileName, limits, evolved, commitEpoch + 1, seenSegments, seenFiles);
+                    if (info.SchemaEpoch != (long)commitEpoch + 1)
+                    {
+                        throw new MalformedInputException($"rebuilt segment '{info.Name}' does not belong to the next schema epoch");
+                    }
+
+                    string source = src.ReadString(limits.MaxFileNameLength, "rebuilt segment source");
+                    ulong sourceDeleted = src.ReadVarUInt();
+                    if (sourceDeleted > int.MaxValue || !sources.Add(source) || !segments.Any(x => string.Equals(x.Name, source, StringComparison.Ordinal)))
+                    {
+                        throw new MalformedInputException($"rebuilt segment '{info.Name}' names a source that is missing, repeated or out of range");
+                    }
+
+                    rebuilt.Add(new RebuiltSegment(info, source, (int)sourceDeleted));
+                }
+
+                pending = new PendingEvolution(pendingSchema, rebuilt);
             }
-
-            int fileCount = src.ReadCount(limits.MaxFilesPerSegment, "file count");
-            var files = new List<SegmentFile>(Math.Min(fileCount, 64));
-            for (int f = 0; f < fileCount; f++)
-            {
-                string part = src.ReadString(limits.MaxStringBytes, "part name");
-                string fileNameInCommit = src.ReadString(limits.MaxFileNameLength, "file name");
-                RequireName(fileNameInCommit, "file name");
-                if (!seenFiles.Add(fileNameInCommit))
-                {
-                    throw new MalformedInputException($"file '{fileNameInCommit}' is listed twice");
-                }
-
-                string codecName = src.ReadString(limits.MaxStringBytes, "codec name");
-                ulong codecVersion = src.ReadVarUInt();
-                ulong length = src.ReadVarUInt();
-                uint checksum = src.ReadUInt32();
-                if (codecVersion > int.MaxValue || length > long.MaxValue)
-                {
-                    throw new MalformedInputException("codec version or file length is out of range");
-                }
-
-                var codec = new CodecRef(codecName, (int)codecVersion);
-                if (!CodecRegistry.IsSupported(codec))
-                {
-                    throw new UnsupportedFormatException(fileName, $"file '{fileNameInCommit}' uses codec '{codecName}' version {codecVersion}, which this build does not read");
-                }
-
-                files.Add(new SegmentFile(part, fileNameInCommit, codec, (long)length, checksum));
-            }
-
-            ulong segmentEpoch = 0;
-            if (evolved)
-            {
-                segmentEpoch = src.ReadVarUInt();
-                if (segmentEpoch > commitEpoch)
-                {
-                    throw new MalformedInputException($"segment '{name}' is newer than the commit's schema epoch");
-                }
-
-                anyEpoch |= segmentEpoch != 0;
-            }
-
-            segments.Add(new SegmentInfo(name, docCount, deleted, (long)deleteGeneration, files, (long)segmentEpoch));
         }
 
         if (src.Remaining != 0)
@@ -264,20 +271,80 @@ public static class CommitFileFormat
             throw new MalformedInputException($"{src.Remaining} unexpected bytes follow the last segment");
         }
 
-        if (evolved && !anyEpoch)
+        if (evolved && !anyEpoch && pending is null)
         {
             // Version 2 exists to carry epochs; without any, the canonical form is version 1.
             throw new MalformedInputException("a version 2 commit carries no schema epoch");
         }
 
-        return new CommitInfo((long)generation, nextSegmentId, segments, schema, applied, userData, (long)commitEpoch);
+        return new CommitInfo((long)generation, nextSegmentId, segments, schema, applied, userData, (long)commitEpoch, pending);
+    }
 
-        static void RequireName(string name, string what)
+    private static void RequireName(string name, string what)
+    {
+        if (!StorageNames.IsValid(name))
         {
-            if (!StorageNames.IsValid(name))
+            throw new MalformedInputException($"{what} '{name}' is not a valid name");
+        }
+    }
+
+    private static SegmentInfo ReadSegment(ref ByteSource src, string fileName, IndexLimits limits, bool evolved, ulong maxEpoch, HashSet<string> seenSegments, HashSet<string> seenFiles)
+    {
+        string name = src.ReadString(limits.MaxFileNameLength, "segment name");
+        RequireName(name, "segment name");
+        if (!seenSegments.Add(name))
+        {
+            throw new MalformedInputException($"segment '{name}' is listed twice");
+        }
+
+        int docCount = src.ReadCount(limits.MaxDocsPerSegment, "document count");
+        int deleted = src.ReadCount(docCount, "deleted count");
+        ulong deleteGeneration = src.ReadVarUInt();
+        if (deleteGeneration > long.MaxValue)
+        {
+            throw new MalformedInputException("delete generation is out of range");
+        }
+
+        int fileCount = src.ReadCount(limits.MaxFilesPerSegment, "file count");
+        var files = new List<SegmentFile>(Math.Min(fileCount, 64));
+        for (int f = 0; f < fileCount; f++)
+        {
+            string part = src.ReadString(limits.MaxStringBytes, "part name");
+            string fileNameInCommit = src.ReadString(limits.MaxFileNameLength, "file name");
+            RequireName(fileNameInCommit, "file name");
+            if (!seenFiles.Add(fileNameInCommit))
             {
-                throw new MalformedInputException($"{what} '{name}' is not a valid name");
+                throw new MalformedInputException($"file '{fileNameInCommit}' is listed twice");
+            }
+
+            string codecName = src.ReadString(limits.MaxStringBytes, "codec name");
+            ulong codecVersion = src.ReadVarUInt();
+            ulong length = src.ReadVarUInt();
+            uint checksum = src.ReadUInt32();
+            if (codecVersion > int.MaxValue || length > long.MaxValue)
+            {
+                throw new MalformedInputException("codec version or file length is out of range");
+            }
+
+            var codec = new CodecRef(codecName, (int)codecVersion);
+            if (!CodecRegistry.IsSupported(codec))
+            {
+                throw new UnsupportedFormatException(fileName, $"file '{fileNameInCommit}' uses codec '{codecName}' version {codecVersion}, which this build does not read");
+            }
+
+            files.Add(new SegmentFile(part, fileNameInCommit, codec, (long)length, checksum));
+        }
+
+        ulong segmentEpoch = 0;
+        if (evolved)
+        {
+            segmentEpoch = src.ReadVarUInt();
+            if (segmentEpoch > maxEpoch)
+            {
+                throw new MalformedInputException($"segment '{name}' is newer than the commit's schema epoch");
             }
         }
+
+        return new SegmentInfo(name, docCount, deleted, (long)deleteGeneration, files, (long)segmentEpoch);
     }
 }

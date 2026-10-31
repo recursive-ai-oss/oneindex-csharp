@@ -89,6 +89,7 @@ public sealed class CommitInfo
     /// <param name="appliedPosition">An opaque value the application stores with the commit, such as the position reached in an external change log; empty when none.</param>
     /// <param name="userData">Application strings stored with the commit; written in key order.</param>
     /// <param name="schemaEpoch">The schema epoch: 0 until a schema change needs existing segments rebuilt, then raised by one for each such change.</param>
+    /// <param name="pending">A schema change whose rebuilt segments are written but not yet served; <see langword="null"/> when none.</param>
     public CommitInfo(
         long generation,
         ulong nextSegmentId,
@@ -96,8 +97,9 @@ public sealed class CommitInfo
         ReadOnlyMemory<byte> schema = default,
         ReadOnlyMemory<byte> appliedPosition = default,
         IReadOnlyDictionary<string, string>? userData = null,
-        long schemaEpoch = 0)
-        : this(generation, nextSegmentId, segments, schema, appliedPosition, userData, schemaEpoch, minimumGeneration: 1)
+        long schemaEpoch = 0,
+        PendingEvolution? pending = null)
+        : this(generation, nextSegmentId, segments, schema, appliedPosition, userData, schemaEpoch, pending, minimumGeneration: 1)
     {
     }
 
@@ -109,8 +111,10 @@ public sealed class CommitInfo
         ReadOnlyMemory<byte> appliedPosition,
         IReadOnlyDictionary<string, string>? userData,
         long schemaEpoch,
+        PendingEvolution? pending,
         long minimumGeneration)
     {
+        Pending = pending;
         ArgumentOutOfRangeException.ThrowIfNegative(schemaEpoch);
         SchemaEpoch = schemaEpoch;
         ArgumentOutOfRangeException.ThrowIfLessThan(generation, minimumGeneration);
@@ -131,6 +135,9 @@ public sealed class CommitInfo
     /// <summary>The schema epoch. Segments written under an older epoch are rebuilt in the background (docs/schema-evolution.md).</summary>
     public long SchemaEpoch { get; }
 
+    /// <summary>The rebuild in progress after a schema change, or <see langword="null"/>. Its segments are not part of <see cref="Segments"/> and are never read until a later commit swaps them in (docs/schema-evolution.md).</summary>
+    public PendingEvolution? Pending { get; }
+
     /// <summary>The number the writer will use for the next segment name.</summary>
     public ulong NextSegmentId { get; }
 
@@ -148,13 +155,39 @@ public sealed class CommitInfo
     /// generation (0 before the first commit). Never written to storage.
     /// </summary>
     internal static CommitInfo NearRealTimeView(long extendedGeneration, ulong nextSegmentId, IReadOnlyList<SegmentInfo> segments, ReadOnlyMemory<byte> schema, ReadOnlyMemory<byte> appliedPosition, IReadOnlyDictionary<string, string> userData, long schemaEpoch = 0)
-        => new(extendedGeneration, nextSegmentId, segments, schema, appliedPosition, userData, schemaEpoch, minimumGeneration: 0);
+        => new(extendedGeneration, nextSegmentId, segments, schema, appliedPosition, userData, schemaEpoch, null, minimumGeneration: 0);
 
     /// <summary>The application strings stored with the commit, in key order.</summary>
     public IReadOnlyDictionary<string, string> UserData { get; }
 
     /// <summary>Documents that can be returned across all segments.</summary>
     public long LiveDocCount => Segments.Sum(s => (long)s.LiveCount);
+}
+
+/// <summary>A segment rebuilt for a pending schema, written ahead of the swap.</summary>
+/// <param name="Info">The rebuilt segment; its epoch is the commit's plus one.</param>
+/// <param name="Source">The name of the served segment it was rebuilt from.</param>
+/// <param name="SourceDeleted">How many documents of the source were deleted when it was rebuilt; the rebuilt segment is only good while the source still has exactly this many.</param>
+public sealed record RebuiltSegment(SegmentInfo Info, string Source, int SourceDeleted);
+
+/// <summary>A schema change the index is rebuilding for: the schema it will serve after the swap and the segments rebuilt so far.</summary>
+public sealed class PendingEvolution
+{
+    /// <summary>Creates the description.</summary>
+    /// <param name="schemaBytes">The serialized schema served after the swap.</param>
+    /// <param name="rebuilt">The segments rebuilt so far, in a fixed order.</param>
+    public PendingEvolution(ReadOnlyMemory<byte> schemaBytes, IReadOnlyList<RebuiltSegment> rebuilt)
+    {
+        ArgumentNullException.ThrowIfNull(rebuilt);
+        SchemaBytes = schemaBytes.ToArray();
+        Rebuilt = [.. rebuilt];
+    }
+
+    /// <summary>The serialized schema served after the swap.</summary>
+    public ReadOnlyMemory<byte> SchemaBytes { get; }
+
+    /// <summary>The rebuilt segments written so far.</summary>
+    public IReadOnlyList<RebuiltSegment> Rebuilt { get; }
 }
 
 /// <summary>Names of commit files: <c>commit-</c>, the generation as 16 lowercase hex digits, then <c>.oic</c> (or <c>.tmp</c> while being written).</summary>

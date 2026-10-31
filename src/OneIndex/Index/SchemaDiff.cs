@@ -22,13 +22,14 @@ public sealed class SchemaEvolutionException : InvalidOperationException
 }
 
 /// <summary>Where the background rebuild after a schema change stands.</summary>
-/// <param name="SchemaEpoch">The schema epoch of the index: 0 until a schema change needed existing segments rebuilt, then one higher per such change.</param>
+/// <param name="SchemaEpoch">The schema epoch being served: 0 until a schema change needed existing segments rebuilt, then one higher per such change, at the swap.</param>
 /// <param name="Segments">The segments in the index.</param>
-/// <param name="SegmentsAwaitingRebuild">Segments written under an older epoch that have not been rebuilt yet; 0 when the change has fully taken effect.</param>
-public readonly record struct SchemaEvolutionStatus(long SchemaEpoch, int Segments, int SegmentsAwaitingRebuild)
+/// <param name="SegmentsAwaitingRebuild">Served segments that have no rebuilt twin yet; 0 when nothing is pending.</param>
+/// <param name="SwapPending">Whether a rebuild is pending, including the case where every twin is written and only the swap commit is missing.</param>
+public readonly record struct SchemaEvolutionStatus(long SchemaEpoch, int Segments, int SegmentsAwaitingRebuild, bool SwapPending = false)
 {
     /// <summary>Whether some segment still awaits its rebuild.</summary>
-    public bool InProgress => SegmentsAwaitingRebuild > 0;
+    public bool InProgress => SwapPending || SegmentsAwaitingRebuild > 0;
 }
 
 /// <summary>Compares a declared schema with the committed one (docs/schema-evolution.md).</summary>

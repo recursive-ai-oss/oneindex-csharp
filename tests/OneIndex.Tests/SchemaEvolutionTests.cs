@@ -65,18 +65,31 @@ public sealed class SchemaEvolutionTests
         SchemaEvolutionStatus before = w.SchemaEvolution;
         Assert.True(before.InProgress);
         Assert.Equal(5, before.SegmentsAwaitingRebuild);
-        Assert.Equal(1, before.SchemaEpoch);
+        Assert.Equal(0, before.SchemaEpoch);
 
-        // Already committed: the new schema is in force, the old segments still answer with what they have.
+        // The old schema serves every segment until the swap.
         Assert.Equal(Expected(i => i % 3 == 0), Hits(storage, new TermQuery("body", "running")));
         Assert.Equal(0, Hits(storage, new TermQuery("body", "run")));
-        Assert.Equal(0, Hits(storage, new RangeQuery("n", FieldValue.FromInt64(50), null)));
-        Assert.Equal(0, Hits(storage, new TermQuery("note", "note1")));
+        Assert.Throws<QueryException>(() => Hits(storage, new RangeQuery("n", FieldValue.FromInt64(50), null)));
+        Assert.Throws<QueryException>(() => Hits(storage, new TermQuery("note", "note1")));
 
-        // New documents are written under the new schema, and the rebuild advances a few segments with each commit.
-        w.Upsert(new Document().Add("id", "fresh").Add("body", "running late").Add("n", 500L).Add("note", "note1").Add("extra", "x"));
+        // The rebuild advances a few segments with each commit, written ahead and not served.
         w.Commit();
         Assert.True(w.SchemaEvolution.SegmentsAwaitingRebuild < 5);
+        Assert.True(w.SchemaEvolution.InProgress);
+        Assert.Equal(0, Hits(storage, new TermQuery("body", "run")));
+        Assert.Throws<QueryException>(() => Hits(storage, new RangeQuery("n", FieldValue.FromInt64(50), null)));
+        using (IndexSnapshot midway = IndexSnapshot.Open(storage))
+        {
+            Assert.Equal(V1().Serialize(), midway.Schema.Serialize());
+            Assert.All(midway.Commit.Segments, s => Assert.Equal(0, s.SchemaEpoch));
+            Assert.NotEmpty(midway.Commit.Pending!.Rebuilt);
+            midway.Verify();
+        }
+
+        // A new document is written under one schema only, so it ends the rebuild first.
+        w.Upsert(new Document().Add("id", "fresh").Add("body", "running late").Add("n", 500L).Add("note", "note1").Add("extra", "x"));
+        w.Commit();
 
         w.CompleteSchemaEvolution();
         Assert.False(w.SchemaEvolution.InProgress);
@@ -107,13 +120,16 @@ public sealed class SchemaEvolutionTests
         {
             s.Verify();
             Assert.Equal(Expected(_ => true), s.LiveDocCount);
-            Assert.Contains(s.Commit.Segments, x => x.SchemaEpoch == 0);
+            Assert.All(s.Commit.Segments, x => Assert.Equal(0, x.SchemaEpoch));
+            Assert.NotEmpty(s.Commit.Pending!.Rebuilt);
+            Assert.Equal(V1().Serialize(), s.Schema.Serialize());
         }
 
         using (IndexWriter w = IndexWriter.Open(storage, V2(), Options()))
         {
             Assert.True(w.SchemaEvolution.InProgress);
-            Assert.Equal(1, w.SchemaEvolution.SchemaEpoch);
+            Assert.Equal(0, w.SchemaEvolution.SchemaEpoch);
+            Assert.True(w.SchemaEvolution.SegmentsAwaitingRebuild < 5);
             w.CompleteSchemaEvolution();
             Assert.False(w.SchemaEvolution.InProgress);
         }
@@ -135,6 +151,7 @@ public sealed class SchemaEvolutionTests
             w.Upsert(new Document().Add("id", "d002").Add("body", "replaced running text").Add("extra", "again"));
             w.Upsert(new Document().Add("id", "d1000").Add("body", "another"));
             w.CompleteSchemaEvolution();
+            w.Commit();
         }
 
         using IndexSnapshot s = IndexSnapshot.Open(storage);
@@ -222,6 +239,27 @@ public sealed class SchemaEvolutionTests
         // A segment cannot be newer than the commit that lists it.
         var impossible = new CommitInfo(4, 9, [new SegmentInfo("s0000000000000001", 5, 0, 0, files, schemaEpoch: 5)], plain.SchemaBytes, plain.AppliedPosition, null, schemaEpoch: 3);
         Assert.Throws<CorruptIndexException>(() => CommitFileFormat.Parse(CommitFileFormat.Serialize(impossible), "c"));
+    }
+
+    [Fact]
+    public void PendingRebuildsRoundTripAndAreCanonical()
+    {
+        CommitInfo plain = TestHelpers.MakeCommit(3, []);
+        var serving = new SegmentInfo("s0000000000000001", 5, 1, 1, [], schemaEpoch: 0);
+        var twin = new SegmentInfo("s0000000000000002", 4, 0, 0, [], schemaEpoch: 1);
+        var commit = new CommitInfo(4, 9, [serving], plain.SchemaBytes, plain.AppliedPosition, null, 0, new PendingEvolution(V2().Serialize(), [new RebuiltSegment(twin, "s0000000000000001", 1)]));
+        byte[] bytes = CommitFileFormat.Serialize(commit);
+        CommitInfo back = CommitFileFormat.Parse(bytes, "c");
+        Assert.Single(back.Segments);
+        Assert.Equal("s0000000000000002", back.Pending!.Rebuilt[0].Info.Name);
+        Assert.Equal(1, back.Pending.Rebuilt[0].SourceDeleted);
+        Assert.Equal(bytes, CommitFileFormat.Serialize(back));
+
+        // A rebuilt segment must name a served segment and belong to the next epoch.
+        var orphan = new CommitInfo(4, 9, [serving], plain.SchemaBytes, plain.AppliedPosition, null, 0, new PendingEvolution(V2().Serialize(), [new RebuiltSegment(twin, "s00000000000000ff", 1)]));
+        Assert.Throws<CorruptIndexException>(() => CommitFileFormat.Parse(CommitFileFormat.Serialize(orphan), "c"));
+        var wrongEpoch = new CommitInfo(4, 9, [serving], plain.SchemaBytes, plain.AppliedPosition, null, 0, new PendingEvolution(V2().Serialize(), [new RebuiltSegment(serving, "s0000000000000001", 1)]));
+        Assert.Throws<ArgumentException>(() => CommitFileFormat.Serialize(wrongEpoch));
     }
 
     private static Dictionary<string, byte[]> Everything(MemoryStorage storage)

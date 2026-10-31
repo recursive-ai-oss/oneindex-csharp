@@ -19,7 +19,7 @@ The footer checksum doubles as the file's identity: a commit records it for each
 
 ## Commit file, versions 1 and 2
 
-A commit is written as version 1 unless the index has been through a schema change that needed its segments rebuilt (see schema-evolution.md), in which case it is written as version 2, which adds the two epoch fields marked below. Both versions are read. A version 2 commit whose epochs are all 0 is refused: version 1 is its canonical form.
+A commit is written as version 1 unless the index has been through a schema change that needed its segments rebuilt (see schema-evolution.md), in which case it is written as version 2, which adds the epoch fields and the pending-rebuild section marked below. Both versions are read. A version 2 commit whose epochs are all 0 and that has no pending rebuild is refused: version 1 is its canonical form.
 
 File name `commit-<generation as 16 lowercase hex digits>.oic`. Body:
 
@@ -44,7 +44,19 @@ File name `commit-<generation as 16 lowercase hex digits>.oic`. Body:
         u32    file checksum    the footer checksum of that file
       varint  schema epoch     version 2 only: the epoch the segment was written under; at most the commit's
 
-Segment names are unique within a commit. A parsed commit that is serialized again gives the same bytes: the format is canonical, which the fuzz target checks.
+Version 2 then ends with the pending-rebuild section (schema-evolution.md):
+
+    varint  pending flag    0 or 1
+    (when 1)
+      bytes   pending schema   the schema served after the swap
+      varint  rebuilt count    may be 0
+        segment record         as above, with an epoch of exactly the commit's plus one
+        string  source         the name of a segment listed above that it was rebuilt from; each source at most once
+        varint  source deleted the source's deleted count when it was rebuilt
+
+The segments listed first are the served ones; rebuilt segments are never read until a later commit makes them the served set.
+
+Segment names are unique within a commit (rebuilt segments and all file names included). A parsed commit that is serialized again gives the same bytes: the format is canonical, which the fuzz target checks.
 
 ### Codec registry
 

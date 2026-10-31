@@ -6,11 +6,16 @@ public sealed partial class IndexWriter
 {
     private void MaybeMergeLocked()
     {
+        if (_target is not null)
+        {
+            // Segments being rebuilt for a new schema are not merged: the rebuilt twins are tied to their sources.
+            return;
+        }
+
         var candidates = new List<MergeCandidate>();
         foreach (WorkSegment s in _segments)
         {
-            // A segment still waiting for its rebuild is converted, not merged: merging it with rebuilt ones would mix two schemas.
-            if (!_busy.Contains(s.Info.Name) && !IsStale(s))
+            if (!_busy.Contains(s.Info.Name))
             {
                 candidates.Add(new MergeCandidate(s.Info.Name, s.Info.DocCount - s.DeletedCount, s.DeletedCount));
             }

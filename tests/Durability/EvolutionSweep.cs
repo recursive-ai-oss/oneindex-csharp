@@ -166,9 +166,9 @@ public static class EvolutionSweep
                 using IndexSnapshot snap = IndexSnapshot.Open(disk);
                 snap.Verify();
                 hash = Workload.HashRows(Workload.ReadContent(snap));
-                if (snap.Commit.Segments.Any(s => s.SchemaEpoch > snap.Commit.SchemaEpoch))
+                if (snap.Commit.Segments.Any(s => s.SchemaEpoch != snap.Commit.SchemaEpoch))
                 {
-                    return "a segment is newer than the commit's schema epoch";
+                    return "the commit serves segments of two schema epochs";
                 }
             }
 

@@ -210,9 +210,9 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
 
     /// <summary>
     /// Where the rebuild after a change to the document type stands. When the type's schema differs from the one in the directory the new
-    /// schema takes effect at open and the segments that need it are rebuilt from stored source; each commit advances the rebuild by a few
-    /// segments, and <see cref="CompleteSchemaEvolution(CancellationToken)"/> finishes it. Until then the new capability applies to the
-    /// segments already rebuilt and to new documents (docs/schema-evolution.md).
+    /// index is rebuilt from stored source in the background while the old schema keeps serving every segment; each commit advances the
+    /// rebuild by a few segments, and <see cref="CompleteSchemaEvolution(CancellationToken)"/> finishes it. The new schema becomes visible
+    /// on all segments in one commit (docs/schema-evolution.md).
     /// </summary>
     public SchemaEvolutionStatus SchemaEvolution => _writer.SchemaEvolution;
 
