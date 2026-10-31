@@ -228,7 +228,7 @@ public sealed record MatchAllQuery : Query
 
 /// <summary>
 /// Documents that contain the exact term in any of several fields, scored as one BM25F term: the fields' weights and length
-/// normalizations are combined before saturation (Robertson and Zaragoza 2009, section 3.5), not summed after it.
+/// normalizations are combined before saturation (Robertson and Zaragoza 2009, section 3.6, equations 3.19 to 3.21), not summed after it.
 /// </summary>
 /// <param name="Fields">The field names; each uses its schema boost as its weight.</param>
 /// <param name="Term">The term text, already analyzed.</param>

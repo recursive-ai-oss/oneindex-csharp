@@ -1,15 +1,19 @@
 namespace OneIndex.Search;
 
 /// <summary>
-/// The two free parameters of BM25 and BM25F (Robertson and Zaragoza 2009, sections 3.3 and 3.5): <see cref="K1"/> sets how fast the
+/// The two free parameters of BM25 and BM25F (Robertson and Zaragoza 2009, sections 3.4.4 and 3.4.5): <see cref="K1"/> sets how fast the
 /// score saturates as a term repeats, <see cref="B"/> how strongly a field longer than average is discounted.
 /// </summary>
 /// <param name="K1">Term-frequency saturation, finite and not negative. 0 makes the score binary.</param>
 /// <param name="B">Length normalization from 0 (none) to 1 (full).</param>
 public readonly record struct Bm25Parameters(float K1, float B)
 {
-    /// <summary>k1 = 1.2 and b = 0.75, the values the probabilistic-relevance literature settled on and the engine uses unless told otherwise.</summary>
-    public static Bm25Parameters Default => new(1.2f, 0.75f);
+    /// <summary>
+    /// k1 = 0.9 and b = 0.4, the engine's default. These are the values of the BEIR lexical baseline, and on the four BEIR gate sets they
+    /// score within a point or two of it while 1.2 / 0.75 (Lucene's defaults) is better on ArguAna and worse elsewhere (docs/scoring.md,
+    /// results table); the paper gives no rule and says only that 0.5 &lt; b &lt; 0.8 and 1.2 &lt; k1 &lt; 2 are often good (section 3.5).
+    /// </summary>
+    public static Bm25Parameters Default => new(0.9f, 0.4f);
 
     /// <summary>Checks the ranges.</summary>
     /// <exception cref="QueryException">A parameter is out of range.</exception>
@@ -45,7 +49,7 @@ internal static class Bm25
     // Guards the division when b = 1 and a field is empty; a posting always has a field length of at least 1.
     public const float MinNorm = 1e-6f;
 
-    /// <summary>Robertson and Sparck Jones weight in the non-negative form ln(1 + (N - n + 0.5) / (n + 0.5)) (paper section 3.2).</summary>
+    /// <summary>Robertson and Sparck Jones weight in the non-negative form ln(1 + (N - n + 0.5) / (n + 0.5)) (paper section 3.1, equation 3.2, and section 3.1 for the idf form 3.3 it reduces to without relevance information).</summary>
     public static float Idf(long docCount, long docFreq)
     {
         if (docFreq > docCount)
@@ -56,13 +60,13 @@ internal static class Bm25
         return (float)Math.Log(1.0 + ((docCount - docFreq + 0.5) / (docFreq + 0.5)));
     }
 
-    /// <summary>The saturation of the weighted sum: scale * x / (k1 + x) (paper section 3.5: saturation after the fields are combined).</summary>
+    /// <summary>The saturation of the weighted sum: scale * x / (k1 + x) (paper section 3.6.1: saturation is applied to the total evidence of the streams, equation 3.21).</summary>
     public static float Saturate(float x, float k1, float scale) => scale * (x / (k1 + x));
 }
 
 /// <summary>
 /// Scores one term across one or more fields with BM25F: per field the frequency is weighted and divided by that field's length
-/// normalization, the fields' values are added, and only the sum is saturated (Robertson and Zaragoza 2009, section 3.5), then
+/// normalization, the fields' values are added, and only the sum is saturated (Robertson and Zaragoza 2009, section 3.6, equations 3.19 to 3.21), then
 /// multiplied by the term's idf and the query boost. The scorer walks the union of the fields' postings. Block bounds come from
 /// the postings impacts: the weighted sum is largest for the largest frequency and shortest field of a block, and the score grows
 /// with the sum, so the bound is the score of that combination.

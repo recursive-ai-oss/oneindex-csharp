@@ -9,6 +9,7 @@
 | `terms` | the terms file of a segment (first byte: odd repairs the header, footer and checksum) | the term dictionary reader, reached through opening the segment and walking every term, prefix, fuzzy and regular-expression enumeration |
 | `postings` | the postings file of a segment (same first byte) | the postings reader: every term's documents, frequencies, positions and offsets, advances and look-aheads |
 | `segment` | arbitrary bytes | the delete-file reader and the identifier-map reader (validation and binary-search lookup); what parses must agree with itself |
+| `query` | the bytes choose a small random corpus (segments, deletes, optional merge), a random query tree of every kind, and the checks | query execution against a brute-force BM25F reference (docs/queries.md): same hit set, scores within tolerance, pruned top-k pages bit-identical to the exhaustive list, explanations equal to scores; only `QueryException` for the queries meant to be invalid |
 
 Only `CorruptIndexException` (and its subclass `UnsupportedFormatException`) may come out of a reader. Any other exception, a failed invariant, a hang (`-timeout`) or a memory blow-up (`-rss_limit_mb`) is a finding.
 
