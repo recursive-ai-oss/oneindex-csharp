@@ -96,6 +96,9 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
 
     internal SearchMapping<T> Mapping => _mapping;
 
+    /// <summary>The schema of the index, which the strict query syntax, filter strings and query JSON are checked against.</summary>
+    public Schema Schema => _mapping.Schema;
+
     /// <summary>Adds a document, or replaces the one with the same identifier. It is searchable after the next commit.</summary>
     /// <param name="document">The document.</param>
     /// <param name="cancellationToken">Cancels a flush this call triggers.</param>
@@ -221,6 +224,52 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(query);
         return new SearchQuery<T>(this, null, query, [], 20, 0, false, null);
+    }
+
+    /// <summary>Starts a search with a query in the strict syntax (fields, AND/OR/NOT, phrases with slop, prefixes, fuzzy terms, regular expressions, ranges, boosts). See docs/query-syntax.md.</summary>
+    /// <param name="query">The query text.</param>
+    /// <returns>The search.</returns>
+    /// <exception cref="QueryParseException">The text is not valid or names an unknown field; the exception says where.</exception>
+    public SearchQuery<T> SearchStrict(string query) => SearchBy(StrictQuery.Parse(query, Schema));
+
+    /// <summary>
+    /// Starts a search from query JSON (<c>{"v":1,"q":"overdue","filter":"Paid = false","limit":10}</c>), such as an LLM tool call made against
+    /// <see cref="SearchTool.For{T}"/>. The document is checked against the schema first. See docs/query-json.md.
+    /// </summary>
+    /// <param name="queryJson">The document.</param>
+    /// <returns>The search, with its paging, exact count and highlight settings applied.</returns>
+    /// <exception cref="QueryParseException">The document is not valid; the exception carries the JSON path.</exception>
+    public SearchQuery<T> Parse(string queryJson)
+    {
+        QueryRequest request = QueryJson.Read(queryJson, Schema);
+        SearchQuery<T> search = SearchBy(request.ToQuery()).Take(request.Limit).Skip(request.Offset);
+        if (request.CountExactly)
+        {
+            search = search.CountExactly();
+        }
+
+        return request.Highlight is { } h ? search.Highlight(h) : search;
+    }
+
+    /// <summary>Like <see cref="Parse"/> but returns the error instead of throwing it.</summary>
+    /// <param name="queryJson">The document.</param>
+    /// <param name="search">The search when the document is valid.</param>
+    /// <param name="error">The error when it is not.</param>
+    /// <returns><see langword="true"/> when the document is valid.</returns>
+    public bool TryParse(string queryJson, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out SearchQuery<T>? search, [System.Diagnostics.CodeAnalysis.NotNullWhen(false)] out QueryParseException? error)
+    {
+        try
+        {
+            search = Parse(queryJson);
+            error = null;
+            return true;
+        }
+        catch (QueryParseException e)
+        {
+            search = null;
+            error = e;
+            return false;
+        }
     }
 
     /// <summary>Releases the index and its writer. Uncommitted changes are discarded.</summary>

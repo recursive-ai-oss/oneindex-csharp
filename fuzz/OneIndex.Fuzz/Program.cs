@@ -25,6 +25,9 @@ internal static class Program
         ["points"] = DocValuesTarget.RunPoints,
         ["stored"] = DocValuesTarget.RunStored,
         ["usertext"] = UserTextTarget.Run,
+        ["strict"] = QueryTextTargets.RunStrict,
+        ["filter"] = QueryTextTargets.RunFilter,
+        ["queryjson"] = QueryTextTargets.RunJson,
     };
 
     private static int Main(string[] args)
@@ -72,6 +75,15 @@ internal static class Program
                     break;
                 case "usertext":
                     UserTextTarget.WriteSeeds(args[2]);
+                    break;
+                case "strict":
+                    QueryTextTargets.WriteSeeds(args[2], 0);
+                    break;
+                case "filter":
+                    QueryTextTargets.WriteSeeds(args[2], 1);
+                    break;
+                case "queryjson":
+                    QueryTextTargets.WriteSeeds(args[2], 2);
                     break;
                 default:
                     CommitTarget.WriteSeeds(args[2]);

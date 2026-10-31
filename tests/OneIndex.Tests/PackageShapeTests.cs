@@ -10,8 +10,8 @@ public class PackageShapeTests
     }
 
     [Fact]
-    public void TheToolSchemaSaysItIsNotBuiltYet()
+    public void TheToolDefinitionIsBuilt()
     {
-        Assert.Throws<NotImplementedException>(() => SearchTool.For<Invoice>());
+        Assert.StartsWith("{\"name\":\"search_Invoice\"", SearchTool.For<Invoice>(), StringComparison.Ordinal);
     }
 }

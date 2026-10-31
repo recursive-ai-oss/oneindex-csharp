@@ -21,6 +21,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The black-box JSON Schema validator script used by the SearchTool tests when a Python with the jsonschema wheel is configured. -->
+    <Content Include="../../tools/jsonschema_check.py" Link="jsonschema_check.py" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="xunit.v3" />
     <!-- The generator tests run the generator over small compilations. -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
