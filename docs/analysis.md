@@ -96,6 +96,12 @@ Every row matched in full (matched = words).
 
 The lists Snowball publishes at `https://snowballstem.org/algorithms/<language>/stop.txt`, for Danish, Dutch, English, Finnish, French, German, Hungarian, Indonesian, Irish, Italian, Norwegian, Portuguese, Russian, Sesotho, Spanish and Swedish (`tools/generate-stopwords.py` writes `StopWordData.g.cs`, recording each list's SHA-256). Other languages have no list and keep their stop words. Stop words are matched after case folding and before stemming, exactly as written (so accented forms are listed with accents); `StopWords` is a sorted array searched without allocating.
 
+### Configured stop words
+
+`StopWordSettings` (words, `Mode`, `PreserveGaps`) configures stop words per index and is passed to `LanguageAnalyzer` (or to a custom chain through `CreateFilter`). `Mode.Replace` (default) uses only the configured words, so an empty list turns stop words off; `Mode.Extend` adds them to the language's list (for a language with no list, the configured words alone). Configured words are folded as the standard analyzer folds text (`The` is `the`) and are matched, like the defaults, after case folding and before stemming and accent folding.
+
+Stop words are removed by the analyzer, so they are handled at **both ends** by the same code: a stop word is never indexed, and it is dropped from the query before any query object is built, also inside quoted phrases (`"the great gatsby"` is the phrase `great gatsby`, matching the text with and without the stop word). Positions: with `PreserveGaps` false (the default for configured lists) the neighbours of a removed word become adjacent; with true the gap stays in the positions (the unconfigured language lists keep their gaps, as before). A query made only of stop words has no terms and lowers to match-all, as an empty search returns every document. The analyzer name does not change with the settings: the settings belong to the index and must be the same when it is built and when it is searched. Changing them needs a reindex. See docs/synonyms.md, "Positions and gaps".
+
 ## Regenerating
 
     tools/UcdTables      dotnet run --project tools/UcdTables -- <UCD 17.0.0 directory> src/OneIndex/Analysis/Unicode

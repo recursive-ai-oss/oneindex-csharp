@@ -85,9 +85,14 @@ internal static class TestHelpers
                 operation();
                 allocated = GC.GetAllocatedBytesForCurrentThread() - before;
                 kept = System.Runtime.GCSettings.LatencyMode == System.Runtime.GCLatencyMode.NoGCRegion;
-                if (kept)
+                try
                 {
                     GC.EndNoGCRegion();
+                }
+                catch (InvalidOperationException)
+                {
+                    // The runtime already left the region (a collection was forced); the window is thrown away below.
+                    kept = false;
                 }
             }
 
