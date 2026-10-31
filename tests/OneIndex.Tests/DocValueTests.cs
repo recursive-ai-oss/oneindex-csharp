@@ -469,6 +469,94 @@ public sealed class DocValueTests
         return (snapshot, SnapshotSearch.CreateSearcher(snapshot));
     }
 
+    /// <summary>Reports compression ratios of stored-source blocks on a real corpus; runs only when ONEINDEX_WIKIPEDIA names a JSON-lines file of documents with id, title and text.</summary>
+    [Fact]
+    public void StoredBlockCompressionRatioReport()
+    {
+        string? path = Environment.GetEnvironmentVariable("ONEINDEX_WIKIPEDIA");
+        if (path is null)
+        {
+            return;
+        }
+
+        var index = new Dictionary<string, int>(StringComparer.Ordinal) { ["id"] = 0, ["title"] = 1, ["text"] = 2 };
+        var blocks = new List<byte[]>();
+        var records = new ByteBuilder(1 << 16);
+        var ends = new List<int>();
+        var source = new ByteBuilder(1024);
+        foreach (string line in File.ReadLines(path).Take(60_000))
+        {
+            using System.Text.Json.JsonDocument j = System.Text.Json.JsonDocument.Parse(line);
+            var d = new Document().Add("id", j.RootElement.GetProperty("id").GetString()!).Add("title", j.RootElement.GetProperty("title").GetString()!).Add("text", j.RootElement.GetProperty("text").GetString()!);
+            source.Clear();
+            StoredDocumentFormat.Encode(d, index, source);
+            records.WriteVarUInt((uint)source.Length);
+            records.Write(source.Span);
+            records.WriteVarUInt(0);
+            ends.Add(records.Length);
+            if (records.Length >= StoredSegmentCodec.TargetBlockBytes)
+            {
+                var raw = new ByteBuilder(records.Length + (ends.Count * 4));
+                foreach (int e in ends)
+                {
+                    raw.WriteUInt32((uint)e);
+                }
+
+                raw.Write(records.Span);
+                blocks.Add(raw.Span.ToArray());
+                records.Clear();
+                ends.Clear();
+            }
+        }
+
+        long total = blocks.Sum(b => (long)b.Length);
+        var chains = new StringBuilder();
+        long packedLz = 0;
+        foreach (int chain in new[] { 1, 4, 16, 64 })
+        {
+            var lz = new LzCompressor(chain);
+            long packed = 0;
+            long start = System.Diagnostics.Stopwatch.GetTimestamp();
+            foreach (byte[] b in blocks)
+            {
+                var o = new ByteBuilder(b.Length);
+                lz.Compress(b, o);
+                var back = new byte[b.Length];
+                Assert.True(LzDecompressor.TryDecompress(o.Span, back) && back.AsSpan().SequenceEqual(b));
+                packed += Math.Min(o.Length, b.Length);
+            }
+
+            chains.Append($" chain{chain} {(double)total / packed:F3} ({System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds:F0} ms with verification);");
+            if (chain == 16)
+            {
+                packedLz = packed;
+            }
+        }
+
+        long Bcl(Func<MemoryStream, Stream> make)
+        {
+            long n = 0;
+            foreach (byte[] b in blocks)
+            {
+                using var ms = new MemoryStream();
+                using (Stream z = make(ms))
+                {
+                    z.Write(b);
+                }
+
+                n += ms.Length;
+            }
+
+            return n;
+        }
+
+        long fastest = Bcl(ms => new System.IO.Compression.DeflateStream(ms, System.IO.Compression.CompressionLevel.Fastest, true));
+        long optimal = Bcl(ms => new System.IO.Compression.DeflateStream(ms, System.IO.Compression.CompressionLevel.Optimal, true));
+        long smallest = Bcl(ms => new System.IO.Compression.DeflateStream(ms, System.IO.Compression.CompressionLevel.SmallestSize, true));
+        string R(long packed) => $"{(double)total / packed:F3}";
+        TestContext.Current.SendDiagnosticMessage($"stored blocks: {blocks.Count} x ~32 KB, {total} bytes; ratio onelz {R(packedLz)} [{chains}], deflate-fastest {R(fastest)}, deflate-optimal {R(optimal)}, deflate-smallest {R(smallest)}");
+    }
+
     [Fact]
     public void SavedFuzzFindingsRaiseTypedExceptions()
     {

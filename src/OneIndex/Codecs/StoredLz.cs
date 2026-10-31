@@ -16,9 +16,11 @@ internal sealed class LzCompressor
     private const int HashBits = 15;
     private const int Window = 65_536;
     private const int MinMatch = 4;
-    private const int MaxChain = 16;
+    private readonly int _maxChain;
     private readonly int[] _head = new int[1 << HashBits];
     private readonly int[] _prev = new int[Window];
+
+    public LzCompressor(int maxChain = 16) => _maxChain = maxChain;
 
     public static int MaxCompressedLength(int length) => length + (length / 255) + 16;
 
@@ -37,7 +39,7 @@ internal sealed class LzCompressor
             int bestLength = 0;
             int bestOffset = 0;
             int candidate = _head[h] - 1;
-            for (int depth = 0; candidate >= 0 && i - candidate < Window && depth < MaxChain; depth++)
+            for (int depth = 0; candidate >= 0 && i - candidate < Window && depth < _maxChain; depth++)
             {
                 int length = CommonLength(source, candidate, i);
                 if (length > bestLength)

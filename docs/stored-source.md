@@ -52,7 +52,17 @@ Why not the BCL's compression (measured with `bench/OneIndex.Bench`, `StoredComp
 - **Browser.** In a browser-wasm build (checked in headless Chromium and in Node, .NET 10.0), `DeflateStream`, `ZLibStream` and `GZipStream` round-trip, and gave the same compressed bytes as desktop .NET in that check; `BrotliEncoder` and `BrotliDecoder` throw `PlatformNotSupportedException`. So Brotli cannot be used, and deflate's bytes are not guaranteed to match across builds.
 - **Speed.** A document fetch decompresses a whole block. The numbers are in the section below.
 
-RATIOS
+Measured on the first 60,000 Wikipedia abstracts (655 blocks of about 32 KB, 21.9 MB of encoded documents; BenchmarkDotNet short runs, in process, on an x64 desktop, indicative only):
+
+| Codec | Ratio | Compress all blocks | Decompress all blocks |
+|---|---|---|---|
+| OneIndex LZ (16 candidates) | 1.731 | 215 ms | 24 ms |
+| deflate, fastest | 1.679 | 74 ms | 42 ms |
+| deflate, optimal | 2.245 | 228 ms | 46 ms |
+| zlib, optimal | not recorded | 233 ms | 40 ms |
+| Brotli quality 4 | not recorded | 255 ms | 52 ms |
+
+Limiting the search to 1, 4 or 64 candidates gives ratios of 1.606, 1.696 and 1.742. OneIndex LZ decodes about twice as fast as deflate and compresses to within 3% of the fastest deflate level; optimal deflate is 30% smaller but costs the determinism and browser guarantees above. The file records its compression method, so a later method with entropy coding can be added without changing the layout.
 
 ## Reading
 
