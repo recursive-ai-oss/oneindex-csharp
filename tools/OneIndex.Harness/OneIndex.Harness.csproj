@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Relevance runner, comparator adapters and the benchmark corpus driver. Comparators are referenced here and in no shipped package. -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>OneIndex.Harness</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Lucene.Net" />
+    <PackageReference Include="Lucene.Net.Analysis.Common" />
+    <PackageReference Include="Lucene.Net.Facet" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/OneIndex/OneIndex.csproj" />
+  </ItemGroup>
+
+</Project>

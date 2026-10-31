@@ -1,0 +1,7 @@
+# Native, information-only comparators and the metric cross-check, installed into the oracle venv by tools/fetch.sh.
+tantivy==0.27.0
+hnswlib==0.8.0
+faiss-cpu==1.15.1
+ir_measures==0.4.3
+pytrec_eval-terrier==0.5.11
+pyarrow==26.0.0
