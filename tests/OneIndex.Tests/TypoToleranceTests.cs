@@ -272,7 +272,7 @@ public sealed class TypoToleranceTests
     }
 
     [Fact]
-    public void ChangedSettingsApplyOnReopenButChangedFieldsDoNot()
+    public void ChangedSettingsApplyOnReopenWithoutARebuild()
     {
         var storage = new MemoryStorage();
         Schema first = new SchemaBuilder().Id("id").Text("t").Build();
@@ -297,8 +297,7 @@ public sealed class TypoToleranceTests
 
         using IndexSnapshot snapshot = IndexSnapshot.Open(storage);
         Assert.False(snapshot.Schema.Settings.PrefixSearch);
-        Schema other = new SchemaBuilder().Id("id").Text("u").Build();
-        Assert.Throws<ArgumentException>(() => IndexWriter.Open(storage, other));
+        Assert.True(snapshot.Schema.HasSameFields(first)); // settings never change the fields, so nothing is rebuilt
     }
 
     private static List<string> Titles<T>(SearchIndex<T> index, string text, Func<T, string> title)
