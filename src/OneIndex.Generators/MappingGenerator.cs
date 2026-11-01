@@ -66,6 +66,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
         Json,
         Geo,
         Vector,
+        Sparse,
     }
 
     private sealed class Result
@@ -93,6 +94,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
         public string? Language;
         public string? Analyzer;
         public bool VectorAttr;
+        public bool SparseAttr;
         public int Dimensions;
         public string? From;
         public int Metric;
@@ -256,6 +258,17 @@ public sealed class MappingGenerator : IIncrementalGenerator
                 case "DynamicAttribute":
                     m.Dynamic = true;
                     break;
+                case "SparseAttribute":
+                    m.SparseAttr = true;
+                    foreach (KeyValuePair<string, TypedConstant> arg in attribute.NamedArguments)
+                    {
+                        if (arg.Key == "From" && arg.Value.Value is string sparseFrom)
+                        {
+                            m.From = sparseFrom;
+                        }
+                    }
+
+                    break;
                 case "VectorAttribute":
                     m.VectorAttr = true;
                     foreach (KeyValuePair<string, TypedConstant> arg in attribute.NamedArguments)
@@ -310,6 +323,18 @@ public sealed class MappingGenerator : IIncrementalGenerator
                 return null;
             }
         }
+        else if (m.SparseAttr)
+        {
+            if (property.Type.ToDisplayString().TrimEnd((char)63) == "OneIndex.Index.SparseVector")
+            {
+                m.Shape = Shape.Sparse;
+            }
+            else
+            {
+                diagnostics.Add(Diagnostic.Create(UnsupportedType, location, property.Name, property.Type.ToDisplayString(), "[Sparse] (use OneIndex.Index.SparseVector)"));
+                return null;
+            }
+        }
         else if (!TryClassify(property.Type, m))
         {
             if (declared)
@@ -344,6 +369,11 @@ public sealed class MappingGenerator : IIncrementalGenerator
             {
                 diagnostics.Add(Diagnostic.Create(BadAttributeValue, location, property.Name, "[Vector] needs Dimensions from 1 to 65536, a known Metric, M from 2 to 256, EfConstruction from M to 4096 and FlatThreshold from 0 to 100 million"));
             }
+        }
+
+        if (m.SparseAttr && (m.FullText || m.Keyword || m.Filterable || m.Sortable || m.Facet || m.GeoAttr || m.IsId || m.VectorAttr))
+        {
+            diagnostics.Add(Diagnostic.Create(Conflict, location, property.Name, "a [Sparse] member cannot also be [FullText], [Keyword], [Filterable], [Sortable], [Facet], [Geo], [SearchId] or [Vector]"));
         }
 
         if (m.Dynamic && m.Shape != Shape.Json)
@@ -609,6 +639,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
             Shape.Json => "Json",
             Shape.Geo => "GeoPoint",
             Shape.Vector => "Vector",
+            Shape.Sparse => "Sparse",
             _ => "Date",
         };
         // Text fields are searched when [FullText]; everything else is searched by value only when marked for filtering.
@@ -618,6 +649,8 @@ public sealed class MappingGenerator : IIncrementalGenerator
         string? analyzerName = m.FullText ? (m.Analyzer ?? m.Language) : null;
         string analyzer = analyzerName is null ? "null" : Lit(analyzerName);
 
+        string sparse = m.Shape == Shape.Sparse && m.From is not null ? ", from: " + Lit(m.From) : string.Empty;
+        indexed |= m.Shape == Shape.Sparse;
         string vector = m.Shape == Shape.Vector
             ? ", dimensions: " + m.Dimensions.ToString(CultureInfo.InvariantCulture) + ", metric: (global::OneIndex.Vectors.VectorMetric)" + m.Metric.ToString(CultureInfo.InvariantCulture)
               + ", hnswM: " + m.HnswM.ToString(CultureInfo.InvariantCulture) + ", efConstruction: " + m.EfConstruction.ToString(CultureInfo.InvariantCulture) + ", flatThreshold: " + m.FlatThreshold.ToString(CultureInfo.InvariantCulture)
@@ -626,7 +659,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
         indexed |= m.Shape == Shape.Vector;
 
         return "new global::OneIndex.MappedMember(" + Lit(m.Name) + ", global::OneIndex.Index.FieldType." + kind + ", multi: " + Bool(m.Multi) + ", indexed: " + Bool(indexed) + ", column: " + Bool(column)
-            + ", facet: " + Bool(m.Facet) + ", fullText: " + Bool(m.FullText) + ", isId: " + Bool(m.IsId) + ", boost: " + boost + ", analyzer: " + analyzer + vector + ")";
+            + ", facet: " + Bool(m.Facet) + ", fullText: " + Bool(m.FullText) + ", isId: " + Bool(m.IsId) + ", boost: " + boost + ", analyzer: " + analyzer + vector + sparse + ")";
     }
 
     private static string Bool(bool b) => b ? "true" : "false";
@@ -642,6 +675,9 @@ public sealed class MappingGenerator : IIncrementalGenerator
                 break;
             case Shape.Vector:
                 sb.AppendLine("            if (" + p + " is { } v_" + m.Name + ") { document.Add(" + n + ", v_" + m.Name + "); }");
+                break;
+            case Shape.Sparse:
+                sb.AppendLine("            if (" + p + " is { } sp_" + m.Name + ") { document.Add(" + n + ", sp_" + m.Name + "); }");
                 break;
             case Shape.TextArray:
             case Shape.TextList:
@@ -682,6 +718,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
             Shape.Json => "result." + name + " = field.Value.AsJson();",
             Shape.DateTime => "result." + name + " = global::OneIndex.SearchMapping.FromDate(field.Value);",
             Shape.Vector => "result." + name + " = field.Value.AsVector().ToArray();",
+            Shape.Sparse => "result." + name + " = field.Value.AsSparse();",
             Shape.Geo => "{ (double la, double lo) = field.Value.AsGeoPoint(); result." + name + " = new global::OneIndex.GeoPoint(la, lo); }",
             _ => "result." + name + " = global::System.DateTimeOffset.FromUnixTimeMilliseconds(field.Value.AsInt64());",
         };

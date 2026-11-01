@@ -46,7 +46,8 @@ internal static class DynamicQueryRewriter
                 return h with
                 {
                     Text = Visit(h.Text, schema, depth + 1),
-                    Vector = h.Vector with { Filter = h.Vector.Filter is { } vf ? Visit(vf, schema, depth + 1) : null },
+                    Sparse = h.Sparse is null ? null : Visit(h.Sparse, schema, depth + 1),
+                    Vector = h.Vector is null ? null : h.Vector with { Filter = h.Vector.Filter is { } vf ? Visit(vf, schema, depth + 1) : null },
                 };
             case TermQuery t when IsPath(schema, t.Field):
                 return Keyword(schema, t.Field) is { } tk ? t with { Field = tk } : None();

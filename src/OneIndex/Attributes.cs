@@ -74,6 +74,17 @@ public sealed class VectorAttribute : Attribute
 }
 
 /// <summary>
+/// Marks an <see cref="Index.SparseVector"/> property as a learned sparse vector (token to weight), searched by dot product. With
+/// <see cref="From"/> the index encodes the named text member automatically when a sparse encoder is configured (docs/sparse.md).
+/// </summary>
+[AttributeUsage(AttributeTargets.Property | AttributeTargets.Field, AllowMultiple = false, Inherited = true)]
+public sealed class SparseAttribute : Attribute
+{
+    /// <summary>The name of a text property to encode automatically. Default none: the application supplies the vector.</summary>
+    public string? From { get; set; }
+}
+
+/// <summary>
 /// Marks a <see cref="GeoPoint"/> property for geo search: radius and bounding box filters (<see cref="Geo"/>) and sorting by distance
 /// (<c>OrderByDistance</c>). Without it a <see cref="GeoPoint"/> is only stored and returned with the document.
 /// </summary>

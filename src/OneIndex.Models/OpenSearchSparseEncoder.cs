@@ -44,6 +44,19 @@ public sealed class OpenSearchSparseEncoder : ISparseEncoder, IDisposable
         return new OpenSearchSparseEncoder(NeuralSparseEncoder.Open(model, vocabulary, table, Options(PackedVariant)));
     }
 
+    /// <summary>
+    /// Loads the packed encoder and makes it the one new indexes use for <c>[Sparse(From = ...)]</c> members and sparse search
+    /// (<see cref="SearchSparseEncoders.Default"/>). Call it once at startup, before opening indexes; there is no discovery, so referencing this package alone does nothing.
+    /// </summary>
+    /// <returns>The encoder, which stays loaded for the life of the process (dispose it only after every index using it is closed).</returns>
+    /// <exception cref="FileNotFoundException">The assembly was built without the packed weights.</exception>
+    public static OpenSearchSparseEncoder UseAsDefault()
+    {
+        OpenSearchSparseEncoder encoder = Load();
+        SearchSparseEncoders.Default = encoder;
+        return encoder;
+    }
+
     /// <summary>Opens the encoder from a directory holding <c>model.onemodel</c> (or <c>model.onnx</c>), <c>vocab.txt</c> and <c>idf.json</c>, for example another quantization of the same model.</summary>
     /// <param name="directory">The directory.</param>
     /// <param name="variant">A short name of the weights (for example <c>fp32</c>) that becomes part of <see cref="ModelId"/>.</param>

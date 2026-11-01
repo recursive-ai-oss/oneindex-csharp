@@ -63,7 +63,9 @@ public sealed record QueryRequest
 /// <param name="RankConstant">The reciprocal rank constant, 1 to 1,000. Default 10.</param>
 /// <param name="Window">How many documents each arm contributes. Default 100.</param>
 /// <param name="Field">The vector property to search, or <see langword="null"/> for the schema's only automatically embedded one.</param>
-public sealed record HybridRequest(string Text, double SemanticRatio = HybridQuery.DefaultSemanticRatio, FusionMethod Fusion = FusionMethod.ReciprocalRank, int RankConstant = HybridQuery.DefaultRankConstant, int Window = 100, string? Field = null);
+/// <param name="Sparse">Whether to add a learned sparse list (the text of q encoded by the index's sparse encoder). Default <see langword="false"/>.</param>
+/// <param name="SparseWeight">The sparse list's weight, or <see langword="null"/> for the default of the fusion.</param>
+public sealed record HybridRequest(string Text, double SemanticRatio = HybridQuery.DefaultSemanticRatio, FusionMethod Fusion = FusionMethod.ReciprocalRank, int RankConstant = HybridQuery.DefaultRankConstant, int Window = 100, string? Field = null, bool Sparse = false, double? SparseWeight = null);
 
 /// <summary>The sort keys of a query JSON document. Equal when the keys are equal in order.</summary>
 /// <param name="Keys">The keys, 1 to 16.</param>
@@ -270,6 +272,16 @@ public static partial class QueryJson
                 if (hy.Field is not null)
                 {
                     w.WriteString("field", hy.Field);
+                }
+
+                if (hy.Sparse)
+                {
+                    w.WriteBoolean("sparse", true);
+                }
+
+                if (hy.SparseWeight is { } hsw)
+                {
+                    w.WriteNumber("sparseWeight", hsw);
                 }
 
                 WriteHybridSettings(w, hy.Fusion, hy.RankConstant, hy.SemanticRatio, hy.Window);
@@ -488,8 +500,23 @@ public static partial class QueryJson
                 w.WriteString("type", "hybrid");
                 w.WritePropertyName("text");
                 WriteNode(w, hq.Text);
-                w.WritePropertyName("vector");
-                WriteNode(w, hq.Vector);
+                if (hq.Vector is not null)
+                {
+                    w.WritePropertyName("vector");
+                    WriteNode(w, hq.Vector);
+                }
+
+                if (hq.Sparse is not null)
+                {
+                    w.WritePropertyName("sparse");
+                    WriteNode(w, hq.Sparse);
+                }
+
+                if (hq.SparseWeight is { } sparseWeight)
+                {
+                    w.WriteNumber("sparseWeight", sparseWeight);
+                }
+
                 WriteHybridSettings(w, hq.Fusion, hq.RankConstant, hq.SemanticRatio, hq.Window);
                 break;
             case SparseQuery sparse:
@@ -1058,17 +1085,36 @@ internal sealed partial class QueryJsonReader
     // {"type":"hybrid","text":<node>,"vector":<knn node>,"fusion":"rrf"|"linear","rankConstant":10,"semanticRatio":0.75,"window":100}
     private Query ReadHybrid(JsonElement e, string path, int depth)
     {
-        CheckProperties(e, path, ["type", "text", "vector", "fusion", "rankConstant", "semanticRatio", "window", "boost"]);
+        CheckProperties(e, path, ["type", "text", "vector", "sparse", "sparseWeight", "fusion", "rankConstant", "semanticRatio", "window", "boost"]);
         Query text = ReadNode(Require(e, path, "text"), Child(path, "text"), depth + 1);
         string vp = Child(path, "vector");
-        Query vector = ReadNode(Require(e, path, "vector"), vp, depth + 1);
-        if (vector is not KnnQuery knn)
+        KnnQuery? knn = null;
+        if (e.TryGetProperty("vector", out JsonElement vectorElement))
         {
-            throw Err(vp, "The vector arm of a hybrid node is a knn node.");
+            if (ReadNode(vectorElement, vp, depth + 1) is not KnnQuery k)
+            {
+                throw Err(vp, "The vector arm of a hybrid node is a knn node.");
+            }
+
+            knn = k;
         }
 
+        Query? sparse = null;
+        string sp = Child(path, "sparse");
+        if (e.TryGetProperty("sparse", out JsonElement sparseElement))
+        {
+            sparse = ReadNode(sparseElement, sp, depth + 1);
+        }
+
+        if (knn is null && sparse is null)
+        {
+            throw Err(path, "A hybrid node needs a \"vector\" arm, a \"sparse\" arm, or both.");
+        }
+
+        double? sparseWeight = e.TryGetProperty("sparseWeight", out JsonElement swe) ? ReadNumber(swe, Child(path, "sparseWeight"), 0, 1000) : null;
+
         (FusionMethod fusion, int rankConstant, double ratio, int window) = ReadHybridSettings(e, path);
-        return Boosted(new HybridQuery(text, knn) { Fusion = fusion, RankConstant = rankConstant, SemanticRatio = ratio, Window = window }, e, path);
+        return Boosted(new HybridQuery(text, knn) { Sparse = sparse, SparseWeight = sparseWeight, Fusion = fusion, RankConstant = rankConstant, SemanticRatio = ratio, Window = window }, e, path);
     }
 
     private static (FusionMethod Fusion, int RankConstant, double Ratio, int Window) ReadHybridSettings(JsonElement e, string path)
@@ -1099,7 +1145,7 @@ internal sealed partial class QueryJsonReader
             throw Err(path, "hybrid is an object such as {\"semanticRatio\":0.5}.");
         }
 
-        CheckProperties(h, path, ["field", "fusion", "rankConstant", "semanticRatio", "window"]);
+        CheckProperties(h, path, ["field", "sparse", "sparseWeight", "fusion", "rankConstant", "semanticRatio", "window"]);
         string? field = null;
         if (h.TryGetProperty("field", out JsonElement fe))
         {
@@ -1111,7 +1157,14 @@ internal sealed partial class QueryJsonReader
         }
 
         (FusionMethod fusion, int rank, double ratio, int window) = ReadHybridSettings(h, path);
-        return new HybridRequest(text, ratio, fusion, rank, window, field);
+        bool sparse = h.TryGetProperty("sparse", out JsonElement se) && ReadBool(se, Child(path, "sparse"));
+        double? sparseWeight = h.TryGetProperty("sparseWeight", out JsonElement swe) ? ReadNumber(swe, Child(path, "sparseWeight"), 0, 1000) : null;
+        if (sparse && !_schema.Fields.Any(static f => f.Type == FieldType.Sparse && f.Indexed))
+        {
+            throw Err(Child(path, "sparse"), "The schema has no indexed sparse field.");
+        }
+
+        return new HybridRequest(text, ratio, fusion, rank, window, field, sparse, sparseWeight);
     }
 
     private string ReadGeoField(JsonElement obj, string path)

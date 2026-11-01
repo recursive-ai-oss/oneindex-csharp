@@ -48,12 +48,35 @@ supplied by the caller (`OpenDirectory`, `Open(paths)`, `Open(streams)`): a OneM
 `OpenSearchSparseEncoder` packs opensearch-project/opensearch-neural-sparse-encoding-doc-v3-distill (Apache-2.0; provenance in
 THIRD-PARTY-NOTICES.md) and opens it with `Load()`, or from a directory with `Open(directory, variant)`.
 
+## Happy path
+
+```csharp
+public class Note {
+    [SearchId] public string Id { get; set; }
+    [FullText] public string Body { get; set; }
+    [Sparse(From = nameof(Body))] public SparseVector? Expansion { get; set; }   // encoded when an ISparseEncoder is configured
+}
+OpenSearchSparseEncoder.UseAsDefault();                  // or SearchIndex.Open<Note>(path, embedder, encoder)
+var hits = index.Search("red apple").Sparse().Take(10);  // text + sparse, fused
+```
+
+- `[Sparse]` goes on an `OneIndex.Index.SparseVector` property. With `From`, the index encodes the named text member (document role) before the
+  document reaches the writer. The cache key `<member>#sparse` = SHA-256(model id, 0, text) is stored in the stored source beside the vector,
+  so reupserting unchanged text, reopening, committing, merging and rebuilding for schema evolution never call the encoder; a new model id is
+  stale, and `ReembedStale()` encodes (and embeds) exactly the stale documents. A vector the application sets is kept as it is. The encoder is
+  supplied like the embedder: `SearchSparseEncoders.Default`, or the three-argument `Open<T>`/`InMemory<T>`.
+- `Search(text).Sparse(weight?)` adds the sparse list (the text encoded with the query role). Combinations: text + sparse, and text + vector +
+  sparse when the type also has an automatically embedded vector (the default hybrid applies; `Hybrid(0)` drops the vector list).
+  Sparse search is opt-in: plain text search does not use it, because the default hybrid was tuned without it.
+- `HybridQuery` gains `Sparse` (a `SparseQuery` or a boolean around it that filters it) and `SparseWeight`; `Vector` may be null (text + sparse).
+  Fusion: each list contributes `weight / (RankConstant + rank)` (rank fusion) or `weight * normalized score` (linear); the text and vector
+  weights are as before (`2(1-r)`, `2r` for rank fusion, `1-r`, `r` for linear) and 1 for the text list when there is no vector list; the sparse
+  weight defaults to 1 (rank fusion) or 0.5 (linear). Explain names the rank in each list.
+- Query JSON: a `hybrid` node takes `sparse` (a node) and `sparseWeight`, and `vector` becomes optional (one of the two is required); a request
+  `{"q":..., "hybrid":{"sparse":true,"sparseWeight":..}}` adds the sparse list. `SearchTool` describes a `sparse` node per sparse field and the
+  `sparse`/`sparseWeight` request properties.
+
 ## Results (information; see the report of the unit for machines and job ids)
 
 - Reference parity (200 texts, fp32): identical to the reference runtime. int8 weights: document cosine median 0.9991, min 0.9818.
-- SciFact, int8 weights, our engine's `SparseQuery`: nDCG@10 0.7056 (model card 0.708; the card's training list includes SciFact).
-
-## Not yet in this layer
-
-Attribute `[Sparse(From = ...)]` with source generation, auto-encoding with the cache in the stored source, a sparse arm in `.Hybrid()`,
-and the `SearchTool` schema entry are not built yet.
+- SciFact, int8 weights, our engine's `SparseQuery`: nDCG@10 0.7056 (model card 0.708). SciFact is one of the model's training sets (its card lists scifact), so this is not an out-of-domain figure.
