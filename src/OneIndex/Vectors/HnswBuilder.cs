@@ -24,15 +24,6 @@ internal sealed class HnswBuilder : HnswGraph
     /// </summary>
     internal static float Layer0EfFactor { get; set; } = 1.5f;
 
-    /// <summary>Links chosen for a new node on layer 0: 0 means 2 M (the layer-0 limit), a smaller value is the experiment switch.</summary>
-    internal static int Layer0Select { get; set; }
-
-    /// <summary>Experiment switch: choose the nearest candidates without the diversity heuristic.</summary>
-    internal static bool SimpleSelection { get; set; }
-
-    /// <summary>Experiment switch: a candidate is dropped only when its distance to a chosen neighbour is below its distance to the base node by more than (factor - 1) times that distance (1 is the paper's rule).</summary>
-    internal static float Relaxation { get; set; } = 1f;
-
     private readonly VectorValues _values;
     private readonly DistanceKind _kind;
     private readonly int _m;
@@ -279,7 +270,7 @@ internal sealed class HnswBuilder : HnswGraph
             int ef = l == 0 ? _efLayer0 : _efConstruction;
             HnswSearch.Layer(this, _scorer, l, ef, null, 0, scratch, ref visited);
             entryCount = HnswSearch.Drain(scratch.Results, ef, found);
-            int chosen = SelectNeighbors(found[..entryCount], l == 0 ? (Layer0Select > 0 ? Math.Min(Layer0Select, _m0) : _m0) : _m, _chosen, node);
+            int chosen = SelectNeighbors(found[..entryCount], l == 0 ? _m0 : _m, _chosen, node);
             SetLinks(node, l, _chosen.AsSpan(0, chosen));
             for (int i = 0; i < chosen; i++)
             {
@@ -359,9 +350,9 @@ internal sealed class HnswBuilder : HnswGraph
             }
 
             bool good = true;
-            for (int j = 0; !SimpleSelection && j < kept; j++)
+            for (int j = 0; j < kept; j++)
             {
-                if (Pair(c.Id, chosen[j]) < c.Key - ((Relaxation - 1f) * MathF.Abs(c.Key)))
+                if (Pair(c.Id, chosen[j]) < c.Key)
                 {
                     good = false;
                     break;
