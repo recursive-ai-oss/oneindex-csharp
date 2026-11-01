@@ -101,6 +101,24 @@ public sealed class InvertedBuffer
         f.NextPositionBase = Math.Max(f.NextPositionBase, position + 1);
     }
 
+    /// <summary>Adds a term with a given frequency in one document (a learned sparse weight, quantized). The field must have been declared frequency-only.</summary>
+    /// <param name="docId">The segment-local document id.</param>
+    /// <param name="field">The field name.</param>
+    /// <param name="term">The term in UTF-8.</param>
+    /// <param name="frequency">The frequency, at least 1; the term must not already have been added for this document.</param>
+    public void AddWeightedTerm(int docId, string field, ReadOnlySpan<byte> term, int frequency)
+    {
+        ArgumentNullException.ThrowIfNull(field);
+        ArgumentOutOfRangeException.ThrowIfLessThan(frequency, 1);
+        FieldBuffer f = GetField(field);
+        f.StartValue(docId, 0);
+        AddToken(f, docId, term, 0, 0, 0);
+        if (f.TermLookup.TryGetValue(term, out TermBuffer? t))
+        {
+            t.AddFrequency(frequency - 1);
+        }
+    }
+
     /// <summary>Writes every field to <paramref name="writer"/> in the order it needs, ready for <see cref="TextSegmentWriter.Finish"/>. The buffer is left unchanged.</summary>
     /// <param name="writer">The segment writer; its <see cref="TextSegmentWriter.MaxDoc"/> must exceed every document id added.</param>
     /// <exception cref="ArgumentException">A document id is not below the writer's document count.</exception>
@@ -265,6 +283,8 @@ public sealed class InvertedBuffer
         public int Length;
         private int _lastDoc = -1;
         private int _freqIndex;
+
+        public void AddFrequency(int extra) => Data[_freqIndex] += extra;
 
         public void Append(int docId, int position, int startOffset, int endOffset, PostingsFeatures features)
         {

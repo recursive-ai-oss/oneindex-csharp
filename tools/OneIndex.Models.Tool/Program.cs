@@ -51,6 +51,15 @@ switch (args[0])
     case "beir":
         return Beir();
 
+    case "sparse-parity":
+        return SparseCommands.Parity(n => options.GetValueOrDefault(n));
+
+    case "sparse-beir":
+        return SparseCommands.Beir(n => options.GetValueOrDefault(n));
+
+    case "sparse-hybrid":
+        return SparseCommands.Hybrid(n => options.GetValueOrDefault(n));
+
     case "hybrid":
         return HybridGate();
 

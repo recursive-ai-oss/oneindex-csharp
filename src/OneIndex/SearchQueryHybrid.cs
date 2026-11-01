@@ -9,8 +9,49 @@ namespace OneIndex;
 /// <summary>The hybrid setting of a <see cref="SearchQuery{T}"/>.</summary>
 internal sealed record HybridSpec(double Ratio, FusionMethod Fusion, int RankConstant, int Window, string? Field, float[]? Vector, string? Text);
 
+/// <summary>The sparse arm of a <see cref="SearchQuery{T}"/>: the member (null for the only <c>[Sparse(From = ...)]</c> member) and the list weight.</summary>
+internal sealed record SparseSpec(string? Field, double? Weight);
+
 public sealed partial class SearchQuery<T>
 {
+    /// <summary>
+    /// Adds a learned sparse list to the search (docs/sparse.md): the search text is encoded with the index's sparse encoder (query role) and the
+    /// best matches by dot product are fused with the text list, and with the vector list when the search is hybrid. The sparse member is the only
+    /// <c>[Sparse(From = ...)]</c> member. Combinations: text + sparse; text + vector + sparse (<c>Hybrid(0)</c> drops the vector list).
+    /// </summary>
+    /// <param name="weight">The sparse list's weight on the scale of the other lists (see <see cref="HybridQuery.SparseWeight"/>). Default 1 under reciprocal rank fusion and 0.5 under linear fusion.</param>
+    /// <returns>The search. It needs search text and a sparse encoder; <c>TotalHits</c> counts the documents in any list.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The weight is negative or not finite.</exception>
+    public SearchQuery<T> Sparse(double? weight = null) => SparseCore(new SparseSpec(null, CheckSparseWeight(weight)));
+
+    /// <summary>Like <see cref="Sparse(double?)"/> for a named sparse property.</summary>
+    /// <typeparam name="TSparse">The property type, <see cref="SparseVector"/>.</typeparam>
+    /// <param name="member">The sparse property, such as <c>x =&gt; x.Expansion</c>.</param>
+    /// <param name="weight">As above.</param>
+    /// <returns>The search.</returns>
+    public SearchQuery<T> Sparse<TSparse>(Expression<Func<T, TSparse>> member, double? weight = null)
+    {
+        MappedMember m = MemberNames.Resolve(_index.Mapping, member, nameof(Sparse));
+        if (m.Type != FieldType.Sparse)
+        {
+            throw new ArgumentException($"Sparse: '{m.Name}' is not a [Sparse] property.", nameof(member));
+        }
+
+        return SparseCore(new SparseSpec(m.Name, CheckSparseWeight(weight)));
+    }
+
+    private static double? CheckSparseWeight(double? weight)
+    {
+        if (weight is { } w && !(w >= 0.0 && double.IsFinite(w)))
+        {
+            throw new ArgumentOutOfRangeException(nameof(weight), "The sparse weight must be finite and not negative.");
+        }
+
+        return weight;
+    }
+
+    internal SearchQuery<T> SparseCore(SparseSpec spec) => With((_extras ?? QueryExtras.None) with { Sparse = spec });
+
     /// <summary>
     /// Fuses this search's text matches with the documents nearest in meaning to the search text, using the index's embedder (docs/hybrid.md).
     /// The vector field is the only <c>[Vector(From = ...)]</c> member. Filters apply to both lists, and sorting, facets and paging work on the fused matches.
@@ -98,16 +139,18 @@ public sealed partial class SearchQuery<T>
         => With((_extras ?? QueryExtras.None) with { Hybrid = spec });
 
     // An explicit Hybrid(...) wins. Otherwise plain search text on an index with an embedder and exactly one automatically embedded member is hybrid.
+    // A requested sparse list makes the search a fusion even without a vector list.
     private HybridSpec? EffectiveHybrid()
     {
         HybridSpec? spec = _extras?.Hybrid;
+        bool sparse = _extras?.Sparse is not null;
         if (spec is not null)
         {
-            // A ratio of 0 is the text search alone: nothing to embed or fuse.
-            return spec.Ratio == 0.0 ? null : spec;
+            // A ratio of 0 is the text search alone: nothing to embed or fuse (unless a sparse list is asked for).
+            return spec.Ratio == 0.0 && !sparse ? null : spec;
         }
 
-        if (_query is null && !string.IsNullOrWhiteSpace(_text) && _index.Auto is { Slots.Length: 1 })
+        if (_query is null && !string.IsNullOrWhiteSpace(_text) && (_index.Auto is { Slots.Length: 1 } || sparse))
         {
             return new HybridSpec(HybridQuery.DefaultSemanticRatio, FusionMethod.ReciprocalRank, HybridQuery.DefaultRankConstant, 100, null, null, null);
         }
@@ -117,42 +160,78 @@ public sealed partial class SearchQuery<T>
 
     private Search.Query BuildHybrid(Search.Query textQuery, HybridSpec spec)
     {
+        SparseSpec? sparseSpec = _extras?.Sparse;
         AutoEmbedding? auto = _index.Auto;
         string? field = spec.Field ?? (auto is { Slots.Length: 1 } ? auto.Slots[0].Vector : null);
-        if (field is null)
+        // A sparse list without a usable vector list (ratio 0, or no embedder) is text + sparse.
+        bool dense = spec.Ratio > 0.0 && (field is not null || sparseSpec is null);
+        if (dense && field is null)
         {
             throw new InvalidOperationException(auto is null && spec.Vector is null
                 ? "Hybrid search needs an embedder: open the index with one, or set SearchEmbedders.Default (docs/auto-embedding.md)."
                 : "Hybrid search needs to know the vector property: use Hybrid(x => x.Member).");
         }
 
-        float[] vector;
-        if (spec.Vector is not null)
+        if (dense && spec.Vector is null && auto is null)
         {
-            vector = spec.Vector;
+            throw new InvalidOperationException("Hybrid search needs an embedder: open the index with one, or set SearchEmbedders.Default (docs/auto-embedding.md).");
         }
-        else
+
+        string? text = spec.Text ?? _text;
+        float[]? vector = null;
+        if (dense)
         {
-            string? text = spec.Text ?? _text;
-            if (auto is null)
+            if (spec.Vector is not null)
             {
-                throw new InvalidOperationException("Hybrid search needs an embedder: open the index with one, or set SearchEmbedders.Default (docs/auto-embedding.md).");
+                vector = spec.Vector;
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    throw new InvalidOperationException("Hybrid search embeds the search text, but this search has none. Use Search(text), or Hybrid(member, vector).");
+                }
+
+                vector = auto!.EmbedQuery(text);
+            }
+        }
+
+        Search.Query? sparseArm = null;
+        if (sparseSpec is not null)
+        {
+            AutoSparse auto2 = _index.AutoSparse ?? throw new InvalidOperationException("Sparse search needs a sparse encoder: open the index with one, or set SearchSparseEncoders.Default (docs/sparse.md).");
+            string? sparseField = sparseSpec.Field ?? (auto2.Slots.Length == 1 ? auto2.Slots[0].Sparse : null);
+            if (sparseField is null)
+            {
+                throw new InvalidOperationException("Sparse search needs to know the sparse property: use Sparse(x => x.Member).");
             }
 
             if (string.IsNullOrWhiteSpace(text))
             {
-                throw new InvalidOperationException("Hybrid search embeds the search text, but this search has none. Use Search(text), or Hybrid(member, vector).");
+                throw new InvalidOperationException("Sparse search encodes the search text, but this search has none. Use Search(text).");
             }
 
-            vector = auto.EmbedQuery(text);
+            sparseArm = new SparseQuery(sparseField, auto2.EncodeQuery(text));
         }
 
         int window = spec.Window;
         Search.Query textArm = _extras is null && _filters.Length == 0 ? textQuery : WithExtras(textQuery, applyFunction: false);
-        var knn = new KnnQuery(field, vector, window);
-        Search.Query vectorArm = _extras is null && _filters.Length == 0 ? knn : WithExtras(knn, applyFunction: false);
-        var hybrid = new HybridQuery(textArm, (KnnQuery)vectorArm)
+        KnnQuery? knnArm = null;
+        if (vector is not null)
         {
+            var knn = new KnnQuery(field!, vector, window);
+            knnArm = (KnnQuery)(_extras is null && _filters.Length == 0 ? knn : WithExtras(knn, applyFunction: false));
+        }
+
+        if (sparseArm is not null && (_extras is not null || _filters.Length != 0))
+        {
+            sparseArm = WithExtras(sparseArm, applyFunction: false);
+        }
+
+        var hybrid = new HybridQuery(textArm, knnArm)
+        {
+            Sparse = sparseArm,
+            SparseWeight = sparseSpec?.Weight,
             Fusion = spec.Fusion,
             RankConstant = spec.RankConstant,
             SemanticRatio = spec.Ratio,

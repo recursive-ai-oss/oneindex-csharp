@@ -88,14 +88,17 @@ public sealed class QueryEngine : IWeightFactory
             try
             {
                 // An arm that the ratio switches off is not built: a ratio of 1 never runs the text query.
-                Weight text = query.SemanticRatio < 1.0 ? query.Text.Accept(this) : EmptyWeight.Instance;
-                return HybridWeight.Create(context, query, text, knn => VisitKnn(knn));
+                bool textNeeded = query.Vector is null || query.SemanticRatio < 1.0;
+                Weight text = textNeeded ? query.Text.Accept(this) : EmptyWeight.Instance;
+                return HybridWeight.Create(context, query, text, knn => VisitKnn(knn), sparse => sparse.Accept(this));
             }
             finally
             {
                 _depth--;
             }
         }
+
+        public override Weight VisitSparse(SparseQuery query) => SparseWeight.Create(context, query);
 
         public override Weight VisitKnn(KnnQuery query) => KnnWeight.Create(context, query, query.Filter?.Accept(this));
 

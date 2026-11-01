@@ -24,9 +24,22 @@ public enum FusionMethod
 /// in the two (docs/hybrid.md). Filters belong inside both arms: put them in the text query and in <c>Vector.Filter</c>.
 /// </summary>
 /// <param name="Text">The text arm: any query. Its score ranks the arm.</param>
-/// <param name="Vector">The vector arm. Its <c>K</c> is replaced by <see cref="Window"/>, and a nonzero <c>Ef</c> below it is raised to it.</param>
-public sealed record HybridQuery(Query Text, KnnQuery Vector) : Query
+/// <param name="Vector">The vector arm. Its <c>K</c> is replaced by <see cref="Window"/>, and a nonzero <c>Ef</c> below it is raised to it. <see langword="null"/> for no vector arm (text and <see cref="Sparse"/> only).</param>
+public sealed record HybridQuery(Query Text, KnnQuery? Vector) : Query
 {
+    /// <summary>
+    /// An optional learned sparse arm (docs/sparse.md; a <see cref="SparseQuery"/>, possibly inside a boolean query that filters it): a third ranked list of its best <see cref="Window"/> documents, fused with the others.
+    /// Default none. Combinations: text + vector, text + sparse, text + vector + sparse.
+    /// </summary>
+    public Query? Sparse { get; init; }
+
+    /// <summary>
+    /// The weight of the sparse list on the scale of the other lists' weights. Default <see langword="null"/>: 1 under reciprocal rank fusion
+    /// (the text and vector weights are <c>2(1-r)</c> and <c>2r</c>, so a ratio of 0.5 gives each list 1) and 0.5 under linear fusion
+    /// (where they are <c>1-r</c> and <c>r</c>). With no vector arm the text list's weight is 1 under both. 0 or more.
+    /// </summary>
+    public double? SparseWeight { get; init; }
+
     /// <summary>The default <see cref="RankConstant"/>, 10 (the paper's 60 gave a worse mean on the relevance sets; docs/hybrid.md).</summary>
     public const int DefaultRankConstant = 10;
 
@@ -60,10 +73,10 @@ internal sealed class HybridWeight : Weight
 {
     private readonly int[]?[] _docs;
     private readonly float[]?[] _scores;
-    private readonly (int Text, int Vector)[]?[] _ranks; // 0 = not in that arm's window
+    private readonly (int Text, int Vector, int Sparse)[]?[] _ranks; // 0 = not in that arm's window
     private readonly string _description;
 
-    private HybridWeight(int[]?[] docs, float[]?[] scores, (int, int)[]?[] ranks, string description)
+    private HybridWeight(int[]?[] docs, float[]?[] scores, (int, int, int)[]?[] ranks, string description)
     {
         _docs = docs;
         _scores = scores;
@@ -133,27 +146,29 @@ internal sealed class HybridWeight : Weight
     private static bool Better((int Leaf, int Doc, float Score) a, (int Leaf, int Doc, float Score) b)
         => a.Score > b.Score || (a.Score == b.Score && (a.Leaf < b.Leaf || (a.Leaf == b.Leaf && a.Doc < b.Doc)));
 
-    /// <summary>Fuses two ranked lists (best first) into scores per document: the arithmetic of docs/hybrid.md, shared with the tests.</summary>
-    internal static Dictionary<(int Leaf, int Doc), (float Score, int TextRank, int VectorRank)> Fuse(
+    /// <summary>Fuses ranked lists (best first) into scores per document: the arithmetic of docs/hybrid.md and docs/sparse.md.</summary>
+    internal static Dictionary<(int Leaf, int Doc), (float Score, int TextRank, int VectorRank, int SparseRank)> Fuse(
         IReadOnlyList<(int Leaf, int Doc, float Score)> text, IReadOnlyList<(int Leaf, int Doc, float Score)> vector,
-        FusionMethod method, int rankConstant, double semanticRatio, float boost)
+        IReadOnlyList<(int Leaf, int Doc, float Score)> sparse, bool hasVector,
+        FusionMethod method, int rankConstant, double semanticRatio, double sparseWeight, float boost)
     {
-        var fused = new Dictionary<(int, int), (float, int, int)>();
-        double textWeight = method == FusionMethod.ReciprocalRank ? 2.0 * (1.0 - semanticRatio) : 1.0 - semanticRatio;
-        double vectorWeight = method == FusionMethod.ReciprocalRank ? 2.0 * semanticRatio : semanticRatio;
-        var acc = new Dictionary<(int, int), (double Score, int T, int V)>();
-        Add(acc, text, textWeight, method, rankConstant, isText: true);
-        Add(acc, vector, vectorWeight, method, rankConstant, isText: false);
-        foreach (KeyValuePair<(int, int), (double Score, int T, int V)> kv in acc)
+        var fused = new Dictionary<(int, int), (float, int, int, int)>();
+        double textWeight = !hasVector ? 1.0 : method == FusionMethod.ReciprocalRank ? 2.0 * (1.0 - semanticRatio) : 1.0 - semanticRatio;
+        double vectorWeight = !hasVector ? 0.0 : method == FusionMethod.ReciprocalRank ? 2.0 * semanticRatio : semanticRatio;
+        var acc = new Dictionary<(int, int), (double Score, int T, int V, int S)>();
+        Add(acc, text, textWeight, method, rankConstant, 0);
+        Add(acc, vector, vectorWeight, method, rankConstant, 1);
+        Add(acc, sparse, sparseWeight, method, rankConstant, 2);
+        foreach (KeyValuePair<(int, int), (double Score, int T, int V, int S)> kv in acc)
         {
-            fused[kv.Key] = ((float)(kv.Value.Score * boost), kv.Value.T, kv.Value.V);
+            fused[kv.Key] = ((float)(kv.Value.Score * boost), kv.Value.T, kv.Value.V, kv.Value.S);
         }
 
         return fused;
     }
 
-    private static void Add(Dictionary<(int, int), (double Score, int T, int V)> acc, IReadOnlyList<(int Leaf, int Doc, float Score)> list,
-        double weight, FusionMethod method, int rankConstant, bool isText)
+    private static void Add(Dictionary<(int, int), (double Score, int T, int V, int S)> acc, IReadOnlyList<(int Leaf, int Doc, float Score)> list,
+        double weight, FusionMethod method, int rankConstant, int which)
     {
         if (weight <= 0 || list.Count == 0)
         {
@@ -173,12 +188,12 @@ internal sealed class HybridWeight : Weight
                 ? weight / (rankConstant + i + 1)
                 : weight * (max > min ? (list[i].Score - min) / (max - min) : 1.0);
             (int leaf, int doc, _) = list[i];
-            acc.TryGetValue((leaf, doc), out (double Score, int T, int V) cur);
-            acc[(leaf, doc)] = (cur.Score + part, isText ? i + 1 : cur.T, isText ? cur.V : i + 1);
+            acc.TryGetValue((leaf, doc), out (double Score, int T, int V, int S) cur);
+            acc[(leaf, doc)] = (cur.Score + part, which == 0 ? i + 1 : cur.T, which == 1 ? i + 1 : cur.V, which == 2 ? i + 1 : cur.S);
         }
     }
 
-    public static HybridWeight Create(SearchContext context, HybridQuery q, Weight textWeight, Func<KnnQuery, Weight> vectorWeight)
+    public static HybridWeight Create(SearchContext context, HybridQuery q, Weight textWeight, Func<KnnQuery, Weight> vectorWeight, Func<Query, Weight>? sparseWeight = null)
     {
         if (!float.IsFinite(q.Boost) || q.Boost < 0f)
         {
@@ -200,19 +215,32 @@ internal sealed class HybridWeight : Weight
             throw new QueryException($"A hybrid semantic ratio must be from 0 to 1, got {q.SemanticRatio}.");
         }
 
-        List<(int Leaf, int Doc, float Score)> text = q.SemanticRatio < 1.0 ? TopOf(textWeight, context, q.Window) : [];
-        var vector = new List<(int Leaf, int Doc, float Score)>();
-        if (q.SemanticRatio > 0.0)
+        if (q.SparseWeight is { } sw && !(sw >= 0.0 && double.IsFinite(sw)))
         {
-            KnnQuery knn = q.Vector with { K = q.Window, Ef = q.Vector.Ef != 0 && q.Vector.Ef < q.Window ? q.Window : q.Vector.Ef };
+            throw new QueryException($"A hybrid sparse weight must be finite and not negative, got {sw}.");
+        }
+
+        bool hasVector = q.Vector is not null;
+        List<(int Leaf, int Doc, float Score)> text = !hasVector || q.SemanticRatio < 1.0 ? TopOf(textWeight, context, q.Window) : [];
+        var vector = new List<(int Leaf, int Doc, float Score)>();
+        if (hasVector && q.SemanticRatio > 0.0)
+        {
+            KnnQuery knn = q.Vector! with { K = q.Window, Ef = q.Vector.Ef != 0 && q.Vector.Ef < q.Window ? q.Window : q.Vector.Ef };
             vector = TopOf(vectorWeight(knn), context, q.Window);
         }
 
-        Dictionary<(int Leaf, int Doc), (float Score, int TextRank, int VectorRank)> fused = Fuse(text, vector, q.Fusion, q.RankConstant, q.SemanticRatio, q.Boost);
-        var all = new List<(int Leaf, int Doc, float Score, int T, int V)>(fused.Count);
-        foreach (KeyValuePair<(int Leaf, int Doc), (float Score, int TextRank, int VectorRank)> kv in fused)
+        double sparseArmWeight = q.SparseWeight ?? (q.Fusion == FusionMethod.ReciprocalRank ? 1.0 : 0.5);
+        var sparse = new List<(int Leaf, int Doc, float Score)>();
+        if (q.Sparse is not null && sparseWeight is not null && sparseArmWeight > 0.0)
         {
-            all.Add((kv.Key.Leaf, kv.Key.Doc, kv.Value.Score, kv.Value.TextRank, kv.Value.VectorRank));
+            sparse = TopOf(sparseWeight(q.Sparse), context, q.Window);
+        }
+
+        Dictionary<(int Leaf, int Doc), (float Score, int TextRank, int VectorRank, int SparseRank)> fused = Fuse(text, vector, sparse, hasVector, q.Fusion, q.RankConstant, q.SemanticRatio, sparseArmWeight, q.Boost);
+        var all = new List<(int Leaf, int Doc, float Score, int T, int V, int S)>(fused.Count);
+        foreach (KeyValuePair<(int Leaf, int Doc), (float Score, int TextRank, int VectorRank, int SparseRank)> kv in fused)
+        {
+            all.Add((kv.Key.Leaf, kv.Key.Doc, kv.Value.Score, kv.Value.TextRank, kv.Value.VectorRank, kv.Value.SparseRank));
         }
 
         all.Sort(static (a, b) =>
@@ -222,7 +250,7 @@ internal sealed class HybridWeight : Weight
         });
         var docs = new int[]?[context.Leaves.Count];
         var scores = new float[]?[context.Leaves.Count];
-        var ranks = new (int, int)[]?[context.Leaves.Count];
+        var ranks = new (int, int, int)[]?[context.Leaves.Count];
         int at = 0;
         while (at < all.Count)
         {
@@ -235,19 +263,21 @@ internal sealed class HybridWeight : Weight
 
             docs[leaf] = new int[end - at];
             scores[leaf] = new float[end - at];
-            ranks[leaf] = new (int, int)[end - at];
+            ranks[leaf] = new (int, int, int)[end - at];
             for (int i = at; i < end; i++)
             {
                 docs[leaf]![i - at] = all[i].Doc;
                 scores[leaf]![i - at] = all[i].Score;
-                ranks[leaf]![i - at] = (all[i].T, all[i].V);
+                ranks[leaf]![i - at] = (all[i].T, all[i].V, all[i].S);
             }
 
             at = end;
         }
 
         string how = q.Fusion == FusionMethod.ReciprocalRank ? $"reciprocal rank fusion (constant {q.RankConstant})" : "linear fusion";
-        return new HybridWeight(docs, scores, ranks, $"hybrid, {how}, semantic ratio {q.SemanticRatio:0.###}, window {q.Window}");
+        string arms = (hasVector ? "semantic ratio " + q.SemanticRatio.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) : "no vector arm")
+            + (q.Sparse is not null ? ", sparse weight " + sparseArmWeight.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) : string.Empty);
+        return new HybridWeight(docs, scores, ranks, $"hybrid, {how}, {arms}, window {q.Window}");
     }
 
     public override Scorer? GetScorer(LeafContext leaf) => _docs[leaf.Ordinal] is { } d ? new ArrayScorer(d, _scores[leaf.Ordinal]!) : null;
@@ -261,8 +291,9 @@ internal sealed class HybridWeight : Weight
             return null;
         }
 
-        (int t, int v) = _ranks[leaf.Ordinal]![i];
-        string where = $"text rank {(t == 0 ? "none" : t.ToString(System.Globalization.CultureInfo.InvariantCulture))}, vector rank {(v == 0 ? "none" : v.ToString(System.Globalization.CultureInfo.InvariantCulture))}";
+        (int t, int v, int sp) = _ranks[leaf.Ordinal]![i];
+        static string R(int r) => r == 0 ? "none" : r.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string where = $"text rank {R(t)}, vector rank {R(v)}" + (sp != 0 || _description.Contains("sparse weight", StringComparison.Ordinal) ? $", sparse rank {R(sp)}" : string.Empty);
         return new Explanation(_scores[leaf.Ordinal]![i], $"{_description}: {where}");
     }
 

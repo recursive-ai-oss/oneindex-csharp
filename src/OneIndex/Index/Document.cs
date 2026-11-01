@@ -31,6 +31,9 @@ public enum FieldValueKind : byte
 
     /// <summary>A JSON value.</summary>
     Json = 9,
+
+    /// <summary>A learned sparse vector: weights by token (<see cref="SparseVector"/>).</summary>
+    Sparse = 10,
 }
 
 /// <summary>A single field value of any type, without boxing the numeric kinds.</summary>
@@ -106,6 +109,11 @@ public readonly struct FieldValue : IEquatable<FieldValue>
     /// <returns>The value.</returns>
     public static FieldValue FromVector(float[] value) => new(FieldValueKind.Vector, 0, 0, value ?? throw new ArgumentNullException(nameof(value)));
 
+    /// <summary>Creates a sparse vector value.</summary>
+    /// <param name="value">The weights by token.</param>
+    /// <returns>The value.</returns>
+    public static FieldValue FromSparse(SparseVector value) => new(FieldValueKind.Sparse, 0, 0, value ?? throw new ArgumentNullException(nameof(value)));
+
     /// <summary>Creates a JSON value.</summary>
     /// <param name="value">The element; it must stay valid (its document alive).</param>
     /// <returns>The value.</returns>
@@ -151,6 +159,11 @@ public readonly struct FieldValue : IEquatable<FieldValue>
     /// <returns>The components.</returns>
     /// <exception cref="InvalidOperationException">The value is not a vector.</exception>
     public ReadOnlyMemory<float> AsVector() => Kind == FieldValueKind.Vector ? (float[])_object! : throw Wrong(FieldValueKind.Vector);
+
+    /// <summary>The weights of a sparse vector value.</summary>
+    /// <returns>The vector.</returns>
+    /// <exception cref="InvalidOperationException">The value is not a sparse vector.</exception>
+    public SparseVector AsSparse() => Kind == FieldValueKind.Sparse ? (SparseVector)_object! : throw Wrong(FieldValueKind.Sparse);
 
     /// <summary>The element of a JSON value.</summary>
     /// <returns>The element.</returns>
@@ -241,6 +254,12 @@ public sealed class Document
     /// <param name="value">The time.</param>
     /// <returns>This document.</returns>
     public Document Add(string name, DateTimeOffset value) => Add(name, FieldValue.FromDate(value));
+
+    /// <summary>Adds a learned sparse vector value.</summary>
+    /// <param name="name">The field name.</param>
+    /// <param name="value">The sparse vector.</param>
+    /// <returns>This document.</returns>
+    public Document Add(string name, SparseVector value) => Add(name, FieldValue.FromSparse(value));
 
     /// <summary>Adds a vector value.</summary>
     /// <param name="name">The field name.</param>

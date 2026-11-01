@@ -564,6 +564,10 @@ public sealed class DocValueTests
         // A length prefix that fits the document before the prefix itself is read, but not after (found by the stored-source fuzz target).
         string path = Path.Combine(Path.GetDirectoryName(ThisFile())!, "..", "..", "testdata", "fuzz", "stored-block-length.bin");
         DocValuesTarget.Run(File.ReadAllBytes(path), 2);
+
+        // A field-name table that lists an empty name (found by the same target once sparse fields joined its corpus).
+        path = Path.Combine(Path.GetDirectoryName(ThisFile())!, "..", "..", "testdata", "fuzz", "stored-empty-field-name.bin");
+        DocValuesTarget.Run(File.ReadAllBytes(path), 2);
     }
 
     private static string ThisFile([System.Runtime.CompilerServices.CallerFilePath] string path = "") => path;
