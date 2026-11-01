@@ -107,6 +107,14 @@ public sealed class BlockMaxWandScorer : Scorer
     /// <summary>Whether block bounds are used to skip runs of documents. Default <see langword="true"/>; false leaves only the whole-list bounds of plain WAND.</summary>
     public bool UseBlockMax { get; init; } = true;
 
+    /// <summary>
+    /// When the clauses' postings together hold at most this many documents per clause, every document is returned without
+    /// pivoting or block bounds: a WAND round orders and bounds every clause, which costs more than scoring a few hundred postings
+    /// of each (a fuzzy expansion has dozens of short lists). The documents and scores returned are the same either way.
+    /// Default 512; 0 always prunes.
+    /// </summary>
+    public long ExhaustiveCostPerClause { get; init; } = 512;
+
     /// <summary>How many documents the iterator has returned, that is, how many a collector scored.</summary>
     public long DocumentsReturned { get; private set; }
 
@@ -251,6 +259,28 @@ public sealed class BlockMaxWandScorer : Scorer
 
     private int Find()
     {
+        if (_cost <= ExhaustiveCostPerClause * _clauses.Length)
+        {
+            // A plain disjunction: the smallest current document of any clause.
+            int smallest = NoMoreDocs;
+            for (int i = 0; i < _docs.Length; i++)
+            {
+                if (_docs[i] < smallest)
+                {
+                    smallest = _docs[i];
+                }
+            }
+
+            if (smallest == NoMoreDocs)
+            {
+                return Finish();
+            }
+
+            _current = smallest;
+            DocumentsReturned++;
+            return smallest;
+        }
+
         int n;
         while (true)
         {

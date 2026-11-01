@@ -176,9 +176,13 @@ public sealed class TextMergeAndWandTests
                 var exhaustiveTop = expected.Select(static kv => (Doc: kv.Key, Score: kv.Value)).OrderByDescending(static x => x.Score).ThenBy(static x => x.Doc).Take(k).ToList();
                 exhaustiveDocs += union.Count;
 
+                // The plain disjunction used for short lists returns the same top documents with the same scores.
+                List<(int Doc, float Score)> plain = TopK(new BlockMaxWandScorer(Build(PostingsFeatures.Frequencies)) { ExhaustiveCostPerClause = long.MaxValue / 64 }, k);
+                Assert.Equal(exhaustiveTop.Select(static x => (x.Doc, x.Score)), plain);
+
                 foreach (bool blockMax in new[] { true, false })
                 {
-                    var wand = new BlockMaxWandScorer(Build(PostingsFeatures.Frequencies)) { UseBlockMax = blockMax };
+                    var wand = new BlockMaxWandScorer(Build(PostingsFeatures.Frequencies)) { UseBlockMax = blockMax, ExhaustiveCostPerClause = 0 };
                     List<(int Doc, float Score)> top = TopK(wand, k);
                     Assert.Equal(exhaustiveTop.Count, top.Count);
                     for (int i = 0; i < top.Count; i++)
@@ -253,8 +257,9 @@ public sealed class TextMergeAndWandTests
             field.TryGetTerm(t, out TermInfo info);
             return (Scorer)new PostingsScorer(field.GetPostings(info, PostingsFeatures.Frequencies), field, Bm25Like(1f, 10f));
         })];
-        var a = new BlockMaxWandScorer(Make());
-        var b = new BlockMaxWandScorer(Make()) { UseBlockMax = false };
+        var a = new BlockMaxWandScorer(Make()) { ExhaustiveCostPerClause = 0 };
+        var b = new BlockMaxWandScorer(Make()) { UseBlockMax = false, ExhaustiveCostPerClause = 0 };
+        var c = new BlockMaxWandScorer(Make()) { ExhaustiveCostPerClause = long.MaxValue / 64 };
         var rng = new Random(2);
         int doc = -1;
         while (doc != DocIdSetIterator.NoMoreDocs)
@@ -262,10 +267,13 @@ public sealed class TextMergeAndWandTests
             int target = doc + 1 + rng.Next(50);
             int da = a.Advance(target);
             int db = b.Advance(target);
+            int dc = c.Advance(target);
             Assert.Equal(db, da);
+            Assert.Equal(db, dc);
             if (da != DocIdSetIterator.NoMoreDocs)
             {
                 Assert.Equal(b.Score(), a.Score());
+                Assert.Equal(b.Score(), c.Score());
             }
 
             doc = da;
