@@ -94,13 +94,32 @@ public sealed class OneIndexEngine : ITextEngine
         _writer!.Commit();
     }
 
+    private int SegmentsNow()
+    {
+        using IndexSnapshot s = _writer!.OpenSnapshot();
+        return s.SegmentCount;
+    }
+
     /// <inheritdoc/>
     public void OpenSearcher()
     {
         // Query rows run on a settled index, so pending merges finish first.
-        _writer!.WaitForMerges();
+        // A finished merge is installed by the next commit, so settle by committing until a round installs nothing new. Lucene.NET
+        // installs merges as they finish; this is the same settled state.
+        for (int round = 0; round < 8; round++)
+        {
+            _writer!.WaitForMerges();
+            int before = SegmentsNow();
+            _writer.Commit();
+            if (SegmentsNow() == before)
+            {
+                break;
+            }
+        }
+
         _snapshot?.Dispose();
         _snapshot = _writer!.OpenSnapshot();
+        Console.Error.WriteLine("segments: " + string.Join(",", Enumerable.Range(0, _snapshot.SegmentCount).Select(i => _snapshot.GetSegment(i).MaxDoc)));
         _context = SnapshotSearch.CreateContext(_snapshot);
         // Hits carry document numbers; the identifier of each comes from the stored source, so a reopened index needs no side table.
         _idOf = new string[_context.MaxDoc];
