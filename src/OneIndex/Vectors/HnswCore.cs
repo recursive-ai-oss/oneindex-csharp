@@ -136,6 +136,7 @@ internal abstract class NodeScorer
 
     /// <summary>The distance between two nodes.</summary>
     public abstract float Between(int a, int b);
+
 }
 
 /// <summary>Full-precision scoring over a <see cref="VectorValues"/>.</summary>
@@ -186,6 +187,7 @@ internal sealed class HnswScratch
     public static HnswScratch Current => s_current ??= new HnswScratch();
 
     private float[] _query = [];
+    private QuantizedNodeScorer? _quantized;
     private FloatNodeScorer? _dot;
     private FloatNodeScorer? _l2;
 
@@ -199,6 +201,9 @@ internal sealed class HnswScratch
 
         return _query;
     }
+
+    /// <summary>The thread's scorer over compressed vectors.</summary>
+    public QuantizedNodeScorer QuantizedScorer => _quantized ??= new QuantizedNodeScorer();
 
     /// <summary>The thread's scorer for a distance kind.</summary>
     public FloatNodeScorer Scorer(DistanceKind kind) => kind == DistanceKind.NegativeDot ? (_dot ??= new FloatNodeScorer(kind)) : (_l2 ??= new FloatNodeScorer(kind));

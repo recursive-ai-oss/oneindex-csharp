@@ -26,10 +26,15 @@ public sealed class MappedMember
     /// <param name="hnswM">HNSW's M for a vector field.</param>
     /// <param name="efConstruction">HNSW's efConstruction for a vector field.</param>
     /// <param name="flatThreshold">The segment size below which a vector field is searched exactly.</param>
+    /// <param name="quantization">The compressed copy of a vector field.</param>
+    /// <param name="oversample">The oversample of a quantized vector field; 0 for the codec's default.</param>
     /// <param name="from">The text member a vector field is embedded from automatically, or <see langword="null"/>.</param>
     public MappedMember(string name, FieldType type, bool multi, bool indexed, bool column, bool facet, bool fullText, bool isId, float boost, string? analyzer,
-        int dimensions = 0, Vectors.VectorMetric metric = Vectors.VectorMetric.Cosine, int hnswM = FieldDefinition.DefaultHnswM, int efConstruction = FieldDefinition.DefaultEfConstruction, int flatThreshold = FieldDefinition.DefaultFlatThreshold, string? from = null)
+        int dimensions = 0, Vectors.VectorMetric metric = Vectors.VectorMetric.Cosine, int hnswM = FieldDefinition.DefaultHnswM, int efConstruction = FieldDefinition.DefaultEfConstruction, int flatThreshold = FieldDefinition.DefaultFlatThreshold,
+        Vectors.VectorQuantization quantization = Vectors.VectorQuantization.None, float oversample = 0, string? from = null)
     {
+        Quantization = quantization;
+        Oversample = oversample;
         From = from;
         Dimensions = dimensions;
         Metric = metric;
@@ -96,6 +101,12 @@ public sealed class MappedMember
     /// <summary>The segment size below which a vector field is searched exactly.</summary>
     public int FlatThreshold { get; }
 
+    /// <summary>The compressed copy of a vector field.</summary>
+    public Vectors.VectorQuantization Quantization { get; }
+
+    /// <summary>The oversample of a quantized vector field; 0 for the codec's default.</summary>
+    public float Oversample { get; }
+
     internal FieldDefinition ToDefinition()
     {
         if (Type == FieldType.Text)
@@ -111,7 +122,7 @@ public sealed class MappedMember
 
         if (Type == FieldType.Vector)
         {
-            return new FieldDefinition(Name, FieldType.Vector) { Dimensions = Dimensions, Metric = Metric, HnswM = HnswM, EfConstruction = EfConstruction, FlatThreshold = FlatThreshold };
+            return new FieldDefinition(Name, FieldType.Vector) { Dimensions = Dimensions, Metric = Metric, HnswM = HnswM, EfConstruction = EfConstruction, FlatThreshold = FlatThreshold, Quantization = Quantization, Oversample = Oversample };
         }
 
         return new FieldDefinition(Name, Type) { Multi = Multi, Indexed = Indexed, Column = Column, Facet = Facet };

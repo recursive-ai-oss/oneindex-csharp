@@ -15,7 +15,7 @@ public static class Workload
         .Keyword("tag")
         .Text("body")
         .Integral("n")
-        .Add(new FieldDefinition("v", FieldType.Vector) { Dimensions = VectorDimensions, FlatThreshold = 3, HnswM = 4, EfConstruction = 16 })
+        .Add(new FieldDefinition("v", FieldType.Vector) { Dimensions = VectorDimensions, FlatThreshold = 3, HnswM = 4, EfConstruction = 16, Quantization = VectorQuantization.Scalar4 })
         .Build();
 
     /// <summary>The length of the vector every document carries; its content is a function of the document's number.</summary>
