@@ -236,6 +236,26 @@ public static class SearchTool
             Def("exists", () => Node(w, "exists", () => Field(w, notText), required: ["field"]));
         }
 
+        List<string> geo = [.. schema.Fields.Where(static f => f.Type == FieldType.GeoPoint && f.Indexed && f.Column).Select(static f => f.Name)];
+        if (geo.Count > 0)
+        {
+            Def("geoRadius", () => Node(w, "geoRadius", () =>
+            {
+                Field(w, geo);
+                Num(w, "lat", -90, 90, "The centre latitude in degrees.");
+                Num(w, "lng", -180, 180, "The centre longitude in degrees.");
+                Num(w, "meters", 0, null, "The radius in metres.");
+            }, required: ["field", "lat", "lng", "meters"]));
+            Def("geoBoundingBox", () => Node(w, "geoBoundingBox", () =>
+            {
+                Field(w, geo);
+                Num(w, "north", -90, 90, "The northern edge in degrees.");
+                Num(w, "south", -90, 90, "The southern edge in degrees, not above north.");
+                Num(w, "west", -180, 180, "The western edge in degrees. A west edge greater than the east edge crosses the antimeridian.");
+                Num(w, "east", -180, 180, "The eastern edge in degrees.");
+            }, required: ["field", "north", "south", "west", "east"]));
+        }
+
         Def("bool", () => Node(w, "bool", () =>
         {
             foreach (string clause in ClauseNames)
@@ -340,6 +360,18 @@ public static class SearchTool
         Int(w, "limit", 0, QueryJson.MaxWindow, "The most hits to return. Default 20; limit + offset is at most 10000.");
         Int(w, "offset", 0, QueryJson.MaxWindow, "How many of the best hits to skip. Default 0.");
         Typed(w, "countExactly", "boolean", "Count every match instead of giving a lower bound. Slower. Default false.");
+        List<string> sortable = [.. schema.Fields.Where(static f => f.Column && f.Type is FieldType.Keyword or FieldType.Integral or FieldType.Fractional or FieldType.Date or FieldType.Bool).Select(static f => f.Name)];
+        w.WriteStartObject("sort");
+        w.WriteString("type", "array");
+        w.WriteStartObject("items");
+        w.WriteString("type", "string");
+        w.WriteNumber("maxLength", QueryJson.MaxStringLength);
+        w.WriteEndObject();
+        w.WriteNumber("minItems", 1);
+        w.WriteNumber("maxItems", 16);
+        w.WriteString("description", "Orders the hits instead of by relevance. Each key is a field name with :asc or :desc (and :first to put documents without a value first), applied in turn; ties go to the next key. Fields: " + string.Join(", ", sortable) + ". _score:desc sorts by relevance." + (geo.Count > 0 ? " _geoPoint(lat, lng):asc sorts by distance from a point." : string.Empty));
+        w.WriteEndObject();
+        Str(w, "searchAfter", "The cursor of the last hit of the previous page of a sorted search; returns the hits after it. Needs sort; do not combine with offset.");
         w.WriteStartObject("highlight");
         w.WriteString("description", "Snippet settings: true for the defaults, or an object.");
         w.WriteStartArray("oneOf");
@@ -469,6 +501,20 @@ public static class SearchTool
         w.WriteString("type", "string");
         w.WriteString("pattern", DatePattern);
         w.WriteString("description", "A UTC date or time such as 2024-01-31 or 2024-01-31T10:00:00Z.");
+        w.WriteEndObject();
+    }
+
+    private static void Num(Utf8JsonWriter w, string name, double min, double? max, string description)
+    {
+        w.WriteStartObject(name);
+        w.WriteString("type", "number");
+        w.WriteNumber("minimum", min);
+        if (max is { } m)
+        {
+            w.WriteNumber("maximum", m);
+        }
+
+        w.WriteString("description", description);
         w.WriteEndObject();
     }
 

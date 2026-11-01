@@ -37,7 +37,7 @@ public sealed class PointSegmentCodec : ISegmentCodec
         var entries = new Dictionary<string, PointEntries>(StringComparer.Ordinal);
         foreach (FieldDefinition f in fields)
         {
-            entries[f.Name] = new PointEntries();
+            entries[f.Name] = new PointEntries(f.Type == FieldType.GeoPoint);
         }
 
         for (int d = 0; d < context.Documents.Count; d++)
@@ -52,7 +52,15 @@ public sealed class PointSegmentCodec : ISegmentCodec
                 if (entries.TryGetValue(v.Name, out PointEntries? e))
                 {
                     context.Schema.TryGetField(v.Name, out FieldDefinition? def);
-                    e.Add(NumericTerms.Ordered(def!.Type, v.Value), d);
+                    if (def!.Type == FieldType.GeoPoint)
+                    {
+                        (double lat, double lon) = v.Value.AsGeoPoint();
+                        e.Add(GeoKey.Interleave(GeoKey.QuantizeLatitude(lat), GeoKey.QuantizeLongitude(lon)), d);
+                    }
+                    else
+                    {
+                        e.Add(NumericTerms.Ordered(def.Type, v.Value), d);
+                    }
                 }
             }
         }
@@ -76,7 +84,7 @@ public sealed class PointSegmentCodec : ISegmentCodec
         int[] docs = new int[PointFormat.LeafEntries];
         foreach (FieldDefinition f in fields)
         {
-            var e = new PointEntries();
+            var e = new PointEntries(f.Type == FieldType.GeoPoint);
             for (int s = 0; s < context.Sources.Count; s++)
             {
                 MergeSource source = context.Sources[s];
@@ -116,7 +124,7 @@ public sealed class PointSegmentCodec : ISegmentCodec
 
     private static List<FieldDefinition> PointFields(Schema schema)
     {
-        var fields = schema.Fields.Where(f => f.Indexed && NumericTerms.IsNumeric(f.Type)).ToList();
+        var fields = schema.Fields.Where(f => f.Indexed && (NumericTerms.IsNumeric(f.Type) || f.Type == FieldType.GeoPoint)).ToList();
         fields.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
         return fields;
     }
@@ -147,6 +155,7 @@ public sealed class PointSegmentCodec : ISegmentCodec
             byte[] nameBytes = Encoding.UTF8.GetBytes(name);
             directory.WriteVarUInt((uint)nameBytes.Length);
             directory.Write(nameBytes);
+            directory.WriteByte((byte)(entries.Geo ? 1 : 0));
             directory.WriteVarUInt((uint)entries.Count);
             directory.WriteUInt64((ulong)entries.MinValue);
             directory.WriteUInt64((ulong)entries.MaxValue);
@@ -175,6 +184,11 @@ internal sealed class PointEntries
 {
     private (long Value, int Doc)[] _items = new (long, int)[64];
     private int _count;
+
+    public PointEntries(bool geo) => Geo = geo;
+
+    /// <summary>Whether the values are geo keys (<see cref="GeoKey"/>), which also record each leaf's bounding cells.</summary>
+    public bool Geo { get; }
 
     public int Count => _count;
 
@@ -222,6 +236,11 @@ internal sealed class PointEntries
             BinaryPrimitives.WriteUInt16LittleEndian(r[20..], (ushort)n);
             r[22] = (byte)vw;
             r[23] = (byte)dw;
+            if (Geo)
+            {
+                WriteLeafBox(r[24..], from, n);
+            }
+
             int vBytes = (int)IntStreamFormat.PackedBytes(n, vw);
             Array.Clear(pack, 0, vBytes + 8);
             for (int i = 0; i < n; i++)
@@ -244,6 +263,28 @@ internal sealed class PointEntries
         destination.WriteUInt32((uint)data.Length);
         destination.Write(records);
         destination.Write(data.Span);
+    }
+
+    // The leaf's bounding cells (top 16 bits of each coordinate quantum), four little-endian u16: latitude low and high, longitude low and high.
+    private void WriteLeafBox(Span<byte> destination, int from, int n)
+    {
+        long latLo = long.MaxValue;
+        long latHi = 0;
+        long lngLo = long.MaxValue;
+        long lngHi = 0;
+        for (int i = 0; i < n; i++)
+        {
+            GeoKey.Deinterleave(_items[from + i].Value, out long lat, out long lng);
+            latLo = Math.Min(latLo, lat);
+            latHi = Math.Max(latHi, lat);
+            lngLo = Math.Min(lngLo, lng);
+            lngHi = Math.Max(lngHi, lng);
+        }
+
+        BinaryPrimitives.WriteUInt16LittleEndian(destination, (ushort)(latLo >> GeoKey.CellShift));
+        BinaryPrimitives.WriteUInt16LittleEndian(destination[2..], (ushort)(latHi >> GeoKey.CellShift));
+        BinaryPrimitives.WriteUInt16LittleEndian(destination[4..], (ushort)(lngLo >> GeoKey.CellShift));
+        BinaryPrimitives.WriteUInt16LittleEndian(destination[6..], (ushort)(lngHi >> GeoKey.CellShift));
     }
 
     private sealed class Comparer : IComparer<(long Value, int Doc)>
@@ -352,6 +393,18 @@ internal sealed class PointPartReader : ISegmentPartReader, IPointSource
             }
 
             previous = field;
+            bool geo = false;
+            if (version >= 2)
+            {
+                byte kind = cursor.ReadByte();
+                if (kind > 1)
+                {
+                    throw new CorruptIndexException(name, $"field '{field}' has an unknown tree kind {kind}");
+                }
+
+                geo = kind == 1;
+            }
+
             ulong entries = cursor.ReadVarUInt();
             long min = cursor.ReadInt64();
             long max = cursor.ReadInt64();
@@ -363,7 +416,7 @@ internal sealed class PointPartReader : ISegmentPartReader, IPointSource
             }
 
             expected = (long)(start + size);
-            _fields[field] = SegmentPoints.Open(file, field, maxDoc, (long)start, (long)size, (long)entries, min, max, cancellationToken);
+            _fields[field] = SegmentPoints.Open(file, field, geo, maxDoc, (long)start, (long)size, (long)entries, min, max, cancellationToken);
         }
 
         if (expected != (long)directoryAt || cursor.Remaining != 0)
@@ -378,7 +431,7 @@ internal sealed class PointPartReader : ISegmentPartReader, IPointSource
 /// reads each from storage and returns the matching documents in increasing order. A document with several values in the range is
 /// returned once. Safe for concurrent use.
 /// </summary>
-public sealed class SegmentPoints : IPointIndexReader
+public sealed class SegmentPoints : IGeoPointIndexReader
 {
     private readonly IRangeReader _file;
     private readonly int _maxDoc;
@@ -386,8 +439,9 @@ public sealed class SegmentPoints : IPointIndexReader
     private readonly byte[] _records;
     private readonly int _leafCount;
 
-    private SegmentPoints(IRangeReader file, int maxDoc, long dataStart, byte[] records, int leafCount, long entries, long min, long max)
+    private SegmentPoints(IRangeReader file, bool geo, int maxDoc, long dataStart, byte[] records, int leafCount, long entries, long min, long max)
     {
+        IsGeo = geo;
         _file = file;
         _maxDoc = maxDoc;
         _dataStart = dataStart;
@@ -407,11 +461,14 @@ public sealed class SegmentPoints : IPointIndexReader
     /// <summary>The largest indexed value.</summary>
     public long MaxValue { get; }
 
+    /// <summary>Whether the values are geo keys rather than ordered numbers.</summary>
+    public bool IsGeo { get; }
+
     internal int LeafCount => _leafCount;
 
     internal string FileName => _file.Name;
 
-    internal static SegmentPoints Open(IRangeReader file, string field, int maxDoc, long start, long size, long entries, long min, long max, CancellationToken cancellationToken)
+    internal static SegmentPoints Open(IRangeReader file, string field, bool geo, int maxDoc, long start, long size, long entries, long min, long max, CancellationToken cancellationToken)
     {
         string name = file.Name;
         if (size < PointFormat.TreeHeader)
@@ -454,6 +511,18 @@ public sealed class SegmentPoints : IPointIndexReader
                 throw new CorruptIndexException(name, $"leaf {l} of '{field}' has a value width that disagrees with its range");
             }
 
+            if (geo)
+            {
+                if (lmax > ((1L << (2 * GeoKey.Bits)) - 1) || lmin < 0 || LeafBox(r).LatLo > LeafBox(r).LatHi || LeafBox(r).LngLo > LeafBox(r).LngHi)
+                {
+                    throw new CorruptIndexException(name, $"leaf {l} of '{field}' has an invalid geo key or bounding box");
+                }
+            }
+            else if (r[24..].ContainsAnyExcept((byte)0))
+            {
+                throw new CorruptIndexException(name, $"leaf {l} of '{field}' has nonzero reserved bytes");
+            }
+
             dataOffset += IntStreamFormat.PackedBytes(n, vw) + IntStreamFormat.PackedBytes(n, dw);
             previousMax = lmax;
             total += n;
@@ -464,7 +533,7 @@ public sealed class SegmentPoints : IPointIndexReader
             throw new CorruptIndexException(name, $"the leaves of '{field}' do not match its directory entry");
         }
 
-        return new SegmentPoints(file, maxDoc, start + PointFormat.TreeHeader + recordBytes, records, (int)leaves, entries, min, max);
+        return new SegmentPoints(file, geo, maxDoc, start + PointFormat.TreeHeader + recordBytes, records, (int)leaves, entries, min, max);
     }
 
     /// <inheritdoc/>
@@ -546,6 +615,139 @@ public sealed class SegmentPoints : IPointIndexReader
         }
 
         return new SortedDocIterator(list, n, words);
+    }
+
+    // The leaf's bounding cells: the top 16 bits of the latitude and longitude quanta of its points.
+    private static GeoBox LeafBox(ReadOnlySpan<byte> record)
+        => new(BinaryPrimitives.ReadUInt16LittleEndian(record[24..]), BinaryPrimitives.ReadUInt16LittleEndian(record[26..]), BinaryPrimitives.ReadUInt16LittleEndian(record[28..]), BinaryPrimitives.ReadUInt16LittleEndian(record[30..]));
+
+    /// <inheritdoc/>
+    public DocIdSetIterator GetCandidates(double south, double north, double west, double east)
+    {
+        if (!IsGeo)
+        {
+            throw new InvalidOperationException($"'{_file.Name}' holds numeric points, not geo points.");
+        }
+
+        var boxes = new List<GeoBox>(2);
+        GeoBox.FromDegrees(south, north, west, east, boxes);
+        long bound = 0;
+        for (int l = 0; l < _leafCount; l++)
+        {
+            if (Touches(l, boxes))
+            {
+                bound += LeafCount_(l);
+            }
+        }
+
+        if (bound == 0)
+        {
+            return new SortedDocIterator([], 0, null);
+        }
+
+        bool bitmap = bound * 32 >= _maxDoc;
+        ulong[]? words = bitmap ? new ulong[(_maxDoc + 63) >> 6] : null;
+        int[] list = bitmap ? [] : new int[bound];
+        int n = 0;
+        long[] values = ArrayPool<long>.Shared.Rent(PointFormat.LeafEntries);
+        int[] docs = ArrayPool<int>.Shared.Rent(PointFormat.LeafEntries);
+        try
+        {
+            for (int l = 0; l < _leafCount; l++)
+            {
+                if (!Touches(l, boxes))
+                {
+                    continue;
+                }
+
+                int count = ReadLeaf(l, values, docs);
+                bool inside = Inside(l, boxes);
+                for (int i = 0; i < count; i++)
+                {
+                    if (!inside)
+                    {
+                        GeoKey.Deinterleave(values[i], out long lat, out long lng);
+                        if (!AnyContains(boxes, lat, lng))
+                        {
+                            continue;
+                        }
+                    }
+
+                    int doc = docs[i];
+                    if (doc >= _maxDoc)
+                    {
+                        throw new CorruptIndexException(_file.Name, "a point names a document outside the segment");
+                    }
+
+                    if (words is not null)
+                    {
+                        words[doc >> 6] |= 1UL << (doc & 63);
+                    }
+                    else
+                    {
+                        list[n++] = doc;
+                    }
+                }
+            }
+        }
+        finally
+        {
+            ArrayPool<long>.Shared.Return(values);
+            ArrayPool<int>.Shared.Return(docs);
+        }
+
+        return new SortedDocIterator(list, n, words);
+    }
+
+    private static bool AnyContains(List<GeoBox> boxes, long lat, long lng)
+    {
+        foreach (GeoBox b in boxes)
+        {
+            if (b.Contains(lat, lng))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // A leaf can hold a point in a box only if its cell box and the box overlap.
+    private bool Touches(int leaf, List<GeoBox> boxes)
+    {
+        GeoBox cell = LeafBox(_records.AsSpan(leaf * PointFormat.RecordSize, PointFormat.RecordSize));
+        long latLo = cell.LatLo << GeoKey.CellShift;
+        long latHi = (cell.LatHi << GeoKey.CellShift) | ((1L << GeoKey.CellShift) - 1);
+        long lngLo = cell.LngLo << GeoKey.CellShift;
+        long lngHi = (cell.LngHi << GeoKey.CellShift) | ((1L << GeoKey.CellShift) - 1);
+        foreach (GeoBox b in boxes)
+        {
+            if (latLo <= b.LatHi && latHi >= b.LatLo && lngLo <= b.LngHi && lngHi >= b.LngLo)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Every point of the leaf is in one box when the leaf's whole cell box is: no per-point test needed.
+    private bool Inside(int leaf, List<GeoBox> boxes)
+    {
+        GeoBox cell = LeafBox(_records.AsSpan(leaf * PointFormat.RecordSize, PointFormat.RecordSize));
+        long latLo = cell.LatLo << GeoKey.CellShift;
+        long latHi = (cell.LatHi << GeoKey.CellShift) | ((1L << GeoKey.CellShift) - 1);
+        long lngLo = cell.LngLo << GeoKey.CellShift;
+        long lngHi = (cell.LngHi << GeoKey.CellShift) | ((1L << GeoKey.CellShift) - 1);
+        foreach (GeoBox b in boxes)
+        {
+            if (latLo >= b.LatLo && latHi <= b.LatHi && lngLo >= b.LngLo && lngHi <= b.LngHi)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>Reads a leaf's pairs, sorted by value then document.</summary>

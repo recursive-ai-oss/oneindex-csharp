@@ -41,6 +41,9 @@ public enum RowKind
 
     /// <summary>Terms ordered by the numeric column.</summary>
     Sort,
+
+    /// <summary>Documents within a radius of a point (synthesized coordinates).</summary>
+    Geo,
 }
 
 /// <summary>Reads the Wikipedia abstract corpus written by <c>tools/wikipedia_abstracts.py</c>.</summary>
@@ -203,6 +206,12 @@ public static partial class QueryGenerator
             [RowKind.Facets] = Make(() => new FacetQuery(PickTerms(2))),
             [RowKind.Stats] = Make(() => new StatsQuery(PickTerms(2))),
             [RowKind.Sort] = Make(() => new SortedQuery(PickTerms(2))),
+            // A centre of the synthetic clusters (or a random place) and a radius from 1 km to 1,000 km, log-uniform.
+            [RowKind.Geo] = Make(() =>
+            {
+                var (la, lo) = rng.Next(4) == 0 ? (Math.Asin((rng.NextDouble() * 2) - 1) * 180 / Math.PI, (rng.NextDouble() * 360) - 180) : GeoSynth.Centres[rng.Next(GeoSynth.Centres.Length)];
+                return new GeoQuery(la, lo, 1000 * Math.Pow(1000, rng.NextDouble()));
+            }),
         };
         return result;
     }
@@ -229,6 +238,7 @@ public static partial class QueryGenerator
                     case FacetQuery fc: Strings(w, "terms", fc.Terms); break;
                     case StatsQuery sq: Strings(w, "terms", sq.Terms); break;
                     case SortedQuery so: Strings(w, "terms", so.Terms); break;
+                    case GeoQuery g: w.WriteNumber("lat", g.Latitude); w.WriteNumber("lng", g.Longitude); w.WriteNumber("meters", g.RadiusMeters); break;
                 }
 
                 w.WriteEndObject();

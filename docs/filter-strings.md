@@ -21,6 +21,8 @@ condition := field "=" value | field "!=" value
            | field [ NOT ] IN "[" [ value ( "," value )* ] "]"
            | field [ NOT ] EXISTS
            | field IS [ NOT ] ( NULL | EMPTY )
+           | "_geoRadius" "(" [ field "," ] lat "," lng "," meters ")"
+           | "_geoBoundingBox" "(" [ field "," ] "[" lat "," lng "]" "," "[" lat "," lng "]" ")"
 field     := word | quoted
 value     := word | quoted
 quoted    := '...' | "..."          inside, \\ \" \' are the escapes
@@ -50,11 +52,12 @@ Comparing with a quoted number or date (`Total > "100"`) is accepted; a value th
 - `field IN [a, b]` is `field = a OR field = b`; an empty list matches nothing.
 - `field EXISTS` holds when the document has a value. `IS NULL` and `IS EMPTY` hold when it has none: a document never stores an explicit null, and empty strings and empty arrays are not indexed, so the two tests are the same as `NOT ... EXISTS` (Meilisearch distinguishes null from empty; this index does not). `IS NOT NULL` and `IS NOT EMPTY` are `EXISTS`.
 - `field a TO b` is `field >= a AND field <= b` (both bounds included).
-- `CONTAINS`, `STARTS WITH`, `_geoRadius` and array-form filters are not supported yet.
+- `_geoRadius(lat, lng, meters)` holds for documents with a point within the distance; `_geoBoundingBox([topRightLat, topRightLng], [bottomLeftLat, bottomLeftLng])` for documents with a point in the rectangle, crossing the antimeridian when the bottom left longitude is greater than the top right one. The geo field is named first when the schema has several (`_geoRadius(Location, 45.47, 9.18, 2000)`); with one searchable geo field it can be left out. The names are case-insensitive; numbers are plain decimals, latitude -90 to 90, longitude -180 to 180, radius not negative, and errors point at the number. Details: [geo.md](geo.md). They combine with `AND`, `OR` and `NOT` like any condition. `Print` always writes the field name and numbers in shortest round-trip form.
+- `CONTAINS`, `STARTS WITH` and array-form filters are not supported yet.
 
 ## Query objects
 
-`AND` is a boolean query of `Filter` clauses, `OR` of `Should` clauses with `MinimumShouldMatch` 1, `NOT x` is `[Filter MatchAll, MustNot x]`. Conditions are `TermQuery` (keywords) and `RangeQuery` (everything else; `=` is a range with equal bounds; `EXISTS` a range with no bounds). A chain `a AND b AND c` is one boolean query with three clauses; parentheses make a nested one.
+`AND` is a boolean query of `Filter` clauses, `OR` of `Should` clauses with `MinimumShouldMatch` 1, `NOT x` is `[Filter MatchAll, MustNot x]`. Conditions are `TermQuery` (keywords), `GeoRadiusQuery` and `GeoBoundingBoxQuery` (the geo functions) and `RangeQuery` (everything else; `=` is a range with equal bounds; `EXISTS` a range with no bounds). A chain `a AND b AND c` is one boolean query with three clauses; parentheses make a nested one.
 
 ## Errors and printing
 

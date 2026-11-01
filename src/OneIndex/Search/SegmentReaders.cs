@@ -189,6 +189,22 @@ public interface IPointIndexReader
     DocIdSetIterator GetRange(long lower, long upper);
 }
 
+/// <summary>The point index of a geo point field: a lookup of the documents with a point in a latitude and longitude rectangle.</summary>
+public interface IGeoPointIndexReader : IPointIndexReader
+{
+    /// <summary>
+    /// Iterates the documents that may have a point in a rectangle, in increasing document order. The answer is a superset that never misses a
+    /// point inside the rectangle and may include points within a few millimetres outside it, so the caller confirms each candidate against the exact
+    /// coordinates in the column.
+    /// </summary>
+    /// <param name="south">The southern edge in degrees.</param>
+    /// <param name="north">The northern edge in degrees.</param>
+    /// <param name="west">The western edge in degrees; greater than <paramref name="east"/> when the rectangle crosses the antimeridian.</param>
+    /// <param name="east">The eastern edge in degrees.</param>
+    /// <returns>A new iterator.</returns>
+    DocIdSetIterator GetCandidates(double south, double north, double west, double east);
+}
+
 /// <summary>Maps doubles to 64-bit integers that compare in the same order, so one integer index serves both kinds.</summary>
 public static class SortableBits
 {

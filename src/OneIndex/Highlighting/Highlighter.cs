@@ -154,6 +154,10 @@ public sealed class HighlightTerms
         public override int VisitMatchAll(MatchAllQuery query) => 0;
 
         public override int VisitRegex(RegexQuery query) => 0;
+
+        public override int VisitGeoRadius(GeoRadiusQuery query) => 0;
+
+        public override int VisitGeoBoundingBox(GeoBoundingBoxQuery query) => 0;
     }
 }
 

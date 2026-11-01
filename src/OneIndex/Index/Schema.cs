@@ -452,10 +452,10 @@ public sealed class SchemaBuilder
     /// <returns>This builder.</returns>
     public SchemaBuilder Bool(string name) => Add(new FieldDefinition(name, FieldType.Bool) { Column = true });
 
-    /// <summary>Adds a geo point field.</summary>
+    /// <summary>Adds a geo point field, indexed for radius and bounding box queries and kept in a column for distance sorting.</summary>
     /// <param name="name">The field name.</param>
     /// <returns>This builder.</returns>
-    public SchemaBuilder GeoPoint(string name) => Add(new FieldDefinition(name, FieldType.GeoPoint));
+    public SchemaBuilder GeoPoint(string name) => Add(new FieldDefinition(name, FieldType.GeoPoint) { Column = true });
 
     /// <summary>Adds a stored-only bytes field.</summary>
     /// <param name="name">The field name.</param>

@@ -53,7 +53,7 @@ public static class CodecRegistry
 
         new(SegmentParts.Columns, 1),
 
-        new(SegmentParts.Points, 1),
+        new(SegmentParts.Points, 2),
 
         new(SegmentParts.Stored, 1),
 
