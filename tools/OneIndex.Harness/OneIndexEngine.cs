@@ -148,6 +148,7 @@ public sealed class OneIndexEngine : ITextEngine
             GeoQuery g => new GeoRadiusQuery("loc", g.Latitude, g.Longitude, g.RadiusMeters),
             PrefixQuery px => With(px.Required, new global::OneIndex.Search.PrefixQuery("text", px.Prefix)),
             FuzzyQuery fz => new global::OneIndex.Search.FuzzyQuery("text", fz.Term) { MaxEdits = fz.MaxEdits },
+            TypoQuery ty when TypoMatched && ty.Prefix => With(ty.Required, LuceneShaped(ty.Word)),
             TypoQuery ty => With(ty.Required, new TypoTermQuery(["text"], ty.Word) { MaxTypos = new TypoSettings().Budget(ty.Word.Length), Prefix = ty.Prefix }),
             _ => throw new NotSupportedException(query.GetType().Name),
         };
@@ -255,6 +256,17 @@ public sealed class OneIndexEngine : ITextEngine
     }
 
     // The required terms must all appear; the last clause is the one whose expansion is being measured.
+    // Information row: ONEINDEX_TYPO_MATCHED=1 runs the as-you-type typo row with the match set of the comparator's query (the word as a
+    // prefix, or the word within its typo budget with the first character fixed), which has no typos in the beginning of longer words.
+    private static readonly bool TypoMatched = Environment.GetEnvironmentVariable("ONEINDEX_TYPO_MATCHED") == "1";
+
+    private static BooleanQuery LuceneShaped(string word)
+    {
+        int edits = new TypoSettings().Budget(word.Length);
+        Query fuzzy = edits == 0 ? new TermQuery("text", word) : new global::OneIndex.Search.FuzzyQuery("text", word) { MaxEdits = edits, PrefixLength = 1 };
+        return new BooleanQuery([new BooleanClause(new global::OneIndex.Search.PrefixQuery("text", word), Occur.Should), new BooleanClause(fuzzy, Occur.Should)]);
+    }
+
     private static BooleanQuery With(string[] required, Query last)
         => new([.. required.Select(t => new BooleanClause(new TermQuery("text", t), Occur.Must)), new BooleanClause(last, Occur.Must)]);
 
