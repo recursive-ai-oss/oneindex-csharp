@@ -29,6 +29,7 @@ internal static class Program
         ["filter"] = QueryTextTargets.RunFilter,
         ["queryjson"] = QueryTextTargets.RunJson,
         ["dynamic"] = DynamicTarget.Run,
+        ["wordpiece"] = WordPieceTarget.Run,
     };
 
     private static int Main(string[] args)
@@ -88,6 +89,9 @@ internal static class Program
                     break;
                 case "dynamic":
                     DynamicTarget.WriteSeeds(args[2]);
+                    break;
+                case "wordpiece":
+                    WordPieceTarget.WriteSeeds(args[2]);
                     break;
                 default:
                     CommitTarget.WriteSeeds(args[2]);

@@ -9,6 +9,7 @@ SortingGeoScenario.Run();
 FunctionScoreScenario.Run();
 QueryFormsScenario.Run();
 QueryFormsLowLevelScenario.Run();
+ModelsScenario.Run();
 SmokeScenario.RunWriter(new MemoryStorage(), threadedMerges: true);
 SmokeScenario.RunWriter(new MemoryStorage(), threadedMerges: false);
 
