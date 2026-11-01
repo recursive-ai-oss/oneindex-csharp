@@ -60,6 +60,8 @@ def main() -> int:
     ap.add_argument("--queries", type=int, default=1000)
     ap.add_argument("--budget", type=float, default=1500, help="seconds of encoding per run")
     ap.add_argument("--threads", type=int, default=8)
+    ap.add_argument("--part", type=int, default=0, help="with --parts, encode only the shards whose number is this modulo --parts, so several runs can share the work")
+    ap.add_argument("--parts", type=int, default=1)
     ap.add_argument("--finalize", action="store_true")
     args = ap.parse_args()
     name, revision, dims = MODELS[args.model]
@@ -83,9 +85,9 @@ def main() -> int:
         model = SentenceTransformer(name, revision=revision, device="cpu")
         model.max_seq_length = 128
         started = time.time()
-        for file, texts in shards:
+        for number, (file, texts) in enumerate(shards):
             path = os.path.join(out, file)
-            if os.path.exists(path):
+            if os.path.exists(path) or number % args.parts != args.part:
                 continue
             if time.time() - started > args.budget:
                 print("budget used; run again to continue", file=sys.stderr)

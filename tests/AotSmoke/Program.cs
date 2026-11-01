@@ -8,6 +8,8 @@ SortingGeoScenario.Run();
 FunctionScoreScenario.Run();
 QueryFormsScenario.Run();
 QueryFormsLowLevelScenario.Run();
+VectorScenario.RunLowLevel();
+VectorScenario.RunHappyPath();
 SmokeScenario.RunWriter(new MemoryStorage(), threadedMerges: true);
 SmokeScenario.RunWriter(new MemoryStorage(), threadedMerges: false);
 

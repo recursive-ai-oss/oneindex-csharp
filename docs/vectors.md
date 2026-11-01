@@ -1,0 +1,133 @@
+# Vectors: distance kernels, HNSW and exact search
+
+This note is normative for the vector part of a segment: what the kernels compute, how closeness becomes a score, how the graph is
+built and searched, what the two files contain and how a merge treats them. Measured results are at the end.
+
+## Metrics and scores
+
+A vector field has a metric, chosen in the schema (`[Vector(Metric = ...)]` or `FieldDefinition.Metric`) and stored with it.
+
+| Metric | What is indexed | Internal distance (smaller is nearer) | Score (larger is nearer, never negative) |
+|---|---|---|---|
+| `Cosine` (default) | the vector scaled to length 1 | minus the dot product | `(1 + cos) / 2`, clamped to 0..1 |
+| `DotProduct` | the vector as given | minus the dot product | `1 + dot` if `dot >= 0`, else `1 / (1 - dot)` |
+| `Euclidean` | the vector as given | squared Euclidean distance | `1 / (1 + d²)` |
+
+* The query of a cosine field is scaled the same way. A vector of length 0 stays all zeros (its cosine with anything is taken as 0,
+  score 0.5). The stored source keeps the original vector; the vectors file keeps the scaled one, which is what `TryGetVector` returns.
+* Documents with a NaN or an infinity in a vector are rejected when added (`ArgumentException`), and so are such queries.
+* A document may lack a vector. A vector field holds one vector per document (no multi-valued vector fields yet).
+* Scores are monotone in the distance, so ranking by score is ranking by distance. Ties break towards the smaller document id.
+
+## Distance kernels
+
+`OneIndex.Kernels.VectorKernels` (internal, no dependency on the rest of the engine) computes dot product, squared Euclidean distance
+and sum of squares over `float`, and dot product and squared distance over `sbyte`.
+
+* **One result on every machine.** The float order of additions is fixed by the kernel, not by the instruction set: element `i` goes to
+  lane `i mod 16`, in index order, with a separate multiply and add (never a fused multiply-add); the sixteen lanes are folded by halves
+  (`j` with `j+8`, then `j+4`, `j+2`, `j+1`). A 512-bit register is those sixteen lanes, 256-bit code keeps two registers, 128-bit code
+  four, scalar code sixteen variables. A tail shorter than 16 is padded with zeros, which adds exactly zero. All widths, and x64 and
+  arm64, therefore return the same bits, so a graph built on one machine is the graph built on any other. The tests assert bit equality
+  against the scalar path for lengths 0 to 300 and compare with a double-precision sum.
+* **Special values.** No flushing or clamping: denormals take part at full precision, infinities follow IEEE 754, a NaN input gives a
+  NaN result (payload unspecified). Indexed data and queries are checked finite before they reach a kernel.
+* **Width.** `Vector512`, `Vector256` or `Vector128` is chosen once from `IsHardwareAccelerated` (false for 512 bits on processors
+  where the runtime judges it slower); `Vector128` is also the WebAssembly SIMD path and the arm64 AdvSimd path. The scalar path is the
+  fallback and the reference.
+* **Integer kernels** widen to 16 bits, multiply, widen to 32 bits and add; integer sums are exact so every width agrees. Dot product
+  accepts up to 131,071 elements and squared distance up to 32,768 without overflowing `int`; longer inputs throw.
+* Files with `unsafe` constructs, `Unsafe.*`, `MemoryMarshal` or intrinsics: `Kernels/VectorKernels.cs` (loads through
+  `Vector128/256/512.LoadUnsafe` behind a length check made once per call, and fixed 16-float `stackalloc` tail buffers),
+  `Codecs/VectorPartReader.cs` and `Codecs/VectorSegmentCodec.cs` and `Codecs/VectorFiles.cs` (`MemoryMarshal.Cast` between the bytes of
+  a checked block and the floats or ints in it; bounds are those of the block), `Vectors/HnswBuilder.cs` is entirely safe code.
+
+## Exact search
+
+`FlatSearch` compares the query with every accepted vector and keeps the best `k` in a bounded heap. It serves segments below the
+field's flat threshold (default 1,000 vectors; they get no graph), is used when a filter is selective (below), and is the ground truth
+that the recall measurements and the durability checks use. `FlatSearch.SearchBatch` answers many queries in one pass over the
+vectors, a tile of 128 vectors at a time against all queries, which is the shape of a matrix product.
+
+## HNSW
+
+Implemented from Malkov and Yashunin, "Efficient and robust approximate nearest neighbor search using Hierarchical Navigable Small
+World graphs", IEEE TPAMI 42(4), 2020 (arXiv:1603.09320): algorithm 1 (INSERT), 2 (SEARCH-LAYER), 4 (SELECT-NEIGHBORS-HEURISTIC, no
+extended candidates, with kept pruned connections) and 5 (K-NN-SEARCH).
+
+* Parameters per field: `M` (default 16; layer 0 allows `2M`, the paper's `Mmax0`), `efConstruction` (default 100), flat threshold
+  (default 1,000). Search breadth `ef` is a query parameter (`KnnQuery.Ef`); 0 uses `max(k, 100)`.
+* **Layer assignment** draws the number of times in a row a 64-bit hash of (field seed, node number) is divisible by `M`: the same
+  distribution as the paper's `floor(-ln(uniform) * 1/ln M)` (`P(level >= l) = M^-l`) without a logarithm, whose last bit could differ
+  between platforms. The field seed is a fixed constant xor the CRC-32C of the field name. Levels stop at 24.
+* **Deterministic build.** One thread, no clock, no random generator: the same vectors in the same order give the same graph on every
+  machine (kernels above). Tests build twice and compare every link.
+* **Deletes.** A deleted document stays in the graph, because removing it can cut paths. Search walks through it and leaves it out of
+  the results. A segment with many deletes is rebuilt by the merge policy like any other.
+* **Filters.** A query may carry a filter (a query whose matches are the allowed documents). The segment turns it into a bit set. A
+  filtered graph search keeps walking through rejected nodes and collects accepted ones until `ef` are found. If fewer than
+  `sqrt(ef * n)` documents pass, an exact scan of the accepted vectors is cheaper than walking to `ef / selectivity` nodes and is used
+  instead; a graph walk that visits more nodes than there are accepted documents stops and falls back to the exact scan, so the cost is
+  bounded by twice the exact one. (ACORN-style traversal is a later unit.)
+
+### Merge
+
+A merge builds the merged segment's graph over the live vectors of the sources in their merged order. When the source with the most
+vectors has a graph with the same `M` and none of its vectors is deleted, its graph is copied (node numbers moved up by the number of
+vectors before it) and only the other sources' vectors are inserted, in order (the paper's incremental construction; the starting graph
+is just a valid state to continue from). Otherwise all vectors are inserted. Both are deterministic functions of the merge inputs; the
+first differs from flushing the same documents in one segment, which is documented, not a defect. The benchmark runner times both.
+
+## Files
+
+Both files have the common header (magic, version) and footer (CRC-32C of the file), and both are read through the storage interface by
+range. Vectors and level-0 links are read in blocks of about 64 KB holding whole records; each block has its own CRC-32C in a table
+that is checked when the block is first loaded, so opening a segment does not read its vectors and damage is found by the first read
+that touches it, raising `CorruptIndexException` with the file name. Loaded blocks stay cached for the life of the reader; reading a
+cached vector or link neither allocates nor waits. The little-endian layout is read in place, so big-endian platforms are rejected.
+
+**`vectors` (magic `OIXV`, version 1)** after the header: `u32` document count of the segment; for each field, in name order: the
+vectors (`count * dims * 4` bytes, `float` little endian, ordinal order, in blocks), for a segment where not every document has a vector
+the table of the document of each ordinal (`count * 4` bytes, strictly increasing), and the block CRC table (`4` bytes per block).
+Then the directory: field count, and per field the name, dimensions, metric, encoding (0: 32-bit floats; later compressed copies add
+parts of their own and rerank from this file), count, flags (bit 0: sparse), offsets of the three sections, vectors per block and the
+CRCs of the document table and of the CRC table. Trailer: directory offset (`u64`), CRC-32C of the directory (`u32`).
+
+**`hnsw` (magic `OIXH`, version 1)** after the header: `u32` document count; for each field with a graph, in name order: layer 0 as
+fixed-size records of `2M + 1` `int`s (link count, then the links, unused slots zero), in blocks with a CRC table; then the upper layers
+as one checked blob: node count, then for each node above layer 0 its number (as the gap from the previous), its level and, for each
+layer from 1, the link count and the links (varints). Directory per field: name, node count, `M`, top level, entry point, offsets,
+records per block, CRC of the CRC table, offset, length and CRC of the upper-layer blob.
+
+Readers check, before trusting an offset or count: the sections tile the file exactly; counts are within the segment and the limits
+object; every link is a node other than the one holding it, with at most `2M` links on layer 0 and `M` above; upper-layer links point to
+nodes that are in that layer; the entry point is in the top layer; the ordinal-to-document table is strictly increasing and inside the
+segment. A segment smaller than the field's flat threshold has a `vectors` part and no `hnsw` part.
+
+Crash behaviour is that of every part: the files are written, fsynced and listed by the commit; a crash before the commit leaves
+unreferenced files that are reclaimed.
+
+## Query surfaces
+
+* Low level: `KnnQuery(field, vector, k)` with `Ef`, `Filter` and `Exact`. It finds the `k` nearest documents over all segments (each
+  segment's best `k`, then the best `k` overall) and scores them; as a clause of a `BooleanQuery` it combines with text queries.
+  The filter is applied before choosing neighbours; a `Filter` clause beside it in a boolean query would cut the neighbours afterwards.
+* Happy path: `index.SearchVector(x => x.Embedding, vector, neighbors: 20)` returns a `SearchQuery`; `Where(...)` restricts the
+  candidates (before the nearest are chosen), `Take`/`Skip` page within the `neighbors` found.
+* Query JSON: `{"type":"knn","field":"Embedding","vector":[...],"k":10,"ef":100,"exact":false,"filter":{...},"boost":1}`; the tool
+  schema adds one such node per indexed vector field with the vector length fixed.
+* Hybrid fusion, reranking and quantized codecs are separate units.
+
+## Method of the measurements
+
+* Embedding sets: `tools/embeddings.py` (the Wikipedia abstracts of the text benchmarks, BAAI/bge-small-en-v1.5 at 384 and
+  BAAI/bge-base-en-v1.5 at 768 dimensions, text cut to 128 tokens, queries are held-out article titles with the model's query
+  instruction); ground truth is the exact top 100 by dot product computed with numpy.
+* Recall: `bench/OneIndex.VectorBench` (`--engine oneindex|oneindex-segment|hnswnet|curiosity`), single-threaded build and search,
+  recall@10 against the exact top 10, queries/second as the median of three passes over the query set, `ef` swept over a grid; the
+  reported row for a target is the smallest `ef` that reaches it. Hnsw.Net 0.1.4 and curiosity-ai HNSW 26.9.5494 run through their
+  public API (the two cannot be referenced together, so `bench/OneIndex.VectorBench.Curiosity` is the same runner for the second).
+* Kernels: `bench/OneIndex.Bench` `KernelBenchmarks`.
+* Durability: `tests/Durability` carries a vector field (flat threshold 3, so merges of tiny segments build and continue graphs); every
+  recovered snapshot is checked for the vector of every live document and for exact nearest neighbours against brute force.
+* Fuzz: `fuzz` target `vectors`.
