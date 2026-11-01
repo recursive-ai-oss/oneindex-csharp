@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Converts model files and measures the embedders: parity with a reference runtime and dense retrieval on BEIR sets. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>OneIndex.Models.Tool</RootNamespace>
+    <AssemblyName>oneindex-models</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/OneIndex.Models/OneIndex.Models.csproj" />
+    <ProjectReference Include="../OneIndex.Harness/OneIndex.Harness.csproj" />
+  </ItemGroup>
+
+</Project>

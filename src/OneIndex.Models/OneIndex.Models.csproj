@@ -6,6 +6,18 @@
     <Description>Embedders, reranker and learned sparse encoders for OneIndex, running on OneModel. Part of the OneIndex embedded search engine; unaffiliated with other products named OneIndex, OneSearch or similar.</Description>
   </PropertyGroup>
 
+  <PropertyGroup Label="Packed weights">
+    <!-- Written by tools/models/pack-weights.sh (it converts the published model once and copies the result here). A build without them
+         compiles and runs, but BgeSmallEmbedder.Load() then reports that the weights are missing. -->
+    <OneIndexModelWeights Condition="'$(OneIndexModelWeights)' == ''">$(ArtifactsPath)/model-weights/bge-small-en-v1.5</OneIndexModelWeights>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(OneIndexModelWeights)/model.onemodel') And Exists('$(OneIndexModelWeights)/vocab.txt')">
+    <EmbeddedResource Include="$(OneIndexModelWeights)/model.onemodel" LogicalName="OneIndex.Models.Weights.bge-small-en-v1.5.onemodel" />
+    <EmbeddedResource Include="$(OneIndexModelWeights)/vocab.txt" LogicalName="OneIndex.Models.Weights.bge-small-en-v1.5.vocab.txt" />
+    <None Include="$(OneIndexModelWeights)/LICENSE-bge-small-en-v1.5.txt" Pack="true" PackagePath="models/bge-small-en-v1.5/" Visible="false" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="../OneIndex/OneIndex.csproj" />
   </ItemGroup>

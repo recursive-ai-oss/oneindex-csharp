@@ -21,6 +21,7 @@
   <Folder Name="/tools/">
     <Project Path="tools/OneIndex.Harness/OneIndex.Harness.csproj" />
     <Project Path="tools/OneIndex.Harness.Cli/OneIndex.Harness.Cli.csproj" />
+    <Project Path="tools/OneIndex.Models.Tool/OneIndex.Models.Tool.csproj" />
     <Project Path="tools/UcdTables/UcdTables.csproj" />
     <Project Path="tools/SnowballGen/SnowballGen.csproj" />
   </Folder>
