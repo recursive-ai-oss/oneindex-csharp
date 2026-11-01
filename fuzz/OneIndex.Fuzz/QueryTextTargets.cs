@@ -240,6 +240,9 @@ internal static class QueryTextTargets
             "{\"v\":1,\"q\":\"cat\",\"hybrid\":{\"sparse\":true,\"sparseWeight\":2,\"semanticRatio\":0}}",
             "{\"v\":1,\"query\":{\"type\":\"sparse\",\"field\":\"Expansion\",\"weights\":{\"\":1}}}",
             "{\"v\":1,\"hybrid\":{}}",
+            "{\"v\":1,\"q\":\"cat dog\",\"rerank\":{\"window\":30},\"filter\":\"Number > 1\",\"limit\":4}",
+            "{\"v\":1,\"q\":\"cat\",\"rerank\":{},\"hybrid\":{\"semanticRatio\":0.4,\"field\":\"Vec\"}}",
+            "{\"v\":1,\"rerank\":{}}",
             "{\"v\":2}",
         ];
         string[] seeds = kind == 0 ? strict : kind == 1 ? filter : json;

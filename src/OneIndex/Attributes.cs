@@ -18,6 +18,13 @@ public sealed class FullTextAttribute : Attribute
 
     /// <summary>The name of a registered analyzer; overrides <see cref="Language"/>. Default none.</summary>
     public string? Analyzer { get; set; }
+
+    /// <summary>
+    /// Whether a cross-encoder reranker reads this field. Default <see langword="false"/>. When any field of a type sets it and the index has a reranker
+    /// (<see cref="Vectors.SearchRerankers"/>), searches of plain text rerank their best hits without a call to <c>Rerank()</c>, reading these fields
+    /// (in declaration order, joined by a space) as the passage; <c>WithoutRerank()</c> turns that off. See docs/rerank.md.
+    /// </summary>
+    public bool Rerank { get; set; }
 }
 
 /// <summary>Marks a property as a keyword: the whole value is matched exactly (tags, categories, codes).</summary>

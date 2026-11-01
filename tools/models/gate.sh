@@ -6,6 +6,11 @@
 #   tools/models/gate.sh parity <variant>           our vectors against the reference; variant: model | model.int8 | ...
 #   tools/models/gate.sh beir <set> <variant> [on|off]   dense retrieval on a BEIR set; resumable (exit 3 = run again)
 #
+#   tools/models/gate.sh setup-reranker             download + hash-check the cross-encoder, quantize, convert
+#   tools/models/gate.sh rerank-reference           reference pair token ids and ONNX Runtime scores (needs the BEIR sets)
+#   tools/models/gate.sh rerank-parity <variant>    pair token ids and scores against the reference; variant: model | model.int8
+#   tools/models/gate.sh rerank-beir <set> <variant> [hybrid]   BM25 (and hybrid) top-100 reranked; resumable (exit 3 = run again)
+#
 # Everything lands under $ONEINDEX_DATA (default ~/oneindex): venvs/models, models/, work/models/. Needs `uv`, a .NET 10 SDK and
 # the BEIR sets fetched by tools/fetch.sh. Nothing is committed or redistributed from there.
 set -euo pipefail
@@ -49,5 +54,27 @@ case "${1:?step}" in
     set_name="${2:?set}"; v="${3:?variant}"; instr="${4:-on}"
     dotnet "$tool" beir --model "$models/prepared/$v.onemodel" --vocab "$models/prepared/vocab.txt" --data "$data/corpus/beir" --set "$set_name" \
       --work "$work/beir-$v-$instr" --instruction "$instr" --threads "$threads" --budget-seconds 1200 --run "$work/beir-$v-$instr/$set_name.run" ;;
+  setup-reranker)
+    [ -x "$venv/bin/python" ] || uv venv "$venv" --python 3.13
+    uv pip install --python "$venv/bin/python" -r "$root/tools/models/requirements.txt"
+    "$venv/bin/python" "$root/tools/models/prepare_cross_encoder.py" "$models/ce-prepared"
+    build_tool
+    for v in model model.int8; do
+      dotnet "$tool" convert "$models/ce-prepared/$v.onnx" "$models/ce-prepared/$v.onemodel"
+    done ;;
+  rerank-reference)
+    "$venv/bin/python" "$root/tools/models/reference_pairs.py" "$models/ce-prepared" "$data/corpus/beir" "$models/ce-ref" 1500 600 ;;
+  rerank-parity)
+    build_tool
+    v="${2:?variant}"
+    dotnet "$tool" pair-ids --vocab "$models/ce-prepared/vocab.txt" --pairs "$models/ce-ref/pairs.jsonl"
+    dotnet "$tool" rerank-parity --model "$models/ce-prepared/$v.onemodel" --vocab "$models/ce-prepared/vocab.txt" --pairs "$models/ce-ref/scored.jsonl" \
+      --reference "$models/ce-ref/reference.f32" --threads "$threads" ;;
+  rerank-beir)
+    build_tool
+    set_name="${2:?set}"; v="${3:?variant}"; extra=()
+    if [ "${4:-}" = hybrid ]; then extra=(--embedder "$models/prepared/model.int8.onemodel" --vectors "$work/beir-model.int8-on"); fi
+    dotnet "$tool" rerank-beir --model "$models/ce-prepared/$v.onemodel" --vocab "$models/ce-prepared/vocab.txt" --data "$data/corpus/beir" --set "$set_name" \
+      --work "$work/rerank-$v" --threads "$threads" --budget-seconds 1200 "${extra[@]}" ;;
   *) echo "unknown step" >&2; exit 2 ;;
 esac

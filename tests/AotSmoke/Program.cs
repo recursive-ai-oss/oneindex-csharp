@@ -11,6 +11,7 @@ QueryFormsScenario.Run();
 QueryFormsLowLevelScenario.Run();
 ModelsScenario.Run();
 HybridScenario.Run();
+RerankScenario.Run();
 SparseScenario.Run();
 VectorScenario.RunLowLevel();
 VectorScenario.RunHappyPath();
