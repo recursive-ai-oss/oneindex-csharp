@@ -2,6 +2,7 @@ using System.Linq.Expressions;
 using System.Text;
 using System.Text.Json;
 using OneIndex.Index;
+using OneIndex.Search;
 using OneIndex.Queries;
 using OneIndex.Storage;
 
@@ -30,6 +31,33 @@ public class DynamicFieldTests
 
     private static string Ids(SearchIndex<Activity> index, Expression<Func<Activity, bool>> predicate)
         => string.Join(",", index.Search().Where(predicate).Take(1000).ToList().Select(h => h.Id).Order(StringComparer.Ordinal));
+
+    [Theory]
+    [InlineData("\"\"")]
+    [InlineData("[\"x\",\"y\"]")]
+    [InlineData("7")]
+    [InlineData("{\"a\":\"\"}")]
+    [InlineData("{\"a\":[]}")]
+    public void EveryDerivedPathExistsInEveryDocument(string json)
+    {
+        // Found by the ingestion fuzz target: a root scalar once defined a path called "meta." that nothing could match.
+        Schema schema = new SchemaBuilder().Id("id").Json("meta").Build();
+        using IndexWriter w = IndexWriter.Open(new MemoryStorage(), schema);
+        using JsonDocument doc = JsonDocument.Parse(json);
+        for (int i = 0; i < 3; i++)
+        {
+            w.Upsert(new Document().Add("id", "d" + i).Add("meta", FieldValue.FromJson(doc.RootElement)));
+        }
+
+        w.Commit();
+        using IndexSnapshot snapshot = w.OpenSnapshot();
+        IndexSearcher searcher = SnapshotSearch.CreateSearcher(snapshot);
+        foreach (FieldDefinition f in snapshot.Schema.Fields.Where(static f => f.DynamicParent is not null))
+        {
+            string logical = f.Name[..f.Name.LastIndexOf('#')];
+            Assert.Equal(3, searcher.Search(new RangeQuery(logical, null, null), 10, true).TotalHits);
+        }
+    }
 
     [Fact]
     public void JsonWithInvalidUtf8IsRefusedAtTheWriteAndTheWriterKeepsWorking()

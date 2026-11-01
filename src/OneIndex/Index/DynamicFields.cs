@@ -172,7 +172,7 @@ internal static class DynamicFields
             case JsonValueKind.String:
                 {
                     string? s = e.GetString();
-                    if (s is null || !Indexable(path, limits) || Encoding.UTF8.GetByteCount(s) > limits.MaxDynamicKeywordBytes)
+                    if (string.IsNullOrEmpty(s) || !Indexable(path, limits) || Encoding.UTF8.GetByteCount(s) > limits.MaxDynamicKeywordBytes)
                     {
                         return;
                     }
@@ -210,9 +210,9 @@ internal static class DynamicFields
 
     private static bool Indexable(StringBuilder path, IndexLimits limits)
     {
-        if (path.Length > limits.MaxDynamicPathBytes)
+        if (path.Length == 0 || path.Length > limits.MaxDynamicPathBytes)
         {
-            return false;
+            return false; // a scalar (or array of scalars) at the root has no path to be found by
         }
 
         for (int i = 0; i < path.Length; i++)

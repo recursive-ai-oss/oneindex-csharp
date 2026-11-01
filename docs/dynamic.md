@@ -16,7 +16,7 @@ At the low level the field is `FieldType.Json` (`SchemaBuilder.Json(name)`), the
 
 ## Paths
 
-A path is the object keys from the root down, joined by dots: `customer.address.city`. Arrays take no part in the path: the elements of an array count as several values at the same path, at any depth, so `{"tags":["a","b"]}` has two values at `tags` and `{"items":[{"sku":"x"},{"sku":"y"}]}` has two at `items.sku`. A dot inside a key is written `\.` and a backslash `\\`. An empty key is not indexed. The logical name of a path is the property name, a dot and the path: `Fields.customer.age`. That is the name the filter-string grammar and query JSON use; LINQ takes the property and the path separately (`Fields.Path("customer.age")`).
+A path is the object keys from the root down, joined by dots: `customer.address.city`. Arrays take no part in the path: the elements of an array count as several values at the same path, at any depth, so `{"tags":["a","b"]}` has two values at `tags` and `{"items":[{"sku":"x"},{"sku":"y"}]}` has two at `items.sku`. A dot inside a key is written `\.` and a backslash `\\`. An empty key and an empty string are not indexed (the keyword index holds no empty term), and neither is a scalar (or an array of scalars) at the root, which has no path; it stays in the stored source. The logical name of a path is the property name, a dot and the path: `Fields.customer.age`. That is the name the filter-string grammar and query JSON use; LINQ takes the property and the path separately (`Fields.Path("customer.age")`).
 
 ## What is indexed
 
