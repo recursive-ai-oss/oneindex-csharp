@@ -38,6 +38,14 @@ internal static class ValueBinder
         "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFK",
     ];
 
+    /// <summary>Parses a date the way date comparisons do (UTC unless the text carries an offset).</summary>
+    internal static bool TryParseDate(string text, out long unixMilliseconds)
+    {
+        bool ok = DateTimeOffset.TryParseExact(text, DateFormats, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out DateTimeOffset when);
+        unixMilliseconds = ok ? when.ToUnixTimeMilliseconds() : 0;
+        return ok;
+    }
+
     /// <summary>The kinds of value a comparison can use, for messages.</summary>
     internal static string Describe(FieldType type) => type switch
     {

@@ -45,7 +45,11 @@ The paper gives no rule for the two constants (it reports that 0.5 < b < 0.8 and
 - boolean: `sum of matching clauses, boost <b>, <m> of <n> should clauses matched (need <k>)`, children are the matching clauses (a filter clause is shown with value 0)
 - constant matches (range, match all): `<description>, constant score = boost <b>`
 
+- function score: `function score: query score <q> and function score <f> by <mode>, boost <b>`, with the inner explanation and the functions' values as children ([function-scores.md](function-scores.md))
+
 `null` means the document does not match.
+
+On the happy path, `SearchQuery.Explain()` returns this tree on each hit (`SearchHit.Explanation`); its root value equals `SearchHit.Score` exactly, on the plain, sorted, faceted and function-scored paths (a test asserts it on every hit).
 
 ## Relevance results
 

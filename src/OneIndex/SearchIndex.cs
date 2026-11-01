@@ -435,6 +435,9 @@ public sealed class SearchHit<T>
     /// <summary>For a search sorted by distance: the metres from the sort point to the document's nearest (or, descending, farthest) point. <see langword="null"/> otherwise or when the document has no point.</summary>
     public double? GeoDistance { get; internal set; }
 
+    /// <summary>The breakdown of <see cref="Score"/>, when the search asked for it with <see cref="SearchQuery{T}.Explain"/>; <see langword="null"/> otherwise. The root value equals <see cref="Score"/>.</summary>
+    public Explanation? Explanation { get; internal set; }
+
     /// <summary>The relevance score: BM25F over the full-text fields for text queries; 1 times boost for filter-only and blank searches.</summary>
     public float Score { get; }
 
@@ -510,10 +513,12 @@ public sealed partial class SearchQuery<T> : IEnumerable<SearchHit<T>>
     private readonly bool _exact;
     private readonly HighlightOptions? _highlight;
     private readonly QueryStages? _stages;
+    private readonly QueryExtras? _extras;
 
-    internal SearchQuery(SearchIndex<T> index, string? text, Search.Query? query, Expression<Func<T, bool>>[] filters, int take, int skip, bool exact, HighlightOptions? highlight, QueryStages? stages = null)
+    internal SearchQuery(SearchIndex<T> index, string? text, Search.Query? query, Expression<Func<T, bool>>[] filters, int take, int skip, bool exact, HighlightOptions? highlight, QueryStages? stages = null, QueryExtras? extras = null)
     {
         _stages = stages;
+        _extras = extras;
         _index = index;
         _text = text;
         _query = query;
@@ -532,7 +537,7 @@ public sealed partial class SearchQuery<T> : IEnumerable<SearchHit<T>>
     {
         ArgumentNullException.ThrowIfNull(predicate);
         _ = new FilterTranslator<T>(_index.Mapping).Translate(predicate);
-        return new SearchQuery<T>(_index, _text, _query, [.. _filters, predicate], _take, _skip, _exact, _highlight, _stages);
+        return new SearchQuery<T>(_index, _text, _query, [.. _filters, predicate], _take, _skip, _exact, _highlight, _stages, _extras);
     }
 
     /// <summary>Limits the number of hits returned. Default 20.</summary>
@@ -542,7 +547,7 @@ public sealed partial class SearchQuery<T> : IEnumerable<SearchHit<T>>
     public SearchQuery<T> Take(int count)
     {
         CheckWindow(count, _skip);
-        return new SearchQuery<T>(_index, _text, _query, _filters, count, _skip, _exact, _highlight, _stages);
+        return new SearchQuery<T>(_index, _text, _query, _filters, count, _skip, _exact, _highlight, _stages, _extras);
     }
 
     /// <summary>Skips the first hits, for paging. Default 0.</summary>
@@ -552,12 +557,12 @@ public sealed partial class SearchQuery<T> : IEnumerable<SearchHit<T>>
     public SearchQuery<T> Skip(int count)
     {
         CheckWindow(_take, count);
-        return new SearchQuery<T>(_index, _text, _query, _filters, _take, count, _exact, _highlight, _stages);
+        return new SearchQuery<T>(_index, _text, _query, _filters, _take, count, _exact, _highlight, _stages, _extras);
     }
 
     /// <summary>Makes <see cref="SearchResults{T}.TotalHits"/> and <see cref="Count()"/> exact. This visits every match, so it is slower on large result sets.</summary>
     /// <returns>The search.</returns>
-    public SearchQuery<T> CountExactly() => new(_index, _text, _query, _filters, _take, _skip, true, _highlight, _stages);
+    public SearchQuery<T> CountExactly() => new(_index, _text, _query, _filters, _take, _skip, true, _highlight, _stages, _extras);
 
     /// <summary>Sets the size of the snippets in <see cref="SearchHit{T}.Highlights"/>.</summary>
     /// <param name="options">Fragment length and count.</param>
@@ -565,7 +570,7 @@ public sealed partial class SearchQuery<T> : IEnumerable<SearchHit<T>>
     public SearchQuery<T> Highlight(HighlightOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        return new SearchQuery<T>(_index, _text, _query, _filters, _take, _skip, _exact, options, _stages);
+        return new SearchQuery<T>(_index, _text, _query, _filters, _take, _skip, _exact, options, _stages, _extras);
     }
 
     /// <summary>Compiles the search to query objects: the text query that scores, and the filters that only select.</summary>
@@ -617,7 +622,7 @@ public sealed partial class SearchQuery<T> : IEnumerable<SearchHit<T>>
                 LeafContext leaf = LeafOf(generation.Context, sd.DocId);
                 Document stored = _index.Source(generation, leaf, sd.DocId - leaf.DocBase, out string id)
                     ?? throw new InvalidOperationException($"The stored source of document '{id}' is not available.");
-                hits.Add(new SearchHit<T>(id, sd.Score, _index.Mapping.FromDocument(stored), stored, schema, terms, _highlight));
+                hits.Add(new SearchHit<T>(id, sd.Score, _index.Mapping.FromDocument(stored), stored, schema, terms, _highlight) { Explanation = ExplainHit(generation, query, sd.DocId) });
             }
 
             return new SearchResults<T>(hits, top.TotalHits, top.TotalHitsExact);
@@ -677,18 +682,6 @@ public sealed partial class SearchQuery<T> : IEnumerable<SearchHit<T>>
     private Search.Query Build(out Search.Query textQuery)
     {
         textQuery = _query ?? new UserTextCompiler(_index.Mapping.Schema).Compile(_text);
-        if (_filters.Length == 0)
-        {
-            return textQuery;
-        }
-
-        var translator = new FilterTranslator<T>(_index.Mapping);
-        var clauses = new List<BooleanClause>(_filters.Length + 1) { new(textQuery, Occur.Must) };
-        foreach (Expression<Func<T, bool>> f in _filters)
-        {
-            clauses.Add(new BooleanClause(translator.Translate(f), Occur.Filter));
-        }
-
-        return new BooleanQuery(clauses);
+        return _extras is null && _filters.Length == 0 ? textQuery : WithExtras(textQuery);
     }
 }

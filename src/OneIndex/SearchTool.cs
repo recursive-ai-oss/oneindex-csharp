@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using OneIndex.Index;
 using OneIndex.Queries;
+using OneIndex.Search;
 
 namespace OneIndex;
 
@@ -271,6 +272,34 @@ public static class SearchTool
             Int(w, "minimumShouldMatch", 0, 1024, "How many should clauses must match. Default: one when there is no must or filter clause.");
         }, required: []));
 
+        Def("functionScore", () => Node(w, "functionScore", () =>
+        {
+            w.WriteStartObject("query");
+            w.WriteString("$ref", "#/$defs/node");
+            w.WriteEndObject();
+            w.WriteStartObject("functions");
+            w.WriteString("type", "array");
+            w.WriteNumber("minItems", 1);
+            w.WriteNumber("maxItems", FunctionScoreQuery.MaxFunctions);
+            w.WriteString("description", "Scoring functions of column values; the values combine by scoreMode and then with the score of query by boostMode.");
+            w.WriteStartObject("items");
+            w.WriteStartArray("oneOf");
+            ScoreFunctionDefs(w, schema);
+            w.WriteEndArray();
+            w.WriteEndObject();
+            w.WriteEndObject();
+            w.WriteStartObject("scoreMode");
+            EnumOf(w, [.. FunctionNames.ScoreModes]);
+            w.WriteString("description", "How function values combine. Default multiply.");
+            w.WriteEndObject();
+            w.WriteStartObject("boostMode");
+            EnumOf(w, [.. FunctionNames.BoostModes]);
+            w.WriteString("description", "How the function score and the query score combine. Default multiply.");
+            w.WriteEndObject();
+            Num(w, "maxBoost", 0, null, "The ceiling of the combined function score. Default: none.");
+            Num(w, "minScore", 0, null, "Documents scoring below this are dropped.");
+        }, required: ["functions"]));
+
         void RangeDef(string name, List<string> fields, string kind)
         {
             if (fields.Count == 0)
@@ -416,6 +445,117 @@ public static class SearchTool
         w.WriteEndObject();
     }
 
+    // The function objects a functionScore node accepts, one oneOf alternative each; fields are the schema's columns.
+    private static void ScoreFunctionDefs(Utf8JsonWriter w, Schema schema)
+    {
+        List<string> factorFields = [.. schema.Fields.Where(static f => f.Column && f.Type is FieldType.Integral or FieldType.Fractional or FieldType.Date or FieldType.Bool).Select(static f => f.Name)];
+        List<string> decayFields = [.. schema.Fields.Where(static f => f.Column && f.Type is FieldType.Integral or FieldType.Fractional or FieldType.Date).Select(static f => f.Name)];
+        List<string> geoFields = [.. schema.Fields.Where(static f => f.Column && f.Type == FieldType.GeoPoint).Select(static f => f.Name)];
+
+        void Common()
+        {
+            Num(w, "weight", 0, null, "Multiplies the function's value. Default 1.");
+            w.WriteStartObject("filter");
+            w.WriteString("description", "Applies the function only to documents that match: a filter string or a query node.");
+            w.WriteStartArray("oneOf");
+            w.WriteStartObject();
+            w.WriteString("type", "string");
+            w.WriteNumber("maxLength", QueryJson.MaxStringLength);
+            w.WriteEndObject();
+            w.WriteStartObject();
+            w.WriteString("$ref", "#/$defs/node");
+            w.WriteEndObject();
+            w.WriteEndArray();
+            w.WriteEndObject();
+        }
+
+        void Fn(Action type, Action properties, string[] required)
+        {
+            w.WriteStartObject();
+            w.WriteString("type", "object");
+            w.WriteStartObject("properties");
+            w.WriteStartObject("type");
+            type();
+            w.WriteEndObject();
+            properties();
+            Common();
+            w.WriteEndObject();
+            w.WriteStartArray("required");
+            w.WriteStringValue("type");
+            foreach (string r in required)
+            {
+                w.WriteStringValue(r);
+            }
+
+            w.WriteEndArray();
+            w.WriteBoolean("additionalProperties", false);
+            w.WriteEndObject();
+        }
+
+        void Const(string v) => w.WriteString("const", v);
+
+        Fn(() => Const("weight"), static () => { }, []);
+        if (factorFields.Count > 0)
+        {
+            Fn(() => Const("fieldValueFactor"), () =>
+            {
+                Field(w, factorFields);
+                Num(w, "factor", -double.MaxValue, null, "Multiplies the value before the modifier. Default 1.");
+                w.WriteStartObject("modifier");
+                EnumOf(w, [.. FunctionNames.Modifiers]);
+                w.WriteString("description", "Applied to factor times the value. Default none.");
+                w.WriteEndObject();
+                Num(w, "missing", -double.MaxValue, null, "The value for a document that has none. Default: the function does not apply to it.");
+            }, ["field"]);
+        }
+
+        if (decayFields.Count > 0)
+        {
+            Fn(() => { w.WriteStartArray("enum"); foreach (string n in FunctionNames.Shapes) { w.WriteStringValue(n); } w.WriteEndArray(); }, () =>
+            {
+                Field(w, decayFields);
+                w.WriteStartObject("origin");
+                w.WriteString("description", "The centre: a number, or for a date field a date such as 2024-01-31 or a number of milliseconds since 1970.");
+                w.WriteStartArray("oneOf");
+                w.WriteStartObject();
+                w.WriteString("type", "number");
+                w.WriteEndObject();
+                w.WriteStartObject();
+                w.WriteString("type", "string");
+                w.WriteString("pattern", DatePattern);
+                w.WriteEndObject();
+                w.WriteEndArray();
+                w.WriteEndObject();
+                Num(w, "scale", double.Epsilon, null, "The distance beyond the offset at which the value is decay (milliseconds for dates).");
+                Num(w, "offset", 0, null, "The distance within which nothing decays. Default 0.");
+                OpenUnit(w, "decay", "The value at the scale distance, above 0 and below 1. Default 0.5.");
+            }, ["field", "origin", "scale"]);
+        }
+
+        if (geoFields.Count > 0)
+        {
+            Fn(() => { w.WriteStartArray("enum"); foreach (string n in FunctionNames.Shapes) { w.WriteStringValue(n); } w.WriteEndArray(); }, () =>
+            {
+                Field(w, geoFields);
+                w.WriteStartObject("origin");
+                w.WriteString("type", "object");
+                w.WriteStartObject("properties");
+                Num(w, "lat", -90, 90, "The latitude in degrees.");
+                Num(w, "lng", -180, 180, "The longitude in degrees.");
+                w.WriteEndObject();
+                w.WriteStartArray("required");
+                w.WriteStringValue("lat");
+                w.WriteStringValue("lng");
+                w.WriteEndArray();
+                w.WriteBoolean("additionalProperties", false);
+                w.WriteEndObject();
+                Num(w, "scale", double.Epsilon, null, "The distance in metres beyond the offset at which the value is decay.");
+                Num(w, "offset", 0, null, "The distance in metres within which nothing decays. Default 0.");
+                OpenUnit(w, "decay", "The value at the scale distance, above 0 and below 1. Default 0.5.");
+            }, ["field", "origin", "scale"]);
+        }
+    }
+
     // One node definition: an object with a fixed "type", the given properties, a boost, and nothing else.
     private static void Node(Utf8JsonWriter w, string type, Action? properties, string[]? required = null)
     {
@@ -514,6 +654,16 @@ public static class SearchTool
             w.WriteNumber("maximum", m);
         }
 
+        w.WriteString("description", description);
+        w.WriteEndObject();
+    }
+
+    private static void OpenUnit(Utf8JsonWriter w, string name, string description)
+    {
+        w.WriteStartObject(name);
+        w.WriteString("type", "number");
+        w.WriteNumber("exclusiveMinimum", 0);
+        w.WriteNumber("exclusiveMaximum", 1);
         w.WriteString("description", description);
         w.WriteEndObject();
     }

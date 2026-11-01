@@ -37,7 +37,7 @@ public sealed class OneIndexEngine : ITextEngine
     }
 
     /// <inheritdoc/>
-    public bool Supports(Type queryType) => queryType == typeof(MatchQuery) || queryType == typeof(TermsQuery) || queryType == typeof(FacetQuery) || queryType == typeof(StatsQuery) || queryType == typeof(SortedQuery) || queryType == typeof(FilteredQuery) || (queryType == typeof(GeoQuery) && WithGeo);
+    public bool Supports(Type queryType) => queryType == typeof(MatchQuery) || queryType == typeof(TermsQuery) || queryType == typeof(FacetQuery) || queryType == typeof(StatsQuery) || queryType == typeof(SortedQuery) || queryType == typeof(DecayedQuery) || queryType == typeof(FilteredQuery) || (queryType == typeof(GeoQuery) && WithGeo);
 
     // The geo row indexes synthesized coordinates in a second field; it is opt-in so the other rows keep the matched index.
     private static bool WithGeo => Environment.GetEnvironmentVariable("ONEINDEX_BENCH_GEO") == "1";
@@ -143,6 +143,7 @@ public sealed class OneIndexEngine : ITextEngine
             FacetQuery f => TermsOf(f.Terms),
             StatsQuery st => TermsOf(st.Terms),
             SortedQuery so => TermsOf(so.Terms),
+            DecayedQuery dq => new FunctionScoreQuery(TermsOf(dq.Terms), [new DecayFunction(DecayShape.Gauss, "len", dq.Origin, dq.Scale)]),
             FilteredQuery fq => Filtered(fq),
             GeoQuery g => new GeoRadiusQuery("loc", g.Latitude, g.Longitude, g.RadiusMeters),
             _ => throw new NotSupportedException(query.GetType().Name),

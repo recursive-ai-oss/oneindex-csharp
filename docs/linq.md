@@ -44,3 +44,11 @@ Anything else throws `UnsupportedExpressionException` (a `NotSupportedException`
 `Take(n)` (default 20) and `Skip(n)` page by rank (or by the ordering); `SearchAfter(cursor)` continues a sorted search after the cursor of a hit; `Skip + Take` may not exceed 10,000. `TotalHits` and `Count()` are lower bounds unless `CountExactly()` was called. Enumeration, `ToList()` and `Execute()` run the search; `ExecuteAsync` is the async twin.
 
 The differential test (`LinqTests`) compares `Where` against LINQ-to-Objects over seeded random documents (with updates and deletes between commits) and seeded random expression trees.
+
+## Filter strings
+
+`Where(string)` takes a [filter string](filter-strings.md) (`Where("Rating >= 4 AND Tags = invoice")`). It is checked against the schema at the call and throws `QueryParseException` with the offset, line, column and a suggestion for a misspelt field. It selects without scoring and combines with `Where(predicate)` and other `Where(string)` calls by and. A test runs the same random predicates as the LINQ differential through both forms (the translated query printed as a filter string) and against LINQ-to-Objects.
+
+## Score by functions and explain
+
+`ScoreBy(b => ...)` changes the relevance score with functions of column values ([function-scores.md](function-scores.md)); `Explain()` attaches the score breakdown to each returned hit (`hit.Explanation`, whose root value equals `hit.Score`).
