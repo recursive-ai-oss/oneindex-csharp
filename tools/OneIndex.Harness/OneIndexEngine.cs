@@ -69,7 +69,7 @@ public sealed class OneIndexEngine : ITextEngine
         }
 
         _settings = settings;
-        _writer = IndexWriter.Open(_storage, schema, new IndexWriterOptions { MaxBufferedDocuments = 20_000 });
+        _writer = IndexWriter.Open(_storage, schema, new IndexWriterOptions { MaxBufferedDocuments = int.TryParse(Environment.GetEnvironmentVariable("ONEINDEX_BUFFERED_DOCS"), out int buffered) ? buffered : 20_000 });
     }
 
     /// <inheritdoc/>
@@ -77,7 +77,8 @@ public sealed class OneIndexEngine : ITextEngine
     {
         if (_settings!.Profile == IndexProfile.Bench)
         {
-            _writer!.Upsert(new Document().Add("id", doc.Id).Add("text", doc.Text).Add("len", doc.Length).Add("cat", doc.Category));
+            // Identifiers are unique and the comparator appends without looking for a previous version, so the bulk path is the matched call.
+            _writer!.AddUnique(new Document().Add("id", doc.Id).Add("text", doc.Text).Add("len", doc.Length).Add("cat", doc.Category));
         }
         else
         {
