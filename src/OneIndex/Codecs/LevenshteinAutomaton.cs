@@ -29,6 +29,32 @@ public abstract class TermAutomaton
     /// <param name="state">The state after the whole term.</param>
     /// <returns><see langword="true"/> when the term matches.</returns>
     public abstract bool IsAccepting(ReadOnlySpan<int> state);
+
+    /// <summary>The value of <see cref="StartStateId"/> for an automaton that does not intern its states.</summary>
+    public const int NoStateIds = -2;
+
+    /// <summary>The id of the dead state of an interning automaton.</summary>
+    public const int DeadStateId = -1;
+
+    /// <summary>
+    /// For an automaton that interns its states (each distinct state gets a small integer id and its transitions are remembered, so a
+    /// walk pays a table lookup per step instead of recomputing the state set), the id of the start state, or <see cref="DeadStateId"/>
+    /// when nothing can match. The default is <see cref="NoStateIds"/>, and the walk then uses <see cref="Start"/> and <see cref="Transition"/>.
+    /// </summary>
+    public virtual int StartStateId => NoStateIds;
+
+    /// <summary>The state id after reading a code point, for an interning automaton.</summary>
+    /// <param name="stateId">A live state id.</param>
+    /// <param name="codePoint">The code point read (a Unicode scalar value).</param>
+    /// <returns>The next state id, or <see cref="DeadStateId"/>.</returns>
+    /// <exception cref="NotSupportedException">The automaton does not intern its states.</exception>
+    public virtual int NextStateId(int stateId, int codePoint) => throw new NotSupportedException();
+
+    /// <summary>Whether a term that ends in the state with the given id matches, for an interning automaton.</summary>
+    /// <param name="stateId">A live state id.</param>
+    /// <returns><see langword="true"/> when the term matches.</returns>
+    /// <exception cref="NotSupportedException">The automaton does not intern its states.</exception>
+    public virtual bool IsAcceptingId(int stateId) => throw new NotSupportedException();
 }
 
 /// <summary>
@@ -123,6 +149,95 @@ public sealed class LevenshteinAutomaton : TermAutomaton
         }
 
         return n;
+    }
+
+    /// <inheritdoc/>
+    // Interned states. A state set is identified by its sorted integers; the table of an id remembers the next id for every ASCII
+    // code point once computed, which is almost every step of a walk over Latin-script terms.
+    private const int Unknown = -3;
+    private readonly List<int[]> _sets = [];
+    private readonly List<int[]> _asciiNext = [];
+    private readonly List<bool> _accepting = [];
+    private readonly Dictionary<int[], int> _ids = new(IntSetComparer.Instance);
+    private int _startId = Unknown;
+
+    /// <inheritdoc/>
+    public override int StartStateId
+    {
+        get
+        {
+            if (_startId == Unknown)
+            {
+                var buffer = new int[MaxStateLength];
+                _startId = Intern(buffer, Start(buffer));
+            }
+
+            return _startId;
+        }
+    }
+
+    /// <inheritdoc/>
+    public override int NextStateId(int stateId, int codePoint)
+    {
+        int[] table = _asciiNext[stateId];
+        if ((uint)codePoint < 128 && table[codePoint] != Unknown)
+        {
+            return table[codePoint];
+        }
+
+        var buffer = new int[MaxStateLength];
+        int next = Intern(buffer, Transition(_sets[stateId], codePoint, buffer));
+        if ((uint)codePoint < 128)
+        {
+            table[codePoint] = next;
+        }
+
+        return next;
+    }
+
+    /// <inheritdoc/>
+    public override bool IsAcceptingId(int stateId) => _accepting[stateId];
+
+    private int Intern(int[] buffer, int length)
+    {
+        if (length == 0)
+        {
+            return DeadStateId;
+        }
+
+        int[] set = buffer.AsSpan(0, length).ToArray();
+        Array.Sort(set);
+        if (_ids.TryGetValue(set, out int id))
+        {
+            return id;
+        }
+
+        id = _sets.Count;
+        _sets.Add(set);
+        var table = new int[128];
+        Array.Fill(table, Unknown);
+        _asciiNext.Add(table);
+        _accepting.Add(IsAccepting(set));
+        _ids.Add(set, id);
+        return id;
+    }
+
+    private sealed class IntSetComparer : IEqualityComparer<int[]>
+    {
+        public static readonly IntSetComparer Instance = new();
+
+        public bool Equals(int[]? x, int[]? y) => x.AsSpan().SequenceEqual(y);
+
+        public int GetHashCode(int[] obj)
+        {
+            var h = default(HashCode);
+            foreach (int v in obj)
+            {
+                h.Add(v);
+            }
+
+            return h.ToHashCode();
+        }
     }
 
     /// <inheritdoc/>

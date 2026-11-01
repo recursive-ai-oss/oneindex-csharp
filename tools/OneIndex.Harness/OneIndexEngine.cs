@@ -37,7 +37,8 @@ public sealed class OneIndexEngine : ITextEngine
     }
 
     /// <inheritdoc/>
-    public bool Supports(Type queryType) => queryType == typeof(MatchQuery) || queryType == typeof(TermsQuery) || queryType == typeof(FacetQuery) || queryType == typeof(StatsQuery);
+    public bool Supports(Type queryType) => queryType == typeof(MatchQuery) || queryType == typeof(TermsQuery) || queryType == typeof(FacetQuery) || queryType == typeof(StatsQuery)
+        || queryType == typeof(PhraseQuery) || queryType == typeof(PrefixQuery) || queryType == typeof(FuzzyQuery) || queryType == typeof(FilteredQuery);
 
     /// <inheritdoc/>
     public void Create(EngineSettings settings)
@@ -50,7 +51,7 @@ public sealed class OneIndexEngine : ITextEngine
         {
             // The benchmark profile: body text, a numeric column and a keyword facet column, standard analysis.
             schema = new SchemaBuilder().Id("id")
-                .Add(new FieldDefinition("text", FieldType.Text) { Analyzer = "standard", IndexOptions = IndexOptions.Freqs, Stored = false })
+                .Add(new FieldDefinition("text", FieldType.Text) { Analyzer = "standard", IndexOptions = IndexOptions.Positions, Stored = false })
                 .Add(new FieldDefinition("len", FieldType.Integral) { Column = true, Stored = false })
                 .Add(new FieldDefinition("cat", FieldType.Keyword) { Facet = true, Stored = false })
                 .Build();
@@ -132,6 +133,10 @@ public sealed class OneIndexEngine : ITextEngine
             TermsQuery t => TermsOf(t.Terms),
             FacetQuery f => TermsOf(f.Terms),
             StatsQuery st => TermsOf(st.Terms),
+            PhraseQuery p => new OneIndex.Search.PhraseQuery("text", p.Terms),
+            PrefixQuery px => Prefix(px),
+            FuzzyQuery f => new OneIndex.Search.FuzzyQuery("text", f.Term) { MaxEdits = f.MaxEdits },
+            FilteredQuery fq => Filtered(fq),
             _ => throw new NotSupportedException(query.GetType().Name),
         };
         if (query is FacetQuery)
@@ -217,9 +222,30 @@ public sealed class OneIndexEngine : ITextEngine
         _writer?.Dispose();
     }
 
+    private static BooleanQuery Prefix(PrefixQuery px)
+    {
+        var clauses = new List<BooleanClause>();
+        foreach (string t in px.Required)
+        {
+            clauses.Add(new BooleanClause(new TermQuery("text", t), Occur.Must));
+        }
+
+        clauses.Add(new BooleanClause(new OneIndex.Search.PrefixQuery("text", px.Prefix), Occur.Must));
+        return new BooleanQuery(clauses);
+    }
+
+    private static BooleanQuery Filtered(FilteredQuery fq)
+    {
+        var range = new RangeQuery("len", FieldValue.FromInt64(fq.MinLength), FieldValue.FromInt64(fq.MaxLength));
+        var cats = new BooleanQuery([.. fq.Categories.Select(c => new BooleanClause(new TermQuery("cat", c), Occur.Should))]);
+        return new BooleanQuery([new BooleanClause(TermsOf(fq.Terms), Occur.Must), new BooleanClause(range, Occur.Filter), new BooleanClause(cats, Occur.Filter)]);
+    }
+
     private static BooleanQuery TermsOf(string[] terms) => new([.. terms.Select(x => new BooleanClause(new TermQuery("text", x), Occur.Should))]);
 
-    private QueryEngineOptions Engine() => new() { Bm25 = new Bm25Parameters(_k1, _b) };
+    // A three-letter prefix of the benchmark corpus expands to thousands of terms. The comparator matches all of them, so the limit
+    // is lifted far enough that the rows compare the same result sets.
+    private QueryEngineOptions Engine() => new() { Bm25 = new Bm25Parameters(_k1, _b), MaxExpandedTerms = 1 << 18 };
 
     private static BooleanQuery Match(MatchQuery m)
     {

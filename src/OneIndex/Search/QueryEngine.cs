@@ -239,7 +239,10 @@ public sealed class QueryEngine : IWeightFactory
         {
             int limit = options.MaxExpandedTerms;
             bool keepMost = options.Overflow == ExpansionOverflow.KeepMostFrequent;
-            var found = new SortedDictionary<byte[], long>(ByteArrayOrder.Instance);
+            int ceiling = keepMost ? ScanCeiling : limit;
+            var slots = new Dictionary<byte[], ExpandedTerm>(TermKeyComparer.Instance);
+            var lookup = slots.GetAlternateLookup<ReadOnlySpan<byte>>();
+            var perLeaf = new List<(ExpandedTerm Term, TermInfo Info)>?[context.Leaves.Count];
             foreach (LeafContext leaf in context.Leaves)
             {
                 if (leaf.Reader.GetTextField(def.Name) is not { } reader)
@@ -247,43 +250,89 @@ public sealed class QueryEngine : IWeightFactory
                     continue;
                 }
 
+                var entries = new List<(ExpandedTerm, TermInfo)>();
                 using ITermEnumerator terms = open(reader);
                 while (terms.MoveNext())
                 {
-                    byte[] key = terms.Term.ToArray(); // one copy per distinct term of an expansion, not a hot path
-                    if (found.TryGetValue(key, out long df))
+                    if (!lookup.TryGetValue(terms.Term, out ExpandedTerm? slot))
                     {
-                        found[key] = df + terms.Info.DocFreq;
-                        continue;
+                        if (slots.Count >= ceiling)
+                        {
+                            throw new TooManyTermsException(def.Name, ceiling);
+                        }
+
+                        slot = new ExpandedTerm(terms.Term.ToArray()); // one copy per distinct term of an expansion
+                        slots.Add(slot.Bytes, slot);
                     }
 
-                    if (found.Count >= (keepMost ? ScanCeiling : limit))
-                    {
-                        throw new TooManyTermsException(def.Name, keepMost ? ScanCeiling : limit);
-                    }
-
-                    found.Add(key, terms.Info.DocFreq);
+                    TermInfo info = terms.Info;
+                    slot.DocFreq += info.DocFreq;
+                    entries.Add((slot, info));
                 }
+
+                perLeaf[leaf.Ordinal] = entries;
             }
 
-            if (found.Count == 0)
+            if (slots.Count == 0)
             {
                 return EmptyWeight.Instance;
             }
 
-            IEnumerable<byte[]> chosen = found.Keys;
-            if (found.Count > limit)
+            // Past the limit only the most frequent terms are kept (ties by term bytes).
+            IEnumerable<ExpandedTerm> chosen = slots.Values;
+            if (slots.Count > limit)
             {
-                chosen = found.OrderByDescending(static kv => kv.Value).ThenBy(static kv => kv.Key, ByteArrayOrder.Instance).Take(limit).Select(static kv => kv.Key).Order(ByteArrayOrder.Instance);
+                chosen = slots.Values.OrderByDescending(static t => t.DocFreq).ThenBy(static t => t.Bytes, ByteArrayOrder.Instance).Take(limit);
+                foreach (ExpandedTerm t in slots.Values)
+                {
+                    t.Dropped = true;
+                }
+
+                foreach (ExpandedTerm t in chosen.ToList())
+                {
+                    t.Dropped = false;
+                }
             }
 
-            var children = new List<(Weight, Occur)>();
-            foreach (byte[] term in chosen)
+            byte[][] expanded = [.. chosen.Select(static t => t.Bytes).Order(ByteArrayOrder.Instance)];
+            Weight Disjunction()
             {
-                children.Add((TermWeight.Create(context, options.Bm25, [def], term, 1f), Occur.Should));
+                var children = new List<(Weight, Occur)>(expanded.Length);
+                foreach (byte[] term in expanded)
+                {
+                    children.Add((TermWeight.Create(context, options.Bm25, [def], term, 1f), Occur.Should));
+                }
+
+                return new BooleanWeight(children, 0, boost);
             }
 
-            return new BooleanWeight(children, 0, boost);
+            if (expanded.Length < ExpansionWeight.MinTerms)
+            {
+                return Disjunction();
+            }
+
+            FieldStatistics stats = context.GetFieldStatistics(def.Name);
+            var leafTerms = new (float Idf, TermInfo Info)[]?[perLeaf.Length];
+            for (int i = 0; i < perLeaf.Length; i++)
+            {
+                if (perLeaf[i] is not { } list)
+                {
+                    continue;
+                }
+
+                var kept = new List<(float, TermInfo)>(list.Count);
+                foreach ((ExpandedTerm t, TermInfo info) in list)
+                {
+                    if (!t.Dropped)
+                    {
+                        kept.Add((Bm25.Idf(stats.DocCount, t.DocFreq), info));
+                    }
+                }
+
+                leafTerms[i] = [.. kept];
+            }
+
+            return new ExpansionWeight(Bm25FField.Create(def.Name, def.Boost, stats, options.Bm25), leafTerms, options.Bm25.K1, boost, Disjunction);
         }
 
         private FieldDefinition RequireTextField(string name)

@@ -186,6 +186,43 @@ public sealed class QueryExecutionTests
     }
 
     [Fact]
+    public void ExpandedQueriesScoreExactlyLikeTheDisjunctionOfTheirTerms()
+    {
+        // Many terms and several segments: the expansion is evaluated term at a time and must equal the plain disjunction bit for bit.
+        var rng = new Random(21);
+        var docs = new List<(string, string, string, string, long)>();
+        for (int i = 0; i < 3000; i++)
+        {
+            int len = 3 + rng.Next(40);
+            docs.Add(("d" + i, "t", string.Join(' ', Enumerable.Range(0, len).Select(_ => "w" + (int)(200 * Math.Pow(rng.NextDouble(), 2)))), "a", i));
+        }
+
+        var (snap, searcher) = Build(docs, bufferedDocs: 700);
+        using (snap)
+        {
+            foreach (Query q in new Query[] { new PrefixQuery("body", "w1"), new PrefixQuery("body", "w"), new FuzzyQuery("body", "w12") { MaxEdits = 1 }, new FuzzyQuery("body", "w123") { MaxEdits = 2 } })
+            {
+                var terms = new SortedSet<string>(StringComparer.Ordinal);
+                foreach (LeafContext leaf in searcher.Context.Leaves)
+                {
+                    using ITermEnumerator e = q is PrefixQuery p ? leaf.Reader.GetTextField("body")!.GetTerms(System.Text.Encoding.UTF8.GetBytes(p.Prefix)) : leaf.Reader.GetTextField("body")!.Intersect(new OneIndex.Codecs.LevenshteinAutomaton(((FuzzyQuery)q).Term, ((FuzzyQuery)q).MaxEdits, true));
+                    while (e.MoveNext())
+                    {
+                        terms.Add(System.Text.Encoding.UTF8.GetString(e.Term));
+                    }
+                }
+
+                Assert.True(terms.Count >= ExpansionWeight.MinTerms, $"{q}: only {terms.Count} terms");
+                var plain = new BooleanQuery([.. terms.Select(t => new BooleanClause(new TermQuery("body", t), Occur.Should))]);
+                TopDocs expected = searcher.Search(plain, 50, countExactly: true);
+                TopDocs actual = searcher.Search(q, 50, countExactly: true);
+                Assert.Equal(expected.TotalHits, actual.TotalHits);
+                Assert.Equal(expected.Hits, actual.Hits);
+            }
+        }
+    }
+
+    [Fact]
     public void BooleanSemantics()
     {
         var (snap, searcher) = Build([("d0", "t", "a b c", "x", 0), ("d1", "t", "a b", "x", 1), ("d2", "t", "a", "x", 2), ("d3", "t", "c", "x", 3)]);
