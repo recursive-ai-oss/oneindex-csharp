@@ -47,6 +47,24 @@ static int Run(string[] args)
             return result.Failures == 0 ? 0 : 1;
         }
 
+        case "sparse-child":
+            return SparseKill.RunChild(Option("dir", "."), Number("seed", 1));
+
+        case "sparse-kill":
+        {
+            string sparseRoot = Option("dir", Path.Combine(Path.GetTempPath(), "oneindex-sparse-kill"));
+            string[] sparseChild = [Environment.ProcessPath!, .. Environment.GetCommandLineArgs().Take(1).Where(a => a.EndsWith(".dll", StringComparison.Ordinal))];
+            var sparseClock = Stopwatch.StartNew();
+            SparseKill.Result sr = SparseKill.Run(sparseRoot, Number("kills", 100), Number("seed", 1), Number("max-delay-ms", 600), sparseChild);
+            Console.WriteLine($"sparse-kill: {sr.Kills} kills (seed {Number("seed", 1)}), {sr.Commits} commits acknowledged, {sr.KilledDuringCommit} kills inside a commit call, {sr.Documents} documents checked, {sr.Failures} failures, {sparseClock.Elapsed.TotalSeconds:F0} s");
+            foreach (string m in sr.Messages.Take(20))
+            {
+                Console.WriteLine("  " + m);
+            }
+
+            return sr.Failures == 0 ? 0 : 1;
+        }
+
         case "embed-child":
             return EmbedKill.RunChild(Option("dir", "."), Number("seed", 1));
 
