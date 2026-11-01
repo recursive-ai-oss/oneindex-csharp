@@ -1,4 +1,5 @@
 using OneIndex.Index;
+using OneIndex.Queries;
 using OneIndex.Search;
 using OneIndex.Storage;
 using OneIndex.Vectors;
@@ -306,5 +307,73 @@ public sealed class VectorIndexTests
         IndexSearcher searcher = SnapshotSearch.CreateSearcher(damaged);
         CorruptIndexException e = Assert.Throws<CorruptIndexException>(() => searcher.Search(new KnnQuery("v", data[0], 5) { Exact = true }, 5));
         Assert.Contains(file.FileName, e.Message);
+    }
+}
+
+/// <summary>A mapped type with a vector property.</summary>
+public class Passage
+{
+    [SearchId]
+    public string Id { get; set; } = string.Empty;
+
+    [FullText]
+    public string Text { get; set; } = string.Empty;
+
+    [Keyword]
+    [Filterable]
+    public string Topic { get; set; } = string.Empty;
+
+    [Vector(Dimensions = 8, FlatThreshold = 10)]
+    public float[] Embedding { get; set; } = [];
+}
+
+public sealed class VectorHappyPathTests
+{
+    private static float[] Unit(Random rng)
+    {
+        var v = new float[8];
+        for (int i = 0; i < v.Length; i++)
+        {
+            v[i] = (float)(rng.NextDouble() - 0.5);
+        }
+
+        float n = MathF.Sqrt(v.Sum(x => x * x));
+        return v.Select(x => x / n).ToArray();
+    }
+
+    [Fact]
+    public void NearestSearchWithFiltersQueryJsonAndToolSchemaWork()
+    {
+        var rng = new Random(12);
+        using SearchIndex<Passage> index = SearchIndex.InMemory<Passage>();
+        var all = new List<Passage>();
+        for (int i = 0; i < 200; i++)
+        {
+            var p = new Passage { Id = "p" + i, Text = "passage " + i, Topic = "t" + (i % 4), Embedding = Unit(rng) };
+            all.Add(p);
+            index.Upsert(p);
+        }
+
+        index.Commit();
+        float[] q = Unit(rng);
+        SearchResults<Passage> hits = index.SearchVector(x => x.Embedding, q, neighbors: 30).Where(x => x.Topic == "t1").Take(10).Execute();
+        Assert.Equal(10, hits.Count);
+        Assert.All(hits, h => Assert.Equal("t1", h.Document.Topic));
+        List<string> expected = all.Where(p => p.Topic == "t1")
+            .OrderByDescending(p => p.Embedding.Zip(q, (a, b) => a * b).Sum()).ThenBy(p => p.Id, StringComparer.Ordinal).Take(10).Select(p => p.Id).ToList();
+        Assert.True(hits.Select(h => h.Id).Intersect(expected).Count() >= 9);
+        Assert.Equal(all.First(p => p.Id == hits[0].Id).Embedding, hits[0].Document.Embedding);
+        Assert.True(hits[0].Score >= hits[9].Score);
+
+        Search.Query knn = index.SearchVector(x => x.Embedding, q, neighbors: 5).Where(x => x.Topic == "t2").ToQuery();
+        string json = QueryJson.WriteQuery(knn);
+        Assert.Contains("\"type\":\"knn\"", json, StringComparison.Ordinal);
+        Search.Query back = QueryJson.Read("{\"v\":1,\"query\":" + json + "}", index.Schema).Query!;
+        Assert.Equal(knn, back);
+        QueryParseException bad = Assert.Throws<QueryParseException>(() => QueryJson.Read("{\"v\":1,\"query\":{\"type\":\"knn\",\"field\":\"Embedding\",\"vector\":[1,2]}}", index.Schema));
+        Assert.Contains("exactly 8 numbers", bad.Message, StringComparison.Ordinal);
+        Assert.Contains("knn0", SearchTool.For<Passage>(), StringComparison.Ordinal);
+        Assert.Throws<ArgumentException>(() => index.SearchVector(x => x.Embedding, new float[3]));
+        Assert.Throws<ArgumentException>(() => index.SearchVector(x => x.Topic, q));
     }
 }

@@ -57,8 +57,20 @@ public sealed class VectorAttribute : Attribute
     /// <summary>The name of a text property to embed automatically when an embedder is configured. Default none: the application supplies the vector.</summary>
     public string? From { get; set; }
 
-    /// <summary>The vector length. Default 0: taken from the embedder.</summary>
+    /// <summary>The vector length. Required: 1 to 65,536. (A model-supplied length is added with automatic embedding.)</summary>
     public int Dimensions { get; set; }
+
+    /// <summary>How closeness is measured. Default <see cref="Vectors.VectorMetric.Cosine"/>.</summary>
+    public Vectors.VectorMetric Metric { get; set; }
+
+    /// <summary>HNSW's M, the links per node above layer 0 (twice that on layer 0), 2 to 256. Default 16.</summary>
+    public int M { get; set; } = 16;
+
+    /// <summary>HNSW's efConstruction, the candidate list size while building, M to 4096. Default 100.</summary>
+    public int EfConstruction { get; set; } = 100;
+
+    /// <summary>A segment with fewer vectors than this is searched exactly and gets no graph. Default 1000.</summary>
+    public int FlatThreshold { get; set; } = 1000;
 }
 
 /// <summary>

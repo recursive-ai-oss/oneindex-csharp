@@ -257,6 +257,32 @@ public static class SearchTool
             }, required: ["field", "north", "south", "west", "east"]));
         }
 
+        int knnIndex = 0;
+        foreach (FieldDefinition vf in schema.Fields.Where(static f => f.Type == FieldType.Vector && f.Indexed))
+        {
+            FieldDefinition vector = vf;
+            Def("knn" + (knnIndex++).ToString(System.Globalization.CultureInfo.InvariantCulture), () => Node(w, "knn", () =>
+            {
+                Field(w, [vector.Name]);
+                w.WriteStartObject("vector");
+                w.WriteString("type", "array");
+                w.WriteStartObject("items");
+                w.WriteString("type", "number");
+                w.WriteEndObject();
+                w.WriteNumber("minItems", vector.Dimensions);
+                w.WriteNumber("maxItems", vector.Dimensions);
+                w.WriteString("description", "The query embedding: exactly " + vector.Dimensions.ToString(System.Globalization.CultureInfo.InvariantCulture) + " numbers.");
+                w.WriteEndObject();
+                Int(w, "k", 1, KnnQuery.MaxK, "How many nearest documents to find. Default 10.");
+                Int(w, "ef", 1, KnnQuery.MaxK, "Search breadth, at least k. Larger is more accurate and slower. Default 100.");
+                Typed(w, "exact", "boolean", "Compare with every vector instead of the approximate graph search. Default false.");
+                w.WriteStartObject("filter");
+                w.WriteString("$ref", "#/$defs/node");
+                w.WriteString("description", "Only documents matching this query may be neighbours.");
+                w.WriteEndObject();
+            }, required: ["field", "vector"]));
+        }
+
         Def("bool", () => Node(w, "bool", () =>
         {
             foreach (string clause in ClauseNames)

@@ -432,6 +432,34 @@ public static partial class QueryJson
             case FunctionScoreQuery fs:
                 WriteFunctionScore(w, fs);
                 break;
+            case KnnQuery knn:
+                w.WriteString("type", "knn");
+                w.WriteString("field", knn.Field);
+                w.WriteStartArray("vector");
+                foreach (float x in knn.Vector)
+                {
+                    w.WriteNumberValue(x);
+                }
+
+                w.WriteEndArray();
+                w.WriteNumber("k", knn.K);
+                if (knn.Ef != 0)
+                {
+                    w.WriteNumber("ef", knn.Ef);
+                }
+
+                if (knn.Exact)
+                {
+                    w.WriteBoolean("exact", true);
+                }
+
+                if (knn.Filter is not null)
+                {
+                    w.WritePropertyName("filter");
+                    WriteNode(w, knn.Filter);
+                }
+
+                break;
             default:
                 throw new ArgumentException($"A {q.GetType().Name} cannot be written as query JSON.", nameof(q));
         }
@@ -518,7 +546,7 @@ internal sealed partial class QueryJsonReader
     private static readonly string[] Reserved = ["facets", "aggregations", "distinct", "hybrid", "vector"];
 
     private static readonly string[] NodeTypes =
-        ["matchAll", "text", "strict", "filter", "term", "phrase", "prefix", "fuzzy", "regex", "range", "exists", "multiFieldTerm", "geoRadius", "geoBoundingBox", "bool", "functionScore"];
+        ["matchAll", "text", "strict", "filter", "term", "phrase", "prefix", "fuzzy", "regex", "range", "exists", "multiFieldTerm", "geoRadius", "geoBoundingBox", "bool", "functionScore", "knn"];
 
     private readonly Schema _schema;
     private readonly UserTextCompiler _userText;
@@ -845,6 +873,8 @@ internal sealed partial class QueryJsonReader
                 return ReadBoolQuery(e, path, depth);
             case "functionScore":
                 return ReadFunctionScore(e, path, depth);
+            case "knn":
+                return ReadKnn(e, path, depth);
             default:
                 {
                     string? near = QuerySyntax.Nearest(type, NodeTypes);
@@ -852,6 +882,44 @@ internal sealed partial class QueryJsonReader
                     throw Err(Child(path, "type"), $"Unknown query type \"{type}\".{hint} Types: {string.Join(", ", NodeTypes)}.", near);
                 }
         }
+    }
+
+    // A nearest-neighbour node: {"type":"knn","field":"Embedding","vector":[...],"k":10,"ef":100,"exact":false,"filter":{...}}.
+    private Query ReadKnn(JsonElement e, string path, int depth)
+    {
+        CheckProperties(e, path, ["type", "field", "vector", "k", "ef", "exact", "filter", "boost"]);
+        string fp = Child(path, "field");
+        string name = ReadString(Require(e, path, "field"), fp);
+        if (!_schema.TryGetField(name, out FieldDefinition? def) || def.Type != FieldType.Vector || !def.Indexed)
+        {
+            throw Err(fp, $"\"{name}\" is not an indexed vector field.");
+        }
+
+        string vp = Child(path, "vector");
+        JsonElement array = Require(e, path, "vector");
+        if (array.ValueKind != JsonValueKind.Array || array.GetArrayLength() != def.Dimensions)
+        {
+            throw Err(vp, $"vector is an array of exactly {def.Dimensions.ToString(CultureInfo.InvariantCulture)} numbers.");
+        }
+
+        var vector = new float[def.Dimensions];
+        int i = 0;
+        foreach (JsonElement item in array.EnumerateArray())
+        {
+            vector[i] = (float)ReadNumber(item, Index(vp, i), -float.MaxValue, float.MaxValue);
+            if (!float.IsFinite(vector[i]))
+            {
+                throw Err(Index(vp, i), "The number does not fit a 32-bit float.");
+            }
+
+            i++;
+        }
+
+        int k = e.TryGetProperty("k", out JsonElement kk) ? ReadInt(kk, Child(path, "k"), 1, KnnQuery.MaxK) : 10;
+        int ef = e.TryGetProperty("ef", out JsonElement ee) ? ReadInt(ee, Child(path, "ef"), k, KnnQuery.MaxK) : 0;
+        bool exact = e.TryGetProperty("exact", out JsonElement ex) && ReadBool(ex, Child(path, "exact"));
+        Query? filter = e.TryGetProperty("filter", out JsonElement f) ? ReadNode(f, Child(path, "filter"), depth + 1) : null;
+        return Boosted(new KnnQuery(name, vector, k) { Ef = ef, Exact = exact, Filter = filter }, e, path);
     }
 
     private string ReadGeoField(JsonElement obj, string path)

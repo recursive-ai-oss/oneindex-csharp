@@ -200,6 +200,32 @@ public sealed partial class SearchQuery<T>
         }
 
         var translator = new FilterTranslator<T>(_index.Mapping);
+        if (textQuery is KnnQuery knn)
+        {
+            // Filters of a vector search select the candidates before the nearest are chosen (a full page of neighbours), not after.
+            var selected = new List<BooleanClause>();
+            if (knn.Filter is not null)
+            {
+                selected.Add(new BooleanClause(knn.Filter, Occur.Filter));
+            }
+
+            foreach (Expression<Func<T, bool>> f in _filters)
+            {
+                selected.Add(new BooleanClause(translator.Translate(f), Occur.Filter));
+            }
+
+            if (_extras is not null)
+            {
+                foreach (Search.Query f in _extras.FilterQueries)
+                {
+                    selected.Add(new BooleanClause(f, Occur.Filter));
+                }
+            }
+
+            KnnQuery filtered = knn with { Filter = selected.Count == 1 ? selected[0].Query : new BooleanQuery(selected) };
+            return _extras?.Function is { } fn ? Wrap(filtered, fn) : filtered;
+        }
+
         var clauses = new List<BooleanClause>(_filters.Length + 1) { new(scoring, Occur.Must) };
         foreach (Expression<Func<T, bool>> f in _filters)
         {
