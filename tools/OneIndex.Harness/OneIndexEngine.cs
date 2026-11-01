@@ -297,7 +297,10 @@ public sealed class OneIndexEngine : ITextEngine
     private static Query Proximate(BooleanQuery disjunction, string[] terms)
         => ProximityWeight > 0f && terms.Length >= 2 ? new ProximityQuery(disjunction, [.. terms.Select(t => new TermQuery("text", t))]) { Weight = ProximityWeight } : disjunction;
 
-    private static BooleanQuery TermsOf(string[] terms) => new([.. terms.Select(x => new BooleanClause(new TermQuery("text", x), Occur.Should))]);
+    // Information runs: ONEINDEX_CONJUNCTION=1 requires every word in the Terms rows, which is what user text compiles to by default (the match sets then differ from the comparator's).
+    private static readonly Occur TermsOccur = Environment.GetEnvironmentVariable("ONEINDEX_CONJUNCTION") == "1" ? Occur.Must : Occur.Should;
+
+    private static BooleanQuery TermsOf(string[] terms) => new([.. terms.Select(x => new BooleanClause(new TermQuery("text", x), TermsOccur))]);
 
     private QueryEngineOptions Engine() => new() { Bm25 = new Bm25Parameters(_k1, _b), Overflow = ExpansionOverflow.KeepMostFrequent };
 

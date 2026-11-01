@@ -69,3 +69,17 @@ child. The root value is the text score, as for any hit (a test asserts it equal
 `tests/OneIndex.Tests/RankingTests.cs` compares the order of generated corpora against a brute-force sort by the rule tuple computed
 from the raw tokens (48 cases over four rule lists, 80 to 400 documents, several segments), and the order of equal tuples by score.
 Relevance numbers for the Meilisearch default order, as information, are in [relevance.md](relevance.md).
+
+## Relevance of the rules mode (information)
+
+`RankingRulesRelevanceReport` (a test that runs when `ONEINDEX_BEIR_DIR` is set) searches the BEIR sets through the typed search with the
+queries as written (typo tolerance and prefix search off, title weight 3). nDCG@10 under the BEIR convention, test queries:
+
+| Set | `words` only (any word, ties by BM25F) | `words, typo, proximity, attribute, exactness` | BM25F with the proximity bonus (docs/scoring.md) |
+|---|---|---|---|
+| SciFact (300) | 0.5555 | 0.5018 | 0.6918 |
+| SCIDOCS (1,000) | 0.1098 | 0.0964 | 0.1544 |
+
+Ranking by the number of matched words first is the wrong shape for long natural-language queries (most words are noise, so documents that
+happen to match one more noise word outrank the relevant ones), and the later rules reorder inside those buckets. This is why BM25F with
+the proximity bonus is the default and the rules are opt-in, for catalogues and short queries where the buckets are what the user wants.

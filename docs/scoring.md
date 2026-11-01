@@ -97,7 +97,30 @@ the document, take the occurrences of the query words in position order. Every t
 
 The default weight was chosen on the four BEIR gate sets; see below.
 
-{PROXRESULTS}
+Measured effect of the weight (BEIR gate sets):
+
+| Proximity weight | SciFact | ArguAna | SCIDOCS | NQ |
+|---|---|---|---|---|
+| 0 (no bonus) | 0.6912 \| 0.6998 | 0.4333 \| 0.5072 | 0.1531 \| 0.1601 | 0.3420 \| 0.3377 |
+| **0.1 (default)** | 0.6918 \| 0.7033 | 0.4347 \| 0.5067 | 0.1544 \| 0.1615 | 0.3452 \| 0.3412 |
+| 0.25 | 0.6920 \| 0.7032 | 0.4347 \| 0.5045 | 0.1555 \| 0.1623 | 0.3476 \| 0.3428 |
+| 0.5 | 0.6903 \| 0.6960 | 0.4343 \| 0.5007 | 0.1556 \| 0.1608 | 0.3451 \| 0.3384 |
+| 1 | 0.6726 \| 0.6831 | 0.4359 \| 0.4940 | 0.1548 \| 0.1593 | not run |
+| 2 | 0.6594 \| 0.6540 | 0.4327 \| 0.4810 | 0.1493 \| 0.1501 | not run |
+| Lucene.NET, summed fields (flat for SCIDOCS 0.1509 at 0.9/0.4) | 0.6647 \| 0.6628 | 0.4240 \| 0.4880 | 0.1587 \| 0.1619 | 0.3252 \| 0.3051 |
+
+Each cell is nDCG@10 under the BEIR convention at k1/b = 0.9/0.4 \| 1.2/0.75, BM25F with title weight 3 over the BEIR queries as OR-ed words, the bonus
+wrapped around them. Weight 0 is the earlier no-bonus score and reproduces the numbers above. Runs of the sweep on the other CPU architecture
+(x64 and arm64) gave identical values.
+
+- **Default 0.1.** It is at or above the no-bonus score on all four sets at both settings except ArguAna at 1.2/0.75 (0.5067 against 0.5072, within
+  noise). Gains at the default setting: SciFact +0.06 points, ArguAna +0.14, SCIDOCS +0.13, NQ +0.32. A weight of 0.25 gains more on NQ (+0.56) and
+  SCIDOCS (+0.24) but gives up 0.27 points on ArguAna at 1.2/0.75; from 0.5 up the bonus costs SciFact and ArguAna, and at 1 and 2 it costs clearly.
+  The sets with long queries (ArguAna) and many near-duplicate documents lose first because an additive bonus reorders near ties.
+- The first formulation of the bonus (unbounded idf-weighted, no length normalisation, weight 0.5) lost 0.6 points on SciFact and 2.0 on ArguAna at
+  1.2/0.75; the paper's form (word weight capped at 1, BM25 length normalisation) with a small weight does not.
+- **Hybrid.** With the bonus in the text arm at the default weight, hybrid (RRF, k 10, ratio 0.75) gives SciFact 0.7258, ArguAna 0.6105,
+  SCIDOCS 0.2061, mean 0.5141 (without it 0.7257, 0.6100, 0.2064, mean 0.5140): still above both arms on every set.
 
 ## Relevance results
 
