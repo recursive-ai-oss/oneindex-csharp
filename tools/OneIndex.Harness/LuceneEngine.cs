@@ -104,6 +104,7 @@ public sealed class LuceneEngine : ITextEngine
         _reader?.Dispose();
         _reader = DirectoryReader.Open(_dir!);
         _searcher = new LuceneIndexSearcher(_reader) { Similarity = new BM25Similarity(_k1, _b) };
+        Console.Error.WriteLine("segments: " + string.Join(",", _reader.Leaves.Select(l => l.Reader.MaxDoc)));
         _facetState = _settings!.Profile == IndexProfile.Bench ? new DefaultSortedSetDocValuesReaderState(_reader) : null;
     }
 

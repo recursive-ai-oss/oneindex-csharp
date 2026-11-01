@@ -32,6 +32,15 @@ public sealed class TieredMergePolicy
     /// <summary>A segment whose deleted share exceeds this percentage is rewritten alone. Default 33.</summary>
     public int DeletesPctAllowed { get; init; } = 33;
 
+    /// <summary>
+    /// Besides the tiers, the smallest segments merge when the largest of them is at most this many times the combined size of the
+    /// rest of the group, so segment sizes fall off geometrically and an index of any size keeps only a handful of segments. Every
+    /// query pays a fixed cost per segment (looking up each term, and for fuzzy and prefix expansion walking the top of each term
+    /// dictionary again), so fewer segments answer faster; the price is that each document is rewritten up to about log2 of the
+    /// number of flushes times, instead of about once per tier. 0 turns this off, leaving the plain tiered policy. Default 2.
+    /// </summary>
+    public double SizeRatio { get; init; } = 2;
+
     /// <summary>Plans merges.</summary>
     /// <param name="candidates">The segments not already being merged, in any order.</param>
     /// <returns>Disjoint groups of segment names to merge, each group in name order.</returns>
@@ -103,7 +112,67 @@ public sealed class TieredMergePolicy
             }
         }
 
+        if (SizeRatio > 0)
+        {
+            ConsolidateSmallest(ordered, taken, plans);
+        }
+
         return plans;
+    }
+
+    // The k smallest segments not already in a plan merge when the k-th is at most SizeRatio times the sum of the smaller ones
+    // (sizes below the floor count as the floor, so a stream of tiny flushes joins). The largest such k wins.
+    private void ConsolidateSmallest(List<MergeCandidate> ordered, HashSet<string> taken, List<IReadOnlyList<string>> plans)
+    {
+        foreach (IReadOnlyList<string> plan in plans)
+        {
+            foreach (string name in plan)
+            {
+                taken.Add(name);
+            }
+        }
+
+        var rest = new List<MergeCandidate>();
+        foreach (MergeCandidate c in ordered)
+        {
+            if (!taken.Contains(c.Name))
+            {
+                rest.Add(c);
+            }
+        }
+
+        rest.Sort(static (a, b) => a.LiveDocs != b.LiveDocs ? a.LiveDocs.CompareTo(b.LiveDocs) : string.CompareOrdinal(a.Name, b.Name));
+        double smaller = 0;
+        long docs = 0;
+        int best = 0;
+        for (int k = 1; k <= rest.Count && k <= MaxMergeAtOnce; k++)
+        {
+            int live = rest[k - 1].LiveDocs;
+            docs += live;
+            if (docs > MaxMergedSegmentDocs)
+            {
+                break;
+            }
+
+            if (k >= 2 && Math.Max(live, FloorSegmentDocs) <= SizeRatio * smaller)
+            {
+                best = k;
+            }
+
+            smaller += Math.Max(live, FloorSegmentDocs);
+        }
+
+        if (best >= 2)
+        {
+            var group = new List<string>(best);
+            for (int k = 0; k < best; k++)
+            {
+                group.Add(rest[k].Name);
+            }
+
+            group.Sort(StringComparer.Ordinal);
+            plans.Add(group);
+        }
     }
 }
 

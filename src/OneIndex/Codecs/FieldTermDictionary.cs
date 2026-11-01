@@ -248,7 +248,18 @@ internal sealed class FieldTermDictionary
     }
 
     // Little-endian unsigned number of 1 to 4 bytes; the caller has checked that they lie inside the automaton.
-    private static long ReadFixed(ReadOnlySpan<byte> fst, int pos, int width) => width switch
+    private static long ReadFixed(ReadOnlySpan<byte> fst, int pos, int width)
+    {
+        // One four-byte load and a mask when four bytes remain; the few numbers at the very end of the automaton take the byte loop.
+        if (fst.Length >= 4 && (uint)pos <= (uint)(fst.Length - 4))
+        {
+            return System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(fst.Slice(pos, 4)) & (0xFFFFFFFFu >> (8 * (4 - width)));
+        }
+
+        return ReadFixedAtEnd(fst, pos, width);
+    }
+
+    private static long ReadFixedAtEnd(ReadOnlySpan<byte> fst, int pos, int width) => width switch
     {
         1 => fst[pos],
         2 => fst[pos] | ((long)fst[pos + 1] << 8),
