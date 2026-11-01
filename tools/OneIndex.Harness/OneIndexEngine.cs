@@ -216,7 +216,7 @@ public sealed class OneIndexEngine : ITextEngine
 
     private static BooleanQuery TermsOf(string[] terms) => new([.. terms.Select(x => new BooleanClause(new TermQuery("text", x), Occur.Should))]);
 
-    private QueryEngineOptions Engine() => new() { Bm25 = new Bm25Parameters(_k1, _b) };
+    private QueryEngineOptions Engine() => new() { Bm25 = new Bm25Parameters(_k1, _b), Overflow = ExpansionOverflow.KeepMostFrequent };
 
     // Information runs only: ONEINDEX_TYPO=on matches the Bm25F layout's words with the default typo budgets and the typo factor.
     private static readonly bool TypoTolerant = Environment.GetEnvironmentVariable("ONEINDEX_TYPO") == "on";
