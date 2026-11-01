@@ -29,6 +29,8 @@ internal sealed class HnswBuilder : HnswGraph
     private int _entry = -1;
     private int _maxLevel;
     private int _inserted;
+    private int _seededStart;
+    private int _seededEnd;
 
     /// <summary>Creates a builder for all vectors of a set.</summary>
     /// <param name="values">The vectors, numbered from 0. Already scaled for the metric (unit length for cosine).</param>
@@ -93,12 +95,69 @@ internal sealed class HnswBuilder : HnswGraph
         return up.AsSpan(slot + 1, up[slot]);
     }
 
-    /// <summary>Inserts every vector in ordinal order.</summary>
+    /// <summary>
+    /// Starts from an existing graph over the first vectors of this set instead of from nothing: its nodes, levels and links are copied
+    /// with every node number moved up by <paramref name="offset"/>, and <see cref="InsertAll"/> then adds only the other vectors. This
+    /// is how a merge reuses the largest source segment's graph (Malkov and Yashunin section 4: the graph is built incrementally, so an
+    /// existing graph is a valid state to continue from). It must be called before any insertion, with a graph of the same M.
+    /// </summary>
+    /// <param name="source">The graph to continue from; not empty.</param>
+    /// <param name="offset">The number of its first node in this set; the source's nodes occupy <c>offset .. offset + source.Count - 1</c>.</param>
+    public void SeedFrom(HnswGraph source, int offset)
+    {
+        if (_inserted != 0 || _seededEnd != 0 || source.MaxConnections != _m || source.Count == 0 || offset < 0 || offset + source.Count > _values.Count)
+        {
+            throw new ArgumentException("The graph cannot seed this builder.", nameof(source));
+        }
+
+        for (int node = 0; node < source.Count; node++)
+        {
+            int target = offset + node;
+            int level = source.Level(node);
+            _levels[target] = (byte)level;
+            ReadOnlySpan<int> links = source.Neighbors(node, 0);
+            int at = target * (_m0 + 1);
+            _layer0[at] = links.Length;
+            for (int i = 0; i < links.Length; i++)
+            {
+                _layer0[at + 1 + i] = links[i] + offset;
+            }
+
+            if (level > 0)
+            {
+                int[] up = _upper[target] = new int[level * (_m + 1)];
+                for (int l = 1; l <= level; l++)
+                {
+                    ReadOnlySpan<int> upLinks = source.Neighbors(node, l);
+                    int slot = (l - 1) * (_m + 1);
+                    up[slot] = upLinks.Length;
+                    for (int i = 0; i < upLinks.Length; i++)
+                    {
+                        up[slot + 1 + i] = upLinks[i] + offset;
+                    }
+                }
+            }
+        }
+
+        _entry = source.EntryPoint + offset;
+        _maxLevel = source.MaxLevel;
+        _seededStart = offset;
+        _seededEnd = offset + source.Count;
+        _inserted = source.Count;
+    }
+
+    /// <summary>Inserts every vector in ordinal order, except the ones a seed graph already holds.</summary>
     /// <param name="cancellationToken">Cancels the build.</param>
     public void InsertAll(CancellationToken cancellationToken)
     {
-        for (int i = _inserted; i < _values.Count; i++)
+        for (int i = 0; i < _values.Count; i++)
         {
+            if (i >= _seededStart && i < _seededEnd)
+            {
+                i = _seededEnd - 1;
+                continue;
+            }
+
             if ((i & 255) == 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -153,7 +212,7 @@ internal sealed class HnswBuilder : HnswGraph
             _upper[node] = new int[level * (_m + 1)];
         }
 
-        _inserted = node + 1;
+        _inserted++;
         if (_entry < 0)
         {
             _entry = node;

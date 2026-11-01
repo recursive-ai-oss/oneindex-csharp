@@ -228,6 +228,45 @@ public sealed class VectorIndexTests
         Assert.Equal(Expected(data, deleted, probe, 5, metric), Ids(s2, s2.Search(new KnnQuery("v", probe, 5) { Exact = true }, 5)));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void MergingKeepsRecallWhetherOrNotItContinuesFromTheLargestGraph(bool reuse)
+    {
+        float[][] data = Cloud(13, 700, Dims);
+        bool saved = OneIndex.Codecs.VectorSegmentCodec.ReuseLargestGraph;
+        OneIndex.Codecs.VectorSegmentCodec.ReuseLargestGraph = reuse;
+        try
+        {
+            using IndexWriter writer = IndexWriter.Open(new MemoryStorage(), VectorSchema(VectorMetric.Cosine, flatThreshold: 20), new IndexWriterOptions { MaxBufferedDocuments = 400, AutoMerge = false });
+            Fill(writer, data, 0, 400);
+            writer.Flush();
+            Fill(writer, data, 400, 550);
+            writer.Flush();
+            Fill(writer, data, 550, 700);
+            writer.Commit();
+            writer.ForceMerge(1);
+            writer.Commit();
+            using IndexSnapshot snap = writer.OpenSnapshot();
+            Assert.Equal(1, snap.SegmentCount);
+            IndexSearcher searcher = SnapshotSearch.CreateSearcher(snap);
+            Assert.True(searcher.Context.Leaves[0].Reader.GetVectors("v") is { HasGraph: true, Count: 700 });
+            int found = 0;
+            float[][] queries = Cloud(14, 60, Dims);
+            foreach (float[] q in queries)
+            {
+                List<string> exact = Ids(searcher, searcher.Search(new KnnQuery("v", q, 10) { Exact = true }, 10));
+                found += Ids(searcher, searcher.Search(new KnnQuery("v", q, 10) { Ef = 60 }, 10)).Intersect(exact).Count();
+            }
+
+            Assert.True(found >= 0.96 * 600, $"recall {found / 600.0}");
+        }
+        finally
+        {
+            OneIndex.Codecs.VectorSegmentCodec.ReuseLargestGraph = saved;
+        }
+    }
+
     [Fact]
     public void FilteredKnnReturnsFullPagesFromTheFilteredSet()
     {

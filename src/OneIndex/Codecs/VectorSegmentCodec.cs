@@ -35,7 +35,18 @@ public sealed class VectorSegmentCodec : ISegmentCodec
         public int[]? OrdinalToDoc { get; } = ordinalToDoc;
 
         public HnswBuilder? Graph { get; set; }
+
+        /// <summary>The graph of a source segment this merge continues from, and where its first vector lands.</summary>
+        public HnswGraph? Seed { get; set; }
+
+        public int SeedOffset { get; set; }
     }
+
+    /// <summary>
+    /// Whether a merge continues from the largest source graph (when that source has no deleted vectors) instead of building all over.
+    /// Always true in the library; the benchmark switches it off to measure the difference.
+    /// </summary>
+    internal static bool ReuseLargestGraph { get; set; } = true;
 
     private static List<FieldDefinition> VectorFields(Schema schema)
     {
@@ -165,7 +176,35 @@ public sealed class VectorSegmentCodec : ISegmentCodec
             }
 
             var values = new MergedVectorValues(readers, [.. source], [.. ordinal], def.Dimensions);
-            payloads.Add(new Payload(def, values, source.Count == context.DocumentCount ? null : [.. newDoc]));
+            var payload = new Payload(def, values, source.Count == context.DocumentCount ? null : [.. newDoc]);
+            if (ReuseLargestGraph)
+            {
+                // A source whose vectors all survive keeps its numbering order, so its graph maps onto a contiguous range of the new
+                // set; the largest such graph saves the most insertions.
+                int bestSource = -1;
+                int offset = 0;
+                int first = 0;
+                for (int s = 0; s < readers.Length; s++)
+                {
+                    VectorFieldReader? r = readers[s];
+                    int live = source.Count(x => x == s);
+                    if (r?.Graph is { } g && live == r.Count && g.MaxConnections == def.HnswM && (bestSource < 0 || live > readers[bestSource]!.Count))
+                    {
+                        bestSource = s;
+                        offset = first;
+                    }
+
+                    first += live;
+                }
+
+                if (bestSource >= 0)
+                {
+                    payload.Seed = readers[bestSource]!.Graph;
+                    payload.SeedOffset = offset;
+                }
+            }
+
+            payloads.Add(payload);
         }
 
         Write(payloads, context.DocumentCount, sink, cancellationToken);
@@ -192,6 +231,11 @@ public sealed class VectorSegmentCodec : ISegmentCodec
             if (p.Values.Count >= p.Def.FlatThreshold && p.Values.Count >= 2)
             {
                 var builder = new HnswBuilder(p.Values, KindOf(p.Def.Metric), p.Def.HnswM, p.Def.EfConstruction, SeedFor(p.Def.Name));
+                if (p.Seed is not null)
+                {
+                    builder.SeedFrom(p.Seed, p.SeedOffset);
+                }
+
                 builder.InsertAll(cancellationToken);
                 p.Graph = builder;
             }

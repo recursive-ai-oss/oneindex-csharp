@@ -10,6 +10,8 @@
     <InternalsVisibleTo Include="OneIndex.Tests" />
     <InternalsVisibleTo Include="OneIndex.Fuzz" />
     <InternalsVisibleTo Include="OneIndex.Bench" />
+    <InternalsVisibleTo Include="OneIndex.VectorBench" />
+    <InternalsVisibleTo Include="OneIndex.VectorBench.Curiosity" />
   </ItemGroup>
 
   <!-- The source generator ships inside this package as an analyzer; it is built first and is not a runtime dependency. -->
