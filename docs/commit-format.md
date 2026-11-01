@@ -59,15 +59,17 @@ The codecs this build reads are a fixed list in `CodecRegistry`, each with the n
       u8      index options 0 none, 1 docs, 2 freqs, 3 positions, 4 offsets
       varint  dimensions    vector fields only
     string    identifier field name, empty when none
-    version 2 only: text settings (query-time; they never change what is indexed)
-      u8      flags         1 typo tolerance off, 2 no typos on numbers, 4 prefix search off
-      varint  word size for one typo, varint word size for two typos   0 to 255, one <= two
-      list    words that never get typos       list = varint count, then strings
-      list    fields without typos
-      list    stop words
-      varint  synonym rule count
-        list  from (a group's members, or the one-way word)
-        list  to (empty for a group)
+    version 2 only: varint section count, then per section (ids strictly ascending)
+      varint  section id    2 = text settings (query-time; they never change what is indexed)
+      bytes   section body  varint length, then:
+        u8    flags         1 typo tolerance off, 2 no typos on numbers, 4 prefix search off
+        varint word size for one typo, varint word size for two typos   0 to 255, one <= two
+        list  words that never get typos       list = varint count, then strings
+        list  fields without typos
+        list  stop words
+        varint synonym rule count
+          list from (a group's members, or the one-way word)
+          list to (empty for a group)
 
 A schema whose text settings are all defaults is written as version 1, byte for byte as before. A version 1 reader refuses version 2. Opening a writer with a schema that has the committed fields but different text settings is allowed: the new settings are used at once and the next commit records them.
 

@@ -119,6 +119,7 @@ public sealed class Schema : IEquatable<Schema>
     /// <summary>The newest schema format version this build reads and writes.</summary>
     public const int FormatVersion = 2;
 
+    private const int TextSettingsSection = 2;
     private static readonly byte[] MagicBytes = "OIXS"u8.ToArray();
     private readonly Dictionary<string, int> _ids;
     private readonly byte[] _serialized;
@@ -334,7 +335,12 @@ public sealed class Schema : IEquatable<Schema>
         sink.WriteString(schema.IdField ?? string.Empty);
         if (settings)
         {
-            schema.Settings.Write(sink);
+            // Version 2: a count of sections, then each as an id (strictly ascending) and length-prefixed bytes. Section 2 holds the text settings.
+            var section = new ByteSink();
+            schema.Settings.Write(section);
+            sink.WriteVarUInt(1);
+            sink.WriteVarUInt(TextSettingsSection);
+            sink.WriteBytes(section.WrittenSpan);
         }
 
         return sink.ToArray();
@@ -390,7 +396,28 @@ public sealed class Schema : IEquatable<Schema>
         string id = src.ReadString(limits.MaxStringBytes, "identifier field");
         if (version >= 2)
         {
-            builder.Settings = TextSettings.Read(ref src, limits);
+            int sections = src.ReadCount(16, "schema section count");
+            long previous = 0;
+            for (int i = 0; i < sections; i++)
+            {
+                long sectionId = src.ReadCount(1 << 20, "schema section id");
+                if (sectionId <= previous)
+                {
+                    throw new MalformedInputException("schema sections are not in ascending order");
+                }
+
+                previous = sectionId;
+                ReadOnlySpan<byte> body = src.ReadBytes(limits.MaxSchemaBytes, "schema section");
+                if (sectionId == TextSettingsSection)
+                {
+                    var inner = new ByteSource(body);
+                    builder.Settings = TextSettings.Read(ref inner, limits);
+                    if (inner.Remaining != 0)
+                    {
+                        throw new MalformedInputException("unexpected bytes after the text settings");
+                    }
+                }
+            }
         }
 
         if (src.Remaining != 0)
