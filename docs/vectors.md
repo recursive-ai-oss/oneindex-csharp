@@ -55,8 +55,13 @@ Implemented from Malkov and Yashunin, "Efficient and robust approximate nearest 
 World graphs", IEEE TPAMI 42(4), 2020 (arXiv:1603.09320): algorithm 1 (INSERT), 2 (SEARCH-LAYER), 4 (SELECT-NEIGHBORS-HEURISTIC, no
 extended candidates; connections dropped by pruning are not refilled, which is the default of an internal switch) and 5 (K-NN-SEARCH).
 
-* Parameters per field: `M` (default 16; layer 0 allows `2M`, the paper's `Mmax0`), `efConstruction` (default 100), flat threshold
+* Parameters per field: `M` (default 16; layer 0 allows `2M`, the paper's `Mmax0`; see the deviation below), `efConstruction` (default 100), flat threshold
   (default 1,000). Search breadth `ef` is a query parameter (`KnnQuery.Ef`); 0 uses `max(k, 100)`.
+* **Layer 0 keeps up to `2M` links chosen at insertion** (the paper chooses `M` and lets reverse links grow a list to `Mmax0`). Measured on the
+  384-dimension set (150,000 vectors) at the same build time, recall 0.90 is reached at `ef` 220 instead of 270. The upper layers choose `M`.
+* **Neighbours are checked before they are scored.** A search first collects the unvisited neighbours of the node it expands and asks the
+  scorer to touch each one's data (one cache line) before scoring the first, so the memory reads of the different neighbours overlap. The
+  graph, the visited order and the results are the same as without it.
 * **Layer assignment** draws the number of times in a row a 64-bit hash of (field seed, node number) is divisible by `M`: the same
   distribution as the paper's `floor(-ln(uniform) * 1/ln M)` (`P(level >= l) = M^-l`) without a logarithm, whose last bit could differ
   between platforms. The field seed is a fixed constant xor the CRC-32C of the field name. Levels stop at 24.
@@ -116,7 +121,55 @@ unreferenced files that are reclaimed.
   candidates (before the nearest are chosen), `Take`/`Skip` page within the `neighbors` found.
 * Query JSON: `{"type":"knn","field":"Embedding","vector":[...],"k":10,"ef":100,"exact":false,"filter":{...},"boost":1}`; the tool
   schema adds one such node per indexed vector field with the vector length fixed.
-* Hybrid fusion, reranking and quantized codecs are separate units.
+* A field with a compressed copy is searched on the copy and reranked exactly (next section). Hybrid fusion and reranking by models are separate.
+
+## Compressed copies
+
+A vector field may ask for a compressed copy of its vectors (`[Vector(Quantization = ...)]`, `FieldDefinition.Quantization`). The graph is
+built on the full-precision vectors, as always; the copy is what a search walks it with. The full-precision vectors stay in the segment and
+reorder the candidates, so a result's score is always the exact one, whatever the codec.
+
+| Codec | Per vector | Distance used while walking | Default oversample |
+|---|---|---|---|
+| `None` | the float vector | exact | 1 |
+| `Scalar8` ("int8") | `d` signed bytes + 16 | integer dot product of 8-bit codes, corrected by the cached interval | 2 |
+| `Scalar4` ("int4") | `ceil(d / 2)` bytes + 16 | integer dot product of 4-bit codes with the 8-bit query | 3 |
+| `OneBit` ("sign-bit") | `ceil(d / 64) * 8` bytes | Hamming distance of the sign bits (popcount) | 5 |
+
+* **Scalar codecs** (Veasey, "Understanding optimized scalar quantization", Elasticsearch Labs, 2024). Each vector gets its own interval
+  `[a, b]`; component `x` becomes the code `round((2^n - 1)(clamp(x, a, b) - a) / (b - a))`. The interval starts at the vector's mean plus or minus
+  a fixed number of standard deviations (the normal-distribution optimum: 2.514 for 4 bits, 3.611 for 8) clipped to its min and max, and is refined
+  by up to five rounds of coordinate descent on the paper's anisotropic error with lambda 0.1 (an error parallel to the vector counts ten times an
+  error perpendicular to it): for fixed codes the best `(a, b)` solves a 2 by 2 linear system, which is solved in closed form, and a round that does not
+  lower the error is discarded. The record keeps the codes, then `a`, the step `(b - a) / (2^n - 1)`, the sum of the codes and the squared length of the
+  original vector (little-endian `float`, `float`, `int`, `float`). Expanding `(a_x + s_x X)(a_y + s_y Y)` over the `d` components gives the dot
+  product from the integer `X . Y`, the two sums and the intervals; for the Euclidean metric the squared distance is `|x|^2 + |y|^2 - 2 x . y`. The query is
+  compressed to 8 bits with the same procedure whatever the document codec (the paper quantizes the query with at least 4). Int8 codes are stored as
+  `code - 128` so the signed-byte kernel applies (`a` moves by `128 * step`). Int4 codes are packed so that byte `j` holds component `j` in its low
+  nibble and component `ceil(d/2) + j` in its high nibble, which lets the kernel split a register into two halves without shuffling. Vectors are not
+  centred by a corpus mean, a deviation from the paper that keeps each record self-contained (a merge copies nothing).
+* **Sign bit** keeps one bit per component, set when the component is above zero, and compares by Hamming distance. It needs the cosine or
+  dot-product metric (a Euclidean field with it is a schema error). It is deliberately plain: no per-vector correction, no centering.
+* **Oversample.** A quantized search walks the graph with `width = max(ef, ceil(oversample * k))` and keeps the best `width` candidates by compressed
+  distance; every candidate is then measured against its full-precision vector and the best `k` are returned (ties towards the smaller ordinal).
+  `oversample` is a field setting (`Oversample`, 1 to 100; 0 means the codec default above) and `ef` is the query's (`KnnQuery.Ef`; 0 means
+  `max(k, 100)`), so at the default `ef` the oversample binds only when `oversample * k` exceeds 100.
+* **Exact and small cases use floats.** `Exact` searches, segments below the flat threshold (no graph, so no compressed copy is written), selective
+  filters that fall back to scanning, and walks that exceed their visit limit all use the full-precision vectors.
+* **Files.** Part `vecq` (magic `OIXQ`, version 1) beside `vectors` and `hnsw`, with the same header, footer and 64 KB blocks with per-block CRC-32C.
+  After the header: `u32` document count; for each quantized field with a graph, in name order, its records in blocks and the block CRC table.
+  Directory per field: name, dimensions, codec, record count, record bytes, records per block, data offset, CRC table offset and the CRC of the table.
+  A reader checks that the sections tile the file, that the counts equal the vectors file's, that record and block sizes follow from the codec, and
+  validates each block as it loads (finite correction factors, code sums within range for scalar codecs, zero padding bits after the last dimension for sign bits).
+  Damage raises `CorruptIndexException` naming the file.
+* **Schema.** Section 4 of the schema record (after section 3): a count, then for each vector field with a codec or an oversample, in ascending field
+  index, the field index, the codec byte and the oversample as the bits of a `float`. A schema without codecs is written byte for byte as before; a
+  reader that does not know section 4 skips it and searches the full-precision vectors, which is correct, only slower.
+* **Evolution.** Changing the codec or the oversample re-indexes the field from stored source in the background like a metric change. A segment whose
+  compressed copy does not match the schema's codec (written before the change) is searched on full-precision vectors until it is rebuilt.
+* **Merge** writes the compressed copy of the merged segment from its full-precision vectors; nothing is copied from the sources.
+* **Determinism.** Interval selection uses IEEE double arithmetic in a fixed order and integer codes; the integer kernels are exact at every width. The
+  records are therefore the same bytes on every machine (a test hashes 100 records of each codec and passes on x64 and arm64).
 
 ## Method of the measurements
 

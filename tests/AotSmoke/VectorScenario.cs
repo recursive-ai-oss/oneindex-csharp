@@ -37,12 +37,15 @@ internal static class VectorScenario
     {
         Schema schema = new SchemaBuilder().Id("id").Keyword("kind")
             .Add(new FieldDefinition("v", FieldType.Vector) { Dimensions = 6, FlatThreshold = 8, HnswM = 4, EfConstruction = 16 })
+            .Add(new FieldDefinition("v8", FieldType.Vector) { Dimensions = 6, FlatThreshold = 8, HnswM = 4, EfConstruction = 16, Quantization = VectorQuantization.Scalar8 })
+            .Add(new FieldDefinition("v4", FieldType.Vector) { Dimensions = 6, FlatThreshold = 8, HnswM = 4, EfConstruction = 16, Quantization = VectorQuantization.Scalar4 })
+            .Add(new FieldDefinition("v1", FieldType.Vector) { Dimensions = 6, FlatThreshold = 8, HnswM = 4, EfConstruction = 16, Quantization = VectorQuantization.OneBit, Oversample = 20 })
             .Build();
         var rng = new Random(5);
         using IndexWriter writer = IndexWriter.Open(new MemoryStorage(), schema, new IndexWriterOptions { MaxBufferedDocuments = 40, AutoMerge = false });
         for (int i = 0; i < 120; i++)
         {
-            writer.Upsert(new Document().Add("id", "d" + i).Add("kind", i % 3 == 0 ? "a" : "b").Add("v", Vector(rng)));
+            writer.Upsert(new Document().Add("id", "d" + i).Add("kind", i % 3 == 0 ? "a" : "b").Add("v", Vector(rng)).Add("v8", Vector(rng)).Add("v4", Vector(rng)).Add("v1", Vector(rng)));
         }
 
         writer.Commit();
@@ -58,6 +61,13 @@ internal static class VectorScenario
         Require(exact.Hits.Count == 5 && graph.Hits.Count == 5 && filtered.Hits.Count == 5, "vector hits");
         Require(exact.Hits.Select(h => h.DocId).Intersect(graph.Hits.Select(h => h.DocId)).Count() >= 4, "graph recall");
         Require(searcher.Context.Leaves[0].Reader.GetVectors("v") is { HasGraph: true, Count: 119 }, "graph after merge");
+        foreach (string field in new[] { "v8", "v4", "v1" })
+        {
+            // A compressed copy chooses candidates and the full-precision vectors order them, so the best hits agree with exact search.
+            TopDocs fastQuantized = searcher.Search(new KnnQuery(field, q, 5) { Ef = 100 }, 5);
+            TopDocs trueQuantized = searcher.Search(new KnnQuery(field, q, 5) { Exact = true }, 5);
+            Require(fastQuantized.Hits.Count == 5 && fastQuantized.Hits.Select(h => h.DocId).Intersect(trueQuantized.Hits.Select(h => h.DocId)).Count() >= 4, "quantized recall " + field);
+        }
         Require(searcher.Context.Leaves[0].Reader.GetVectors("v")!.Metric == VectorMetric.Cosine, "metric");
     }
 
