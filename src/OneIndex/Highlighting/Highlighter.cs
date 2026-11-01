@@ -118,6 +118,17 @@ public sealed class HighlightTerms
             return 0;
         }
 
+        // Only the query word itself is located; words matched through typos or as longer words are not highlighted.
+        public override int VisitTypoTerm(TypoTermQuery query)
+        {
+            foreach (string field in query.Fields)
+            {
+                owner.For(field).Words.Add(query.Term);
+            }
+
+            return 0;
+        }
+
         public override int VisitPhrase(PhraseQuery query)
         {
             if (query.Terms.Count == 1)

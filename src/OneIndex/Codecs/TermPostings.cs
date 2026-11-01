@@ -23,10 +23,11 @@ public sealed class TermPostings : PostingsIterator
     private readonly bool _fieldHasPositions;
     private readonly bool _fieldHasOffsets;
     private readonly int[] _docs = new int[BlockSize];
-    private readonly int[] _freqs = new int[BlockSize];
+    // Allocated when a caller asks for frequencies or positions: a documents-only iterator (prefix unions open hundreds) skips them.
+    private int[]? _freqs;
     private readonly uint[] _unpacked = new uint[BlockSize];
     private readonly byte[] _scratch = new byte[2 + (8 * BlockSize)];
-    private readonly byte[] _posBuffer = new byte[PositionBufferBytes];
+    private byte[]? _posBuffer;
 
     private bool _wantFreq;
     private bool _wantPos;
@@ -74,7 +75,7 @@ public sealed class TermPostings : PostingsIterator
     public override long Cost => _docFreq;
 
     /// <inheritdoc/>
-    public override int Frequency => _wantFreq ? _freqs[_index] : 1;
+    public override int Frequency => _wantFreq ? _freqs![_index] : 1;
 
     /// <inheritdoc/>
     public override int StartOffset => _startOffset;
@@ -103,6 +104,16 @@ public sealed class TermPostings : PostingsIterator
         if (term.DocFreq < 1 || term.DocFreq > _maxDoc || term.TotalTermFreq < term.DocFreq || term.PostingsOffset < IndexFile.HeaderLength || term.PostingsOffset >= _dataEnd)
         {
             throw Corrupt($"term statistics are invalid (docFreq {term.DocFreq}, offset {term.PostingsOffset})");
+        }
+
+        if (_wantFreq)
+        {
+            _freqs ??= new int[BlockSize];
+        }
+
+        if (_wantPos)
+        {
+            _posBuffer ??= new byte[PositionBufferBytes];
         }
 
         _docFreq = term.DocFreq;
@@ -154,6 +165,31 @@ public sealed class TermPostings : PostingsIterator
         _posBufPos = 0;
         _posBufLen = 0;
         _fresh = false;
+    }
+
+    /// <summary>
+    /// Sets the bit of every document of the term the instance was reset to, without iterating: the blocks are decoded one after the
+    /// other straight into the bit set. A term in one document needs only the header read by <see cref="Reset"/>.
+    /// </summary>
+    /// <param name="bits">One bit per segment-local document; at least <c>(maxDoc + 63) / 64</c> words.</param>
+    /// <exception cref="CorruptIndexException">The postings are invalid.</exception>
+    internal void AddDocumentsTo(ulong[] bits)
+    {
+        if (_docFreq == 1 && _blockCount == 1)
+        {
+            bits[_singleLastDoc >> 6] |= 1UL << (_singleLastDoc & 63);
+            return;
+        }
+
+        for (int block = 0; block < _blockCount; block++)
+        {
+            LoadBlock(block);
+            for (int i = 0; i < _blockN; i++)
+            {
+                int doc = _docs[i];
+                bits[doc >> 6] |= 1UL << (doc & 63);
+            }
+        }
     }
 
     /// <inheritdoc/>
@@ -252,7 +288,7 @@ public sealed class TermPostings : PostingsIterator
             throw new InvalidOperationException("Positions were not requested.");
         }
 
-        if (_doc < 0 || _doc == NoMoreDocs || _posRead >= _freqs[_index])
+        if (_doc < 0 || _doc == NoMoreDocs || _posRead >= _freqs![_index])
         {
             throw new InvalidOperationException("No position is left in the current document.");
         }
@@ -306,15 +342,15 @@ public sealed class TermPostings : PostingsIterator
                 _posAhead = 0;
                 for (int i = 0; i < index; i++)
                 {
-                    _posAhead += _freqs[i];
+                    _posAhead += _freqs![i];
                 }
             }
             else
             {
-                _posAhead += _freqs[_index] - _posRead;
+                _posAhead += _freqs![_index] - _posRead;
                 for (int i = _index + 1; i < index; i++)
                 {
-                    _posAhead += _freqs[i];
+                    _posAhead += _freqs![i];
                 }
             }
 
@@ -512,7 +548,7 @@ public sealed class TermPostings : PostingsIterator
                     throw Corrupt("frequency overflows");
                 }
 
-                _freqs[i] = (int)tmp[i] + 1;
+                _freqs![i] = (int)tmp[i] + 1;
             }
         }
 
@@ -583,7 +619,7 @@ public sealed class TermPostings : PostingsIterator
                 throw Corrupt("position data ends inside a number");
             }
 
-            byte b = _posBuffer[_posBufPos++];
+            byte b = _posBuffer![_posBufPos++];
             if (shift == 28 && b > 0x0F)
             {
                 throw Corrupt("position number overflows 32 bits");
@@ -613,11 +649,11 @@ public sealed class TermPostings : PostingsIterator
         int remaining = _posBufLen - _posBufPos;
         if (remaining > 0)
         {
-            Buffer.BlockCopy(_posBuffer, _posBufPos, _posBuffer, 0, remaining);
+            Buffer.BlockCopy(_posBuffer!, _posBufPos, _posBuffer!, 0, remaining);
         }
 
         long available = _dataEnd - _posNextLoad;
-        int want = (int)Math.Min(_posBuffer.Length - remaining, available);
+        int want = (int)Math.Min(_posBuffer!.Length - remaining, available);
         if (want > 0)
         {
             _file.ReadExactly(_posNextLoad, _posBuffer.AsSpan(remaining, want));

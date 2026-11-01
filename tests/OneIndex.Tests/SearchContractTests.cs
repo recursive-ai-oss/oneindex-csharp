@@ -134,7 +134,7 @@ public class SearchContractTests
             last = scorer.MinCompetitive;
         }
 
-        Assert.Equal(97f, scorer.MinCompetitive);
+        Assert.Equal(MathF.BitIncrement(97f), scorer.MinCompetitive); // a tie with the worst kept hit loses to its lower id
     }
 
     [Fact]

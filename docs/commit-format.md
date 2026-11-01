@@ -65,7 +65,7 @@ The codecs this build reads are a fixed list in `CodecRegistry`, each with the n
 ## Schema, versions 1 and 2
 
     4 bytes   "OIXS"
-    u32       version (1; 2 when the schema holds fields derived from JSON paths)
+    u32       version (1; 2 when the schema holds fields derived from JSON paths or text settings)
     varint    field count   at most 4,096
       string  name
       u8      type          1 text, 2 keyword, 3 integral, 4 fractional, 5 date, 6 bool, 7 geo point, 8 bytes, 9 vector, 10 json
@@ -77,10 +77,21 @@ The codecs this build reads are a fixed list in `CodecRegistry`, each with the n
     string    identifier field name, empty when none
     version 2 only:
     varint    section count
-      varint  section id    strictly ascending; 1 is the only id defined
+      varint  section id    strictly ascending; 1 = derived fields, 2 = text settings
       bytes   section body
 
-Sections with ids this build does not define are skipped on reading (their length is checked and they are dropped when the schema is written again). Section 1 lists the fields derived from the paths of JSON fields (dynamic.md): a varint count of at least 1, then for each, in ascending order, the varint field id of the derived field and the varint field id of the JSON field it belongs to (always an earlier field). A reader that meets a section id it does not know refuses the schema as unsupported instead of skipping it, because a section can change what the schema means. A later addition to the schema takes the next section id and a new schema version.
+Sections with ids this build does not define are skipped on reading (their length is checked and they are dropped when the schema is written again). Section 1 lists the fields derived from the paths of JSON fields (dynamic.md): a varint count of at least 1, then for each, in ascending order, the varint field id of the derived field and the varint field id of the JSON field it belongs to (always an earlier field). Section 2 holds the text settings (query-time; they never change what is indexed):
+
+        u8    flags         1 typo tolerance off, 2 no typos on numbers, 4 prefix search off
+        varint word size for one typo, varint word size for two typos   0 to 255, one <= two
+        list  words that never get typos       list = varint count, then strings
+        list  fields without typos
+        list  stop words
+        varint synonym rule count
+          list from (a group's members, or the one-way word)
+          list to (empty for a group)
+
+A schema whose text settings are all defaults and that has no derived fields is written as version 1, byte for byte as before. Opening a writer with a schema that has the committed fields but different text settings is allowed: the new settings are used at once and the next commit records them; they never trigger a rebuild.
 
 Fields keep declaration order; a field's position is its field id. The reader runs the same validation as the schema builder (unique names, types and options that make sense together, a stored single-valued keyword for the identifier).
 

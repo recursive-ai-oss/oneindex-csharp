@@ -37,7 +37,7 @@ public sealed class OneIndexEngine : ITextEngine
     }
 
     /// <inheritdoc/>
-    public bool Supports(Type queryType) => queryType == typeof(MatchQuery) || queryType == typeof(TermsQuery) || queryType == typeof(FacetQuery) || queryType == typeof(StatsQuery) || queryType == typeof(SortedQuery) || queryType == typeof(DecayedQuery) || queryType == typeof(FilteredQuery) || (queryType == typeof(GeoQuery) && WithGeo);
+    public bool Supports(Type queryType) => queryType == typeof(MatchQuery) || queryType == typeof(PrefixQuery) || queryType == typeof(FuzzyQuery) || queryType == typeof(TypoQuery) || queryType == typeof(TermsQuery) || queryType == typeof(FacetQuery) || queryType == typeof(StatsQuery) || queryType == typeof(SortedQuery) || queryType == typeof(DecayedQuery) || queryType == typeof(FilteredQuery) || (queryType == typeof(GeoQuery) && WithGeo);
 
     // The geo row indexes synthesized coordinates in a second field; it is opt-in so the other rows keep the matched index.
     private static bool WithGeo => Environment.GetEnvironmentVariable("ONEINDEX_BENCH_GEO") == "1";
@@ -146,6 +146,10 @@ public sealed class OneIndexEngine : ITextEngine
             DecayedQuery dq => new FunctionScoreQuery(TermsOf(dq.Terms), [new DecayFunction(DecayShape.Gauss, "len", dq.Origin, dq.Scale)]),
             FilteredQuery fq => Filtered(fq),
             GeoQuery g => new GeoRadiusQuery("loc", g.Latitude, g.Longitude, g.RadiusMeters),
+            PrefixQuery px => With(px.Required, new global::OneIndex.Search.PrefixQuery("text", px.Prefix)),
+            FuzzyQuery fz => new global::OneIndex.Search.FuzzyQuery("text", fz.Term) { MaxEdits = fz.MaxEdits },
+            TypoQuery ty when TypoMatched && ty.Prefix => With(ty.Required, LuceneShaped(ty.Word)),
+            TypoQuery ty => With(ty.Required, new TypoTermQuery(["text"], ty.Word) { MaxTypos = new TypoSettings().Budget(ty.Word.Length), Prefix = ty.Prefix }),
             _ => throw new NotSupportedException(query.GetType().Name),
         };
         if (query is FacetQuery)
@@ -251,9 +255,27 @@ public sealed class OneIndexEngine : ITextEngine
         _writer?.Dispose();
     }
 
+    // The required terms must all appear; the last clause is the one whose expansion is being measured.
+    // Information row: ONEINDEX_TYPO_MATCHED=1 runs the as-you-type typo row with the match set of the comparator's query (the word as a
+    // prefix, or the word within its typo budget with the first character fixed), which has no typos in the beginning of longer words.
+    private static readonly bool TypoMatched = Environment.GetEnvironmentVariable("ONEINDEX_TYPO_MATCHED") == "1";
+
+    private static BooleanQuery LuceneShaped(string word)
+    {
+        int edits = new TypoSettings().Budget(word.Length);
+        Query fuzzy = edits == 0 ? new TermQuery("text", word) : new global::OneIndex.Search.FuzzyQuery("text", word) { MaxEdits = edits, PrefixLength = 1 };
+        return new BooleanQuery([new BooleanClause(new global::OneIndex.Search.PrefixQuery("text", word), Occur.Should), new BooleanClause(fuzzy, Occur.Should)]);
+    }
+
+    private static BooleanQuery With(string[] required, Query last)
+        => new([.. required.Select(t => new BooleanClause(new TermQuery("text", t), Occur.Must)), new BooleanClause(last, Occur.Must)]);
+
     private static BooleanQuery TermsOf(string[] terms) => new([.. terms.Select(x => new BooleanClause(new TermQuery("text", x), Occur.Should))]);
 
-    private QueryEngineOptions Engine() => new() { Bm25 = new Bm25Parameters(_k1, _b) };
+    private QueryEngineOptions Engine() => new() { Bm25 = new Bm25Parameters(_k1, _b), Overflow = ExpansionOverflow.KeepMostFrequent };
+
+    // Information runs only: ONEINDEX_TYPO=on matches the Bm25F layout's words with the default typo budgets and the typo factor.
+    private static readonly bool TypoTolerant = Environment.GetEnvironmentVariable("ONEINDEX_TYPO") == "on";
 
     private static BooleanQuery Match(MatchQuery m)
     {
@@ -269,6 +291,7 @@ public sealed class OneIndexEngine : ITextEngine
         IEnumerable<Query> perTerm = m.Layout switch
         {
             FieldLayout.Flat => terms.Select(t => new TermQuery("all", t)),
+            FieldLayout.Bm25F when TypoTolerant => terms.Select(t => (Query)new TypoTermQuery(["title", "text"], t) { MaxTypos = new TypoSettings().Budget(t.Length) }),
             FieldLayout.Bm25F => terms.Select(t => new MultiFieldTermQuery(["title", "text"], t)),
             FieldLayout.MultiFieldSum => terms.SelectMany(t => new Query[] { new TermQuery("title", t), new TermQuery("text", t) }),
             _ => throw new NotSupportedException($"{m.Layout} needs a dis-max query, which OneIndex does not have; its default is {FieldLayout.Bm25F}."),
