@@ -28,6 +28,7 @@ internal static class Program
         ["strict"] = QueryTextTargets.RunStrict,
         ["filter"] = QueryTextTargets.RunFilter,
         ["queryjson"] = QueryTextTargets.RunJson,
+        ["vectors"] = VectorTarget.Run,
     };
 
     private static int Main(string[] args)
@@ -84,6 +85,9 @@ internal static class Program
                     break;
                 case "queryjson":
                     QueryTextTargets.WriteSeeds(args[2], 2);
+                    break;
+                case "vectors":
+                    VectorTarget.WriteSeeds(args[2]);
                     break;
                 default:
                     CommitTarget.WriteSeeds(args[2]);

@@ -274,6 +274,49 @@ public sealed class VectorIndexTests
     }
 
     [Fact]
+    public void MutatedVectorAndGraphFilesOnlyEverRaiseCorruption()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "oneindex-vector-seeds-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            OneIndex.Fuzz.VectorTarget.WriteSeeds(dir);
+            var rng = new Random(77);
+            int survived = 0;
+            foreach (string seed in Directory.GetFiles(dir))
+            {
+                byte[] original = File.ReadAllBytes(seed);
+                for (int round = 0; round < 600; round++)
+                {
+                    byte[] input = (byte[])original.Clone();
+                    input[0] = (byte)((input[0] & ~7) | rng.Next(8));
+                    int edits = 1 + rng.Next(4);
+                    for (int e = 0; e < edits; e++)
+                    {
+                        // Half of the edits land in the last 400 bytes, where the directory and the upper layers are.
+                        int at = rng.Next(2) == 0 ? input.Length - 1 - IndexFile.FooterLength - rng.Next(Math.Min(400, input.Length - 20)) : 1 + rng.Next(input.Length - 1);
+                        input[at] = (byte)rng.Next(256);
+                    }
+
+                    if (rng.Next(10) == 0)
+                    {
+                        Array.Resize(ref input, 1 + rng.Next(input.Length));
+                    }
+
+                    OneIndex.Fuzz.VectorTarget.Run(input);
+                    survived++;
+                }
+            }
+
+            Assert.Equal(1200, survived);
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
+    [Fact]
     public void ADamagedVectorBlockRaisesCorruptionNamingTheFile()
     {
         float[][] data = Cloud(11, 200, Dims);

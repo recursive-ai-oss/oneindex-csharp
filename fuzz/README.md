@@ -17,6 +17,7 @@
 | `strict` | UTF-16 text | the strict query parser, its printer and binder: only `QueryParseException` may come out; what parses prints and reads back to an equal tree; the compiled query runs on a small index |
 | `filter` | UTF-16 text | the filter-string parser and printer (geo conditions included), same checks |
 | `queryjson` | UTF-8 bytes | the query JSON reader and writer (geo nodes, function-score nodes, `sort` and `searchAfter` included): only `QueryParseException`; write then read gives an equal request; the compiled query runs, and a sorted request runs its first page and a page after its cursor |
+| `vectors` | the vectors file or the graph file of a segment (byte 0: bit 0 repairs header and footer, bit 1 picks the graph file, bit 2 skips block checksums) | the directory, the ordinal map, the blocks and the upper layers; every stored vector, exact and graph searches with deletes and a filter |
 
 Only `CorruptIndexException` (and its subclass `UnsupportedFormatException`) may come out of a reader. Any other exception, a failed invariant, a hang (`-timeout`) or a memory blow-up (`-rss_limit_mb`) is a finding.
 

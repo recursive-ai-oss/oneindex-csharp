@@ -20,6 +20,12 @@ internal static class VectorFiles
         }
     }
 
+    /// <summary>
+    /// Whether blocks and tables are checked against their checksums when read. Always true in the library; the fuzz target turns it off
+    /// for a single input so that mutated bytes reach the structure checks behind the checksums.
+    /// </summary>
+    internal static bool VerifyChecksums { get; set; } = true;
+
     public static void EnsureLittleEndian()
     {
         // Touching the class runs the static check.
@@ -113,6 +119,7 @@ internal sealed class BlockCache
 
     public BlockCache(IRangeReader file, long dataOffset, long dataLength, int blockBytes, uint[] crcs, Action<byte[], int>? validate)
     {
+        VectorFiles.EnsureLittleEndian();
         _file = file;
         _dataOffset = dataOffset;
         _dataLength = dataLength;
@@ -136,7 +143,7 @@ internal sealed class BlockCache
         int length = (int)Math.Min(_blockBytes, _dataLength - start);
         var bytes = new byte[length];
         _file.ReadExactly(_dataOffset + start, bytes);
-        uint actual = Crc32C.Compute(bytes);
+        uint actual = VectorFiles.VerifyChecksums ? Crc32C.Compute(bytes) : _crcs[block];
         if (actual != _crcs[block])
         {
             throw new CorruptIndexException(_file.Name, $"block {block} fails its checksum (stored {_crcs[block]:X8}, computed {actual:X8})");
@@ -151,7 +158,7 @@ internal sealed class BlockCache
     {
         var bytes = new byte[length];
         file.ReadExactly(offset, bytes);
-        if (Crc32C.Compute(bytes) != expectedCrc)
+        if (VectorFiles.VerifyChecksums && Crc32C.Compute(bytes) != expectedCrc)
         {
             throw new CorruptIndexException(file.Name, $"{what} fails its checksum");
         }
