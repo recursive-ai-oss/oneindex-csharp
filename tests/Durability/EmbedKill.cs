@@ -23,7 +23,7 @@ public sealed class EmbeddedDocument
 }
 
 /// <summary>A deterministic embedder that is slow enough for a kill to land while it works.</summary>
-public sealed class SlowFakeEmbedder : IEmbedder
+public sealed class SlowFakeEmbedder(int sleepMs = 0) : IEmbedder
 {
     /// <inheritdoc/>
     public string ModelId => "fake-8";
@@ -50,7 +50,11 @@ public sealed class SlowFakeEmbedder : IEmbedder
     /// <inheritdoc/>
     public void Embed(IReadOnlyList<string> texts, EmbeddingRole role, Span<float> destination, CancellationToken cancellationToken = default)
     {
-        Thread.Sleep(3);
+        if (sleepMs > 0)
+        {
+            Thread.Sleep(sleepMs);
+        }
+
         for (int i = 0; i < texts.Count; i++)
         {
             VectorOf(texts[i], role).CopyTo(destination.Slice(i * 8, 8));
@@ -100,7 +104,9 @@ public static class EmbedKill
     /// <summary>The writer child: random upserts and deletes with a commit every few operations, reporting PRE/ACK lines.</summary>
     public static int RunChild(string directory, int seed)
     {
-        using SearchIndex<EmbeddedDocument> index = SearchIndex.Open<EmbeddedDocument>(directory, new SlowFakeEmbedder());
+        // Odd seeds embed slowly and commit rarely, so kills land inside embedding; even seeds commit often, so they land inside commits.
+        bool slow = seed % 2 != 0;
+        using SearchIndex<EmbeddedDocument> index = SearchIndex.Open<EmbeddedDocument>(directory, new SlowFakeEmbedder(slow ? 20 : 2));
         SortedDictionary<string, string> model = Read(index);
         Console.Out.WriteLine("READY");
         var rng = new Random(seed);
@@ -137,7 +143,7 @@ public static class EmbedKill
                 model.Remove(id);
             }
 
-            if (++since >= 2 + rng.Next(15))
+            if (++since >= (slow ? 8 + rng.Next(30) : 2 + rng.Next(15)))
             {
                 since = 0;
                 Console.Out.WriteLine("PRE " + Hash(model));
