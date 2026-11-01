@@ -53,7 +53,7 @@ public sealed class LuceneEngine : ITextEngine
     }
 
     /// <inheritdoc/>
-    public bool Supports(Type queryType) => true;
+    public bool Supports(Type queryType) => queryType != typeof(GeoQuery); // no spatial module in the matched comparator setup
 
     /// <inheritdoc/>
     public void Create(EngineSettings settings)
