@@ -117,27 +117,41 @@ public sealed class FieldDefinition
 public sealed class Schema : IEquatable<Schema>
 {
     /// <summary>The newest schema format version this build reads and writes.</summary>
-    public const int FormatVersion = 1;
+    public const int FormatVersion = 2;
 
+    private const int TextSettingsSection = 2;
     private static readonly byte[] MagicBytes = "OIXS"u8.ToArray();
     private readonly Dictionary<string, int> _ids;
     private readonly byte[] _serialized;
 
-    internal Schema(IReadOnlyList<FieldDefinition> fields, string? idField, IndexLimits limits)
+    internal Schema(IReadOnlyList<FieldDefinition> fields, string? idField, IndexLimits limits, TextSettings? settings = null)
     {
         Fields = [.. fields];
         IdField = idField;
+        Settings = settings ?? TextSettings.Default;
         _ids = new Dictionary<string, int>(fields.Count, StringComparer.Ordinal);
         for (int i = 0; i < fields.Count; i++)
         {
             _ids.Add(fields[i].Name, i);
         }
 
-        _serialized = Write(this);
+        _serialized = Write(this, true);
         if (_serialized.Length > limits.MaxSchemaBytes)
         {
             throw new ArgumentException($"The serialized schema is {_serialized.Length} bytes, over the limit of {limits.MaxSchemaBytes}.");
         }
+    }
+
+    /// <summary>The query-time text settings (typo tolerance, as-you-type, synonyms, stop words) recorded with the schema. Default <see cref="TextSettings.Default"/>.</summary>
+    public TextSettings Settings { get; }
+
+    /// <summary>Whether the other schema declares the same fields and identifier, ignoring <see cref="Settings"/>. Settings only affect queries, so a schema that differs only in them can be adopted without rebuilding.</summary>
+    /// <param name="other">The schema to compare with.</param>
+    /// <returns><see langword="true"/> when the fields match.</returns>
+    public bool HasSameFields(Schema other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        return Write(this, false).AsSpan().SequenceEqual(Write(other, false));
     }
 
     /// <summary>The empty schema.</summary>
@@ -294,15 +308,18 @@ public sealed class Schema : IEquatable<Schema>
         _ => false,
     };
 
-    private static byte[] Write(Schema schema)
+    // Version 1 holds no settings; version 2 appends them. Default settings are written as version 1 so that indexes that never used them
+    // keep their bytes.
+    private static byte[] Write(Schema schema, bool withSettings)
     {
+        bool settings = withSettings && !schema.Settings.IsDefault;
         var sink = new ByteSink();
         foreach (byte b in MagicBytes)
         {
             sink.WriteByte(b);
         }
 
-        sink.WriteUInt32(FormatVersion);
+        sink.WriteUInt32(settings ? 2u : 1u);
         sink.WriteVarUInt((ulong)schema.Fields.Count);
         foreach (FieldDefinition f in schema.Fields)
         {
@@ -316,6 +333,16 @@ public sealed class Schema : IEquatable<Schema>
         }
 
         sink.WriteString(schema.IdField ?? string.Empty);
+        if (settings)
+        {
+            // Version 2: a count of sections, then each as an id (strictly ascending) and length-prefixed bytes. Section 2 holds the text settings.
+            var section = new ByteSink();
+            schema.Settings.Write(section);
+            sink.WriteVarUInt(1);
+            sink.WriteVarUInt(TextSettingsSection);
+            sink.WriteBytes(section.WrittenSpan);
+        }
+
         return sink.ToArray();
     }
 
@@ -367,6 +394,32 @@ public sealed class Schema : IEquatable<Schema>
         }
 
         string id = src.ReadString(limits.MaxStringBytes, "identifier field");
+        if (version >= 2)
+        {
+            int sections = src.ReadCount(16, "schema section count");
+            long previous = 0;
+            for (int i = 0; i < sections; i++)
+            {
+                long sectionId = src.ReadCount(1 << 20, "schema section id");
+                if (sectionId <= previous)
+                {
+                    throw new MalformedInputException("schema sections are not in ascending order");
+                }
+
+                previous = sectionId;
+                ReadOnlySpan<byte> body = src.ReadBytes(limits.MaxSchemaBytes, "schema section");
+                if (sectionId == TextSettingsSection)
+                {
+                    var inner = new ByteSource(body);
+                    builder.Settings = TextSettings.Read(ref inner, limits);
+                    if (inner.Remaining != 0)
+                    {
+                        throw new MalformedInputException("unexpected bytes after the text settings");
+                    }
+                }
+            }
+        }
+
         if (src.Remaining != 0)
         {
             throw new MalformedInputException($"{src.Remaining} unexpected bytes follow the schema");
@@ -397,6 +450,9 @@ public sealed class SchemaBuilder
     }
 
     internal string? IdFieldName { get; set; }
+
+    /// <summary>The query-time text settings the schema carries. Default <see cref="TextSettings.Default"/>.</summary>
+    public TextSettings Settings { get; set; } = TextSettings.Default;
 
     /// <summary>Adds a field with explicit options.</summary>
     /// <param name="field">The field.</param>
@@ -502,7 +558,8 @@ public sealed class SchemaBuilder
             }
         }
 
-        return new Schema(_fields, IdFieldName, _limits);
+        Settings.Validate();
+        return new Schema(_fields, IdFieldName, _limits, Settings);
     }
 
     private void Validate(FieldDefinition f)

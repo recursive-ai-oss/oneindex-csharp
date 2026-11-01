@@ -83,6 +83,11 @@ public abstract class QueryVisitor<TResult>
     /// <returns>The result.</returns>
     public virtual TResult VisitFunctionScore(FunctionScoreQuery query) => VisitUnknown(query);
 
+    /// <summary>Visits a typo-tolerant term query.</summary>
+    /// <param name="query">The query.</param>
+    /// <returns>The result.</returns>
+    public virtual TResult VisitTypoTerm(TypoTermQuery query) => VisitUnknown(query);
+
     /// <summary>Called for a kind the visitor does not handle.</summary>
     /// <param name="query">The query.</param>
     /// <returns>Never returns normally.</returns>
@@ -311,4 +316,48 @@ public sealed record GeoBoundingBoxQuery(string Field, double North, double Sout
 {
     /// <inheritdoc/>
     public override TResult Accept<TResult>(QueryVisitor<TResult> visitor) => visitor.VisitGeoBoundingBox(this);
+}
+
+/// <summary>
+/// One analyzed query word, matched in one or more fields as itself, with typos, and optionally as the beginning of longer words
+/// (as-you-type). Every indexed word that matches is scored like a term query and multiplied by its typo and exactness factors
+/// (<see cref="TypoMatch"/>); with no typos allowed and no prefix this is the same as <see cref="MultiFieldTermQuery"/>.
+/// </summary>
+/// <param name="Fields">The fields to search; they are scored together as one BM25F term. Must be text fields and not repeat.</param>
+/// <param name="Term">The analyzed query word.</param>
+public sealed record TypoTermQuery(IReadOnlyList<string> Fields, string Term) : Query
+{
+    /// <summary>The most typos a matching word may have, 0 to 2. Default 2.</summary>
+    public int MaxTypos { get; init; } = 2;
+
+    /// <summary>Whether words that begin like the query word (with typos allowed in that beginning) match too. Default <see langword="false"/>.</summary>
+    public bool Prefix { get; init; }
+
+    /// <summary>Fields of <see cref="Fields"/> in which no typos are allowed (the word and, with <see cref="Prefix"/>, its extensions still match). Default none.</summary>
+    public IReadOnlyList<string> ExactFields { get; init; } = [];
+
+    /// <inheritdoc/>
+    public bool Equals(TypoTermQuery? other)
+        => other is not null && Term == other.Term && MaxTypos == other.MaxTypos && Prefix == other.Prefix && Boost.Equals(other.Boost)
+            && Fields.SequenceEqual(other.Fields) && ExactFields.SequenceEqual(other.ExactFields);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        // In-process hash tables only; never persisted.
+        var hash = default(HashCode);
+        hash.Add(Term);
+        hash.Add(MaxTypos);
+        hash.Add(Prefix);
+        hash.Add(Boost);
+        foreach (string f in Fields)
+        {
+            hash.Add(f);
+        }
+
+        return hash.ToHashCode();
+    }
+
+    /// <inheritdoc/>
+    public override TResult Accept<TResult>(QueryVisitor<TResult> visitor) => visitor.VisitTypoTerm(this);
 }

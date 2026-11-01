@@ -220,22 +220,25 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
     {
         CommitInfo? commit = CommitProtocol.OpenLatest(storage, options.Limits, cancellationToken);
         Schema effective;
+        bool settingsChanged = false;
         if (commit is not null && !commit.SchemaBytes.IsEmpty)
         {
             Schema committed = Schema.Deserialize(commit.SchemaBytes.Span, options.Limits);
-            if (schema is not null && !schema.Equals(committed))
+            if (schema is not null && !schema.Equals(committed) && !schema.HasSameFields(committed))
             {
                 throw new ArgumentException("The schema differs from the one recorded in the index; schema changes are not supported by the writer.", nameof(schema));
             }
 
-            effective = committed;
+            // The same fields with different text settings: settings only affect queries, so the caller's apply now and the next commit records them.
+            settingsChanged = schema is not null && !schema.Equals(committed);
+            effective = settingsChanged ? schema! : committed;
         }
         else
         {
             effective = schema ?? throw new ArgumentException("A new index needs a schema.", nameof(schema));
         }
 
-        var writer = new IndexWriter(storage, effective, options, writerLock);
+        var writer = new IndexWriter(storage, effective, options, writerLock) { SchemaSettingsChanged = settingsChanged };
         try
         {
             writer.Recover(commit, cancellationToken);
@@ -248,6 +251,9 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
             throw;
         }
     }
+
+    /// <summary>Whether the schema given to <c>Open</c> had the committed fields but different text settings. The new settings are in force and the next commit records them.</summary>
+    public bool SchemaSettingsChanged { get; private init; }
 
     /// <summary>Opens the writer (see <see cref="Open(IStorage, Schema?, IndexWriterOptions?, CancellationToken)"/>).</summary>
     /// <param name="storage">A writable storage.</param>
