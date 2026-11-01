@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+- Filtered nearest-neighbour search: a filter now steers the HNSW walk (only passing documents are scored, with neighbours-of-neighbours expansion through rejected nodes, after the ACORN paper) and a selective filter switches to an exact scan of the passing vectors; both work on the compressed copies.
+
 ## [0.1.0-preview.1] - 2026-11-01
 
 - Automatic embedding: `[Vector(From = ...)]` embeds the source text at upsert through the index's embedder (`SearchIndex.Open<T>(path, embedder)` or `SearchEmbedders.Default`; `BgeSmallEmbedder.UseAsDefault()` in the models package), keeps the text and model identity digest beside the vector in stored source so reindexing, reopening, merges and schema rebuilds never embed unchanged text, and `ReembedStale` after a model change.
