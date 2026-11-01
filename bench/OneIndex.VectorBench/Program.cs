@@ -40,6 +40,7 @@ internal static class Program
         int passes = int.Parse(Option("passes", "3"), CultureInfo.InvariantCulture);
         string scratch = Option("scratch", Path.GetTempPath());
         const int K = 10;
+        OneIndex.Vectors.HnswBuilder.KeepPruned = Option("keep-pruned", "0") == "1";
 
         JsonElement manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, "manifest.json"))).RootElement;
         int dims = manifest.GetProperty("dimensions").GetInt32();

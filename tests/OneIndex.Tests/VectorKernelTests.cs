@@ -45,7 +45,7 @@ public sealed class VectorKernelTests
     {
         var rng = new Random(18);
         int checkedCases = 0;
-        for (int n = 0; n <= 300; n++)
+        foreach (int n in Enumerable.Range(0, 301).Concat([384, 768, 1000, 1024, 1536]))
         {
             for (int rep = 0; rep < 4; rep++)
             {

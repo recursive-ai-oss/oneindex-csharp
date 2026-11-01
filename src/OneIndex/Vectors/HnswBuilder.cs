@@ -11,6 +11,13 @@ internal sealed class HnswBuilder : HnswGraph
     // The deepest layer a node can reach; with M = 16 a node gets to layer 16 once in 16^16 draws.
     private const int MaxLevelCap = 24;
 
+    /// <summary>
+    /// Whether neighbour selection tops a node's links up to M with the candidates the heuristic pruned (the paper's keepPrunedConnections).
+    /// Off by default: it makes the build slower and, on the embedding sets measured, not the search faster at equal recall
+    /// (docs/vectors.md). The benchmark runner switches it on to measure.
+    /// </summary>
+    internal static bool KeepPruned { get; set; }
+
     private readonly VectorValues _values;
     private readonly DistanceKind _kind;
     private readonly int _m;
@@ -354,7 +361,7 @@ internal sealed class HnswBuilder : HnswGraph
         }
 
         // keepPrunedConnections: top up with the nearest of the pruned ones.
-        for (int i = 0; i < dropped && kept < m; i++)
+        for (int i = 0; KeepPruned && i < dropped && kept < m; i++)
         {
             chosen[kept++] = _discarded[i];
         }
