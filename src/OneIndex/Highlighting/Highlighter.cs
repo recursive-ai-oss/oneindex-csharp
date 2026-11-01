@@ -161,6 +161,8 @@ public sealed class HighlightTerms
 
         public override int VisitKnn(KnnQuery query) => 0;
 
+        public override int VisitSparse(SparseQuery query) => 0;
+
         public override int VisitHybrid(HybridQuery query)
         {
             query.Text.Accept(this);

@@ -36,6 +36,9 @@ public enum FieldType : byte
 
     /// <summary>A JSON value, stored whole and indexed by leaf path (docs/dynamic.md).</summary>
     Json = 10,
+
+    /// <summary>A learned sparse vector (token to weight), indexed as postings whose frequencies are quantized weights (docs/sparse.md).</summary>
+    Sparse = 11,
 }
 
 /// <summary>How much of each posting a text field records.</summary>
@@ -412,6 +415,7 @@ public sealed class Schema : IEquatable<Schema>
         FieldType.Bytes => kind == FieldValueKind.Bytes,
         FieldType.Vector => kind == FieldValueKind.Vector,
         FieldType.Json => kind == FieldValueKind.Json,
+        FieldType.Sparse => kind == FieldValueKind.Sparse,
         _ => false,
     };
 
@@ -764,6 +768,11 @@ public sealed class SchemaBuilder
     /// <returns>This builder.</returns>
     public SchemaBuilder Vector(string name, int dimensions, VectorMetric metric)
         => Add(new FieldDefinition(name, FieldType.Vector) { Dimensions = dimensions, Metric = metric });
+
+    /// <summary>Adds a learned sparse vector field (token to weight), searched by dot product with <see cref="Search.SparseQuery"/>.</summary>
+    /// <param name="name">The field name.</param>
+    /// <returns>This builder.</returns>
+    public SchemaBuilder Sparse(string name) => Add(new FieldDefinition(name, FieldType.Sparse));
 
     /// <summary>Adds a dynamic JSON field.</summary>
     /// <param name="name">The field name.</param>

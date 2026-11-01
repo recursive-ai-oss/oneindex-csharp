@@ -96,6 +96,8 @@ public sealed class QueryEngine : IWeightFactory
             }
         }
 
+        public override Weight VisitSparse(SparseQuery query) => SparseWeight.Create(context, query);
+
         public override Weight VisitKnn(KnnQuery query) => KnnWeight.Create(context, query, query.Filter?.Accept(this));
 
         public override Weight VisitMultiFieldTerm(MultiFieldTermQuery query)
