@@ -19,12 +19,13 @@ public sealed class VectorSegmentCodec : ISegmentCodec
 {
     internal static readonly uint VectorsMagic = IndexFile.Magic("OIXV");
     internal static readonly uint GraphMagic = IndexFile.Magic("OIXH");
+    internal static readonly uint QuantizedMagic = IndexFile.Magic("OIXQ");
 
     /// <inheritdoc/>
     public string Name => "vectors";
 
     /// <inheritdoc/>
-    public IReadOnlyList<string> Parts { get; } = [SegmentParts.Vectors, SegmentParts.Graph];
+    public IReadOnlyList<string> Parts { get; } = [SegmentParts.Vectors, SegmentParts.Graph, SegmentParts.Quantized];
 
     private sealed class Payload(FieldDefinition def, VectorValues values, int[]? ordinalToDoc)
     {
@@ -246,6 +247,62 @@ public sealed class VectorSegmentCodec : ISegmentCodec
         {
             WriteGraphs(payloads, maxDoc, sink, cancellationToken);
         }
+
+        // A compressed copy is only worth having where there is a graph to walk on it; smaller segments are searched exactly.
+        if (payloads.Any(p => p.Graph is not null && p.Def.Quantization != VectorQuantization.None))
+        {
+            WriteQuantized(payloads, maxDoc, sink, cancellationToken);
+        }
+    }
+
+    private static void WriteQuantized(List<Payload> payloads, int maxDoc, SegmentFileSink sink, CancellationToken cancellationToken)
+    {
+        using SegmentFileBuilder file = sink.Create(SegmentParts.Quantized, "OIXQ", CodecRegistry.NewestVersion(SegmentParts.Quantized), cancellationToken);
+        var head = new ByteBuilder(16);
+        head.WriteUInt32((uint)maxDoc);
+        file.Write(head.Span, cancellationToken);
+        var directory = new ByteBuilder(256);
+        var fields = payloads.Where(p => p.Graph is not null && p.Def.Quantization != VectorQuantization.None).ToList();
+        directory.WriteVarUInt((ulong)fields.Count);
+        foreach (Payload p in fields)
+        {
+            int dims = p.Def.Dimensions;
+            int recordBytes = VectorQuantizer.RecordBytes(p.Def.Quantization, dims);
+            int perBlock = VectorFiles.RecordsPerBlock(recordBytes);
+            int count = p.Values.Count;
+            long dataOffset = file.Position;
+            var blocks = new BlockWriter(file, perBlock * recordBytes, cancellationToken);
+            var record = new byte[recordBytes];
+            var scratch = new byte[dims];
+            for (int i = 0; i < count; i++)
+            {
+                if ((i & 1023) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
+                Quantizers.Encode(p.Def.Quantization, p.Values.Get(i), record, scratch);
+                blocks.Append(record);
+            }
+
+            blocks.Finish();
+            long crcOffset = file.Position;
+            byte[] table = VectorFiles.CrcTable(blocks.Crcs);
+            file.Write(table, cancellationToken);
+            byte[] name = Encoding.UTF8.GetBytes(p.Def.Name);
+            directory.WriteVarUInt((ulong)name.Length);
+            directory.Write(name);
+            directory.WriteVarUInt((ulong)dims);
+            directory.WriteByte((byte)p.Def.Quantization);
+            directory.WriteVarUInt((ulong)count);
+            directory.WriteVarUInt((ulong)recordBytes);
+            directory.WriteVarUInt((ulong)perBlock);
+            directory.WriteVarUInt((ulong)dataOffset);
+            directory.WriteVarUInt((ulong)crcOffset);
+            directory.WriteUInt64(Crc32C.Compute(table));
+        }
+
+        FinishWithDirectory(file, directory, cancellationToken);
     }
 
     private static void WriteVectors(List<Payload> payloads, int maxDoc, SegmentFileSink sink, CancellationToken cancellationToken)
@@ -425,15 +482,18 @@ public sealed class VectorSegmentCodec : ISegmentCodec
         }
 
         IRangeReader? graph = null;
+        IRangeReader? quantized = null;
         try
         {
             graph = context.OpenPart(SegmentParts.Graph, out _, cancellationToken);
-            return VectorPartReader.Open(vectors, graph, context.Schema, context.Info.DocCount, context.Limits, cancellationToken);
+            quantized = context.OpenPart(SegmentParts.Quantized, out _, cancellationToken);
+            return VectorPartReader.Open(vectors, graph, quantized, context.Schema, context.Info.DocCount, context.Limits, cancellationToken);
         }
         catch
         {
             vectors.Dispose();
             graph?.Dispose();
+            quantized?.Dispose();
             throw;
         }
     }

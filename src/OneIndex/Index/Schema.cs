@@ -125,6 +125,22 @@ public sealed class FieldDefinition
     /// <summary>A segment with fewer vectors than this is searched exactly and gets no graph. Default 1000, 0 to 100 million. Vector fields only.</summary>
     public int FlatThreshold { get; init; } = DefaultFlatThreshold;
 
+    /// <summary>
+    /// A compressed copy the graph search runs on: <see cref="VectorQuantization.Scalar8"/>, <see cref="VectorQuantization.Scalar4"/> or the
+    /// sign-bit <see cref="VectorQuantization.OneBit"/>. The full-precision vectors stay in the segment and rerank the candidates.
+    /// Default <see cref="VectorQuantization.None"/>. Vector fields only; <see cref="VectorQuantization.OneBit"/> needs the cosine or dot-product metric.
+    /// </summary>
+    public VectorQuantization Quantization { get; init; }
+
+    /// <summary>
+    /// For a quantized field: the graph search keeps <c>Oversample * k</c> candidates by their compressed distance and the full-precision
+    /// vectors pick the best <c>k</c> of them. 0 (the default) means the codec's own default (see <see cref="VectorQuantizer.DefaultOversample"/>);
+    /// otherwise 1 to 100.
+    /// </summary>
+    public float Oversample { get; init; }
+
+    internal bool HasCustomQuantization => Type == FieldType.Vector && (Quantization != VectorQuantization.None || Oversample != 0);
+
     internal bool HasCustomVectorSettings => Type == FieldType.Vector && (Metric != VectorMetric.Cosine || HnswM != DefaultHnswM || EfConstruction != DefaultEfConstruction || FlatThreshold != DefaultFlatThreshold);
 
     /// <summary>The default for <see cref="HnswM"/>.</summary>
@@ -155,6 +171,7 @@ public sealed class Schema : IEquatable<Schema>
     /// <summary>The section that lists derived (dynamic) fields: pairs of field index and parent field index.</summary>
     private const int SectionDynamicFields = 1;
     private const int SectionVectorSettings = 3;
+    private const int SectionQuantization = 4;
 
     private const int TextSettingsSection = 2;
     private static readonly byte[] MagicBytes = "OIXS"u8.ToArray();
@@ -446,7 +463,8 @@ public sealed class Schema : IEquatable<Schema>
 
         bool hasDerived = schema.Fields.Any(static f => f.DynamicParent is not null);
         bool hasVectorSettings = schema.Fields.Any(static f => f.HasCustomVectorSettings);
-        sink.WriteUInt32(hasDerived || settings || hasVectorSettings ? 2u : 1u);
+        bool hasQuantization = schema.Fields.Any(static f => f.HasCustomQuantization);
+        sink.WriteUInt32(hasDerived || settings || hasVectorSettings || hasQuantization ? 2u : 1u);
         sink.WriteVarUInt((ulong)schema.Fields.Count);
         foreach (FieldDefinition f in schema.Fields)
         {
@@ -460,11 +478,11 @@ public sealed class Schema : IEquatable<Schema>
         }
 
         sink.WriteString(schema.IdField ?? string.Empty);
-        if (hasDerived || settings || hasVectorSettings)
+        if (hasDerived || settings || hasVectorSettings || hasQuantization)
         {
             // Version 2 appends sections: a count, then for each an id (ascending) and its bytes. Section 1 lists the derived
-            // (dynamic) fields, section 2 holds the text settings, section 3 the vector field settings.
-            sink.WriteVarUInt((ulong)((hasDerived ? 1 : 0) + (settings ? 1 : 0) + (hasVectorSettings ? 1 : 0)));
+            // (dynamic) fields, section 2 holds the text settings, section 3 the vector field settings, section 4 the compressed copies.
+            sink.WriteVarUInt((ulong)((hasDerived ? 1 : 0) + (settings ? 1 : 0) + (hasVectorSettings ? 1 : 0) + (hasQuantization ? 1 : 0)));
             if (hasDerived)
             {
                 var section = new ByteSink();
@@ -524,6 +542,34 @@ public sealed class Schema : IEquatable<Schema>
                 sink.WriteVarUInt(SectionVectorSettings);
                 sink.WriteBytes(section.ToArray());
             }
+
+            if (hasQuantization)
+            {
+                // Section 4: the compressed copy of each vector field that has one (or a non-default oversample), by ascending field index:
+                // the field index, the codec byte and the oversample as the bits of a float. A reader that does not know the section sees
+                // unquantized fields, which still search correctly (the full-precision vectors are always there).
+                var section = new ByteSink();
+                int n = 0;
+                foreach (FieldDefinition f in schema.Fields)
+                {
+                    n += f.HasCustomQuantization ? 1 : 0;
+                }
+
+                section.WriteVarUInt((ulong)n);
+                for (int i = 0; i < schema.Fields.Count; i++)
+                {
+                    FieldDefinition f = schema.Fields[i];
+                    if (f.HasCustomQuantization)
+                    {
+                        section.WriteVarUInt((ulong)i);
+                        section.WriteByte((byte)f.Quantization);
+                        section.WriteUInt32(BitConverter.SingleToUInt32Bits(f.Oversample));
+                    }
+                }
+
+                sink.WriteVarUInt(SectionQuantization);
+                sink.WriteBytes(section.ToArray());
+            }
         }
 
         return sink.ToArray();
@@ -573,6 +619,7 @@ public sealed class Schema : IEquatable<Schema>
         TextSettings settingsRead = TextSettings.Default;
         var settings = new VectorSettings[count];
         Array.Fill(settings, VectorSettings.Default);
+        var quantization = new (VectorQuantization Codec, float Oversample)[count];
         if (version >= 2)
         {
             int sections = src.ReadCount(16, "section count");
@@ -648,6 +695,37 @@ public sealed class Schema : IEquatable<Schema>
 
                     knownSection = true;
                 }
+                else if (sectionId == SectionQuantization)
+                {
+                    var inner = new ByteSource(payload);
+                    int entries = inner.ReadCount(count, "quantization count");
+                    int last = -1;
+                    for (int p = 0; p < entries; p++)
+                    {
+                        int field = inner.ReadCount(count - 1, "quantization field index");
+                        if (field <= last || (FieldType)defs[field].Type != FieldType.Vector)
+                        {
+                            throw new MalformedInputException("quantization entries are not in order or name a field that is not a vector");
+                        }
+
+                        byte codec = inner.ReadByte();
+                        float oversample = BitConverter.UInt32BitsToSingle(inner.ReadUInt32());
+                        if (codec > (byte)VectorQuantization.OneBit || !(oversample == 0 || (oversample >= 1 && oversample <= 100)) || (codec == 0 && oversample == 0))
+                        {
+                            throw new MalformedInputException($"vector field '{defs[field].Name}' has an unknown codec or an oversample outside 1 to 100");
+                        }
+
+                        quantization[field] = ((VectorQuantization)codec, oversample);
+                        last = field;
+                    }
+
+                    if (inner.Remaining != 0 || entries == 0)
+                    {
+                        throw new MalformedInputException("the quantization section is empty or has trailing bytes");
+                    }
+
+                    knownSection = true;
+                }
                 else if (sectionId == TextSettingsSection)
                 {
                     var inner = new ByteSource(payload);
@@ -697,6 +775,8 @@ public sealed class Schema : IEquatable<Schema>
                 HnswM = vs.HnswM,
                 EfConstruction = vs.EfConstruction,
                 FlatThreshold = vs.FlatThreshold,
+                Quantization = quantization[i].Codec,
+                Oversample = quantization[i].Oversample,
                 DynamicParent = parents[i] >= 0 ? defs[parents[i]].Name : null,
             });
         }
@@ -917,6 +997,16 @@ public sealed class SchemaBuilder
             if (f.Multi)
             {
                 throw new ArgumentException($"Vector field '{n}' holds one vector per document.");
+            }
+
+            if (!Enum.IsDefined(f.Quantization) || !(f.Oversample == 0 || (f.Oversample >= 1 && f.Oversample <= 100)) || (f.Quantization == VectorQuantization.None && f.Oversample != 0))
+            {
+                throw new ArgumentException($"Vector field '{n}' needs a known quantization and, with one, an oversample of 0 (the default) or 1 to 100.");
+            }
+
+            if (f.Quantization == VectorQuantization.OneBit && f.Metric == VectorMetric.Euclidean)
+            {
+                throw new ArgumentException($"Vector field '{n}' uses sign-bit quantization, which needs the cosine or dot-product metric.");
             }
 
             if (!Enum.IsDefined(f.Metric) || f.HnswM < 2 || f.HnswM > 256 || f.EfConstruction < f.HnswM || f.EfConstruction > 4096 || f.FlatThreshold < 0 || f.FlatThreshold > 100_000_000)

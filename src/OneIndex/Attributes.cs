@@ -71,6 +71,19 @@ public sealed class VectorAttribute : Attribute
 
     /// <summary>A segment with fewer vectors than this is searched exactly and gets no graph. Default 1000.</summary>
     public int FlatThreshold { get; set; } = 1000;
+
+    /// <summary>
+    /// A compressed copy for graph search: <see cref="Vectors.VectorQuantization.Scalar8"/> (4 times smaller), <see cref="Vectors.VectorQuantization.Scalar4"/>
+    /// (8 times) or the sign-bit <see cref="Vectors.VectorQuantization.OneBit"/> (32 times, cosine or dot product only). The full-precision
+    /// vectors are kept and rerank the candidates. Default <see cref="Vectors.VectorQuantization.None"/>.
+    /// </summary>
+    public Vectors.VectorQuantization Quantization { get; set; }
+
+    /// <summary>
+    /// With a <see cref="Quantization"/>: the candidates kept by compressed distance, as a multiple of the results asked for, before the
+    /// full-precision rerank, 1 to 100. Default 0, which means the codec's own default (2, 3 and 5 for the three codecs).
+    /// </summary>
+    public float Oversample { get; set; }
 }
 
 /// <summary>

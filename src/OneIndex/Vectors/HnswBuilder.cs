@@ -18,11 +18,18 @@ internal sealed class HnswBuilder : HnswGraph
     /// </summary>
     internal static bool KeepPruned { get; set; }
 
+    /// <summary>
+    /// How much longer the candidate list is on layer 0 than <c>efConstruction</c>. Layer 0 holds every node, so it decides the recall of a
+    /// search; the upper layers are tiny and keep the nominal size. See docs/vectors.md for the measurement.
+    /// </summary>
+    internal static float Layer0EfFactor { get; set; } = 1.5f;
+
     private readonly VectorValues _values;
     private readonly DistanceKind _kind;
     private readonly int _m;
     private readonly int _m0;
     private readonly int _efConstruction;
+    private readonly int _efLayer0;
     private readonly ulong _seed;
     private readonly byte[] _levels;
     private readonly int[] _layer0;           // per node: a count, then up to 2 M links
@@ -52,17 +59,18 @@ internal sealed class HnswBuilder : HnswGraph
         _m = m;
         _m0 = 2 * m;
         _efConstruction = Math.Max(efConstruction, m);
+        _efLayer0 = Math.Max(_efConstruction, (int)Math.Min(4096, Math.Ceiling(_efConstruction * (double)Layer0EfFactor)));
         _seed = seed;
         int n = values.Count;
         _levels = new byte[n];
         _layer0 = new int[checked(n * (_m0 + 1))];
         _upper = new int[n][];
         _scorer = new FloatNodeScorer(kind);
-        _found = new Candidate[_efConstruction + 1];
+        _found = new Candidate[_efLayer0 + 1];
         _pool = new Candidate[_m0 + 2];
         _chosen = new int[_m0 + 1];
         _shrunk = new int[_m0 + 1];
-        _discarded = new int[_efConstruction + _m0 + 2];
+        _discarded = new int[_efLayer0 + _m0 + 2];
     }
 
     /// <inheritdoc/>
@@ -259,9 +267,10 @@ internal sealed class HnswBuilder : HnswGraph
             }
 
             long visited = 0;
-            HnswSearch.Layer(this, _scorer, l, _efConstruction, null, 0, scratch, ref visited);
-            entryCount = HnswSearch.Drain(scratch.Results, _efConstruction, found);
-            int chosen = SelectNeighbors(found[..entryCount], _m, _chosen, node);
+            int ef = l == 0 ? _efLayer0 : _efConstruction;
+            HnswSearch.Layer(this, _scorer, l, ef, null, 0, scratch, ref visited);
+            entryCount = HnswSearch.Drain(scratch.Results, ef, found);
+            int chosen = SelectNeighbors(found[..entryCount], l == 0 ? _m0 : _m, _chosen, node);
             SetLinks(node, l, _chosen.AsSpan(0, chosen));
             for (int i = 0; i < chosen; i++)
             {
