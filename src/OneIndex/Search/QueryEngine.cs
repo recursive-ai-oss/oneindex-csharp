@@ -235,6 +235,54 @@ public sealed class QueryEngine : IWeightFactory
             return RangeWeightFactory.Create(context.Schema, query);
         }
 
+        public override Weight VisitGeoRadius(GeoRadiusQuery query)
+        {
+            CheckBoost(query);
+            return GeoWeightFactory.Radius(context.Schema, query);
+        }
+
+        public override Weight VisitGeoBoundingBox(GeoBoundingBoxQuery query)
+        {
+            CheckBoost(query);
+            return GeoWeightFactory.BoundingBox(context.Schema, query);
+        }
+
+        public override Weight VisitFunctionScore(FunctionScoreQuery query)
+        {
+            CheckBoost(query);
+            if (query.Functions.Count is < 1 or > FunctionScoreQuery.MaxFunctions)
+            {
+                throw new QueryException($"A function score query needs 1 to {FunctionScoreQuery.MaxFunctions} functions, got {query.Functions.Count}.");
+            }
+
+            if (!(query.MaxBoost > 0f) || float.IsNaN(query.MaxBoost) || (query.MinScore is { } min && float.IsNaN(min)))
+            {
+                throw new QueryException("MaxBoost of a function score query must be above 0, and MinScore a number.");
+            }
+
+            if (++_depth > options.MaxDepth)
+            {
+                throw new QueryException($"Queries are nested deeper than {options.MaxDepth} levels.");
+            }
+
+            try
+            {
+                var filters = new Weight?[query.Functions.Count];
+                for (int i = 0; i < filters.Length; i++)
+                {
+                    ScoreFunction f = query.Functions[i] ?? throw new QueryException("A function score query has a null function.");
+                    f.Validate(context.Schema);
+                    filters[i] = f.Filter?.Accept(this);
+                }
+
+                return new FunctionScoreWeight(query, query.Inner.Accept(this), filters);
+            }
+            finally
+            {
+                _depth--;
+            }
+        }
+
         private Weight Expand(FieldDefinition def, float boost, Func<ITextFieldReader, ITermEnumerator> open)
         {
             int limit = options.MaxExpandedTerms;

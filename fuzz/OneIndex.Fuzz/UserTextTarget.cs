@@ -15,6 +15,8 @@ public class FuzzDocument
     public string Tag { get; set; } = string.Empty;
 
     public int Number { get; set; }
+
+    public GeoPoint? Place { get; set; }
 }
 
 /// <summary>
@@ -31,6 +33,7 @@ internal sealed class FuzzMapping : SearchMapping<FuzzDocument>
             new MappedMember("Body", FieldType.Text, multi: false, indexed: true, column: false, facet: false, fullText: true, isId: false, boost: 1f, analyzer: "en"),
             new MappedMember("Tag", FieldType.Keyword, multi: false, indexed: true, column: false, facet: false, fullText: false, isId: false, boost: 1f, analyzer: null),
             new MappedMember("Number", FieldType.Integral, multi: false, indexed: true, column: true, facet: false, fullText: false, isId: false, boost: 1f, analyzer: null),
+            new MappedMember("Place", FieldType.GeoPoint, multi: false, indexed: true, column: true, facet: false, fullText: false, isId: false, boost: 1f, analyzer: null),
         ])
     {
     }
@@ -38,7 +41,10 @@ internal sealed class FuzzMapping : SearchMapping<FuzzDocument>
     public override string? GetId(FuzzDocument value) => value.Id;
 
     public override Document ToDocument(FuzzDocument value)
-        => new Document().Add("Id", value.Id).Add("Title", value.Title).Add("Body", value.Body).Add("Tag", value.Tag).Add("Number", (long)value.Number);
+    {
+        Document d = new Document().Add("Id", value.Id).Add("Title", value.Title).Add("Body", value.Body).Add("Tag", value.Tag).Add("Number", (long)value.Number);
+        return value.Place is { } p ? d.Add("Place", FieldValue.FromGeoPoint(p.Latitude, p.Longitude)) : d;
+    }
 
     public override FuzzDocument FromDocument(Document document)
         => new()
@@ -48,6 +54,7 @@ internal sealed class FuzzMapping : SearchMapping<FuzzDocument>
             Body = document.Get("Body").AsText(),
             Tag = document.Get("Tag").AsText(),
             Number = (int)document.Get("Number").AsInt64(),
+            Place = document.Fields.Any(f => f.Name == "Place") ? new GeoPoint(document.Get("Place").AsGeoPoint().Latitude, document.Get("Place").AsGeoPoint().Longitude) : null,
         };
 }
 

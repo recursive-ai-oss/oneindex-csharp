@@ -327,26 +327,27 @@ public static class KillHarness
                 return $"generation {gen} serves segments of two schema epochs";
             }
 
-            hash = Workload.HashRows(Workload.ReadContent(snap));
+            SortedDictionary<string, string> content = Workload.ReadContent(snap);
+            hash = Workload.HashRows(content);
             if (gen < ackGen)
             {
                 return $"lost commit: generation {gen} is open but {ackGen} was acknowledged";
             }
 
-            if (gen == ackGen && hash == ackHash)
+            if ((gen == ackGen && hash == ackHash) || (gen == ackGen + 1 && pre is not null && hash == pre))
             {
-                return null;
+                return Workload.CheckSearch(snap, content) is { } searchFailure ? $"wrong search results at generation {gen}: {searchFailure}" : null;
             }
 
             // Opening with a changed type, and each step of a rebuild, commits again without changing any document.
             if (evolving && hash == ackHash)
             {
-                return null;
+                return Workload.CheckSearch(snap, content) is { } evolveFailure ? $"wrong search results at generation {gen}: {evolveFailure}" : null;
             }
 
             if ((gen == ackGen + 1 || (evolving && gen > ackGen)) && pre is not null && hash == pre)
             {
-                return null;
+                return Workload.CheckSearch(snap, content) is { } preFailure ? $"wrong search results at generation {gen}: {preFailure}" : null;
             }
 
             return $"silently wrong: generation {gen} content {hash}, acknowledged generation {ackGen} content {ackHash}, in-flight content {pre ?? "none"}";

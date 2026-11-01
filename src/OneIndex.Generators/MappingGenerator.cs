@@ -64,6 +64,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
         DateTime,
         DateTimeOffset,
         Json,
+        Geo,
     }
 
     private sealed class Result
@@ -86,6 +87,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
         public bool Sortable;
         public bool Facet;
         public bool Dynamic;
+        public bool GeoAttr;
         public double Boost = 1;
         public string? Language;
         public string? Analyzer;
@@ -240,6 +242,9 @@ public sealed class MappingGenerator : IIncrementalGenerator
                 case "FacetAttribute":
                     m.Facet = true;
                     break;
+                case "GeoAttribute":
+                    m.GeoAttr = true;
+                    break;
                 case "DynamicAttribute":
                     m.Dynamic = true;
                     break;
@@ -301,6 +306,16 @@ public sealed class MappingGenerator : IIncrementalGenerator
         if (m.FullText && !textual)
         {
             diagnostics.Add(Diagnostic.Create(UnsupportedType, location, property.Name, property.Type.ToDisplayString(), "[FullText]"));
+        }
+
+        if (m.GeoAttr && m.Shape != Shape.Geo)
+        {
+            diagnostics.Add(Diagnostic.Create(UnsupportedType, location, property.Name, property.Type.ToDisplayString(), "[Geo]"));
+        }
+
+        if (m.Facet && m.Shape == Shape.Geo)
+        {
+            diagnostics.Add(Diagnostic.Create(Conflict, location, property.Name, "a geo point cannot be a [Facet]"));
         }
 
         if (m.Keyword && !textual)
@@ -376,6 +391,12 @@ public sealed class MappingGenerator : IIncrementalGenerator
         if (display == "System.DateTimeOffset")
         {
             m.Shape = Shape.DateTimeOffset;
+            return true;
+        }
+
+        if (display == "OneIndex.GeoPoint")
+        {
+            m.Shape = Shape.Geo;
             return true;
         }
 
@@ -522,11 +543,12 @@ public sealed class MappingGenerator : IIncrementalGenerator
             Shape.Fractional => "Fractional",
             Shape.Bool => "Bool",
             Shape.Json => "Json",
+            Shape.Geo => "GeoPoint",
             _ => "Date",
         };
-        // Text fields are searched when [FullText]; everything else is searchable by value only when marked for filtering.
-        bool indexed = m.FullText || m.IsId || m.Keyword || m.Filterable || m.Facet || m.Dynamic;
-        bool column = m.Filterable || m.Sortable || m.Facet || m.IsId;
+        // Text fields are searched when [FullText]; everything else is searched by value only when marked for filtering.
+        bool indexed = m.FullText || m.IsId || m.Keyword || m.Filterable || m.Facet || m.Dynamic || m.GeoAttr;
+        bool column = m.Filterable || m.Sortable || m.Facet || m.IsId || m.GeoAttr;
         string boost = m.Boost.ToString("R", CultureInfo.InvariantCulture) + "f";
         string? analyzerName = m.FullText ? (m.Analyzer ?? m.Language) : null;
         string analyzer = analyzerName is null ? "null" : Lit(analyzerName);
@@ -564,6 +586,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
                     Shape.Fractional => "document.Add(" + n + ", (double)" + v + ");",
                     Shape.Bool => "document.Add(" + n + ", " + v + ");",
                     Shape.DateTime => "document.Add(" + n + ", global::OneIndex.SearchMapping.ToDate(" + v + "));",
+                    Shape.Geo => "document.Add(" + n + ", global::OneIndex.Index.FieldValue.FromGeoPoint(" + v + ".Latitude, " + v + ".Longitude));",
                     _ => "document.Add(" + n + ", " + v + ");",
                 };
                 sb.AppendLine(m.Nullable ? "            if (" + p + " is { } n_" + m.Name + ") { " + add + " }" : "            " + add);
@@ -583,6 +606,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
             Shape.Bool => "result." + name + " = field.Value.AsBool();",
             Shape.Json => "result." + name + " = field.Value.AsJson();",
             Shape.DateTime => "result." + name + " = global::OneIndex.SearchMapping.FromDate(field.Value);",
+            Shape.Geo => "{ (double la, double lo) = field.Value.AsGeoPoint(); result." + name + " = new global::OneIndex.GeoPoint(la, lo); }",
             _ => "result." + name + " = global::System.DateTimeOffset.FromUnixTimeMilliseconds(field.Value.AsInt64());",
         };
     }

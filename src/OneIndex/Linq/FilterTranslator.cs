@@ -137,6 +137,11 @@ public sealed class FilterTranslator<T>
             return new RangeQuery(PathName(existsPath, p), null, null);
         }
 
+        if (call.Method.DeclaringType == typeof(Geo))
+        {
+            return GeoCall(call, p);
+        }
+
         // collection.Contains(item): the member is the collection (any of its values equals item) or the item (it is one of a captured list).
         Expression? collection = null;
         Expression? item = null;
@@ -259,6 +264,43 @@ public sealed class FilterTranslator<T>
 
     private static Search.Query EqualPath(string name, FieldValue v)
         => v.Kind == FieldValueKind.Text ? new TermQuery(name, v.AsText()) : double.IsNaN(v.Kind == FieldValueKind.Fractional ? v.AsFloat64() : 0) ? None() : new RangeQuery(name, v, v);
+
+    // Geo.WithinRadius and Geo.WithinBoundingBox: the first argument is the geo property, the others are numbers that do not use the document.
+    private Search.Query GeoCall(MethodCallExpression call, ParameterExpression p)
+    {
+        // A nullable point arrives as x.Location.Value: look through the Value.
+        Expression first = StripConvert(call.Arguments[0]);
+        if (first is MemberExpression { Member.Name: "Value", Expression: { } inner } && Nullable.GetUnderlyingType(inner.Type) is not null)
+        {
+            first = inner;
+        }
+
+        MappedMember member = Member(first, p)
+            ?? throw new UnsupportedExpressionException(call, "the first argument must be a [Geo] property of the document.");
+        if (member.Type != FieldType.GeoPoint || !member.Indexed || !member.Column)
+        {
+            throw new UnsupportedExpressionException(call, $"'{member.Name}' is not a geo property; mark a GeoPoint property [Geo].");
+        }
+
+        var numbers = new double[call.Arguments.Count - 1];
+        for (int i = 0; i < numbers.Length; i++)
+        {
+            Expression arg = StripConvert(call.Arguments[i + 1]);
+            if (Mentions(arg, p))
+            {
+                throw new UnsupportedExpressionException(call, "the coordinates and the radius may not use the document.");
+            }
+
+            numbers[i] = Evaluate(arg) is { } value ? Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture) : throw new UnsupportedExpressionException(call, "a coordinate is null.");
+        }
+
+        return call.Method.Name switch
+        {
+            nameof(Geo.WithinRadius) => new GeoRadiusQuery(member.Name, numbers[0], numbers[1], numbers[2]),
+            nameof(Geo.WithinBoundingBox) => new GeoBoundingBoxQuery(member.Name, numbers[0], numbers[1], numbers[2], numbers[3]),
+            _ => throw new UnsupportedExpressionException(call, $"Geo.{call.Method.Name} is not supported."),
+        };
+    }
 
     private static void CheckFilterable(MappedMember member, Expression context)
     {

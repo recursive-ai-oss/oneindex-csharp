@@ -60,3 +60,12 @@ public sealed class VectorAttribute : Attribute
     /// <summary>The vector length. Default 0: taken from the embedder.</summary>
     public int Dimensions { get; set; }
 }
+
+/// <summary>
+/// Marks a <see cref="GeoPoint"/> property for geo search: radius and bounding box filters (<see cref="Geo"/>) and sorting by distance
+/// (<c>OrderByDistance</c>). Without it a <see cref="GeoPoint"/> is only stored and returned with the document.
+/// </summary>
+[AttributeUsage(AttributeTargets.Property | AttributeTargets.Field, AllowMultiple = false, Inherited = true)]
+public sealed class GeoAttribute : Attribute
+{
+}

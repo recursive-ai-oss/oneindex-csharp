@@ -35,6 +35,7 @@ otherwise. Query rows run after the last commit, single-threaded, with the index
 | Facets | two terms, top ten `cat` counts over all matches | Lucene.NET |
 | Stats | two terms, count/min/max/sum of `len` over all matches | Lucene.NET |
 | Sort | two terms ordered by `len` descending | Lucene.NET |
+| FunctionScore | two terms, BM25 times a Gaussian decay of `len` (origin the median, scale the median, 0.5 at the scale), top 10 by the product | Lucene.NET, through a collector over the `len` doc values (its public API's way to a function score; every match is visited in both engines) |
 
 **Queries** come from `QueryGenerator`, seeded (seed 1 by default) and drawn from the corpus itself: terms occur in at least 5 and
 at most a fifth of the documents, phrases are adjacent words of one abstract, fuzzy terms are corpus terms with substitutions or a

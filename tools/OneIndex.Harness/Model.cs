@@ -93,6 +93,72 @@ public sealed record StatsQuery(string[] Terms) : HarnessQuery;
 /// <summary>A terms query ordered by the numeric column, largest first, instead of by score.</summary>
 public sealed record SortedQuery(string[] Terms) : HarnessQuery;
 
+/// <summary>
+/// A two-term disjunction whose BM25 score is multiplied by a Gaussian decay of the numeric column from <paramref name="Origin"/> (0.5 at <paramref name="Scale"/>
+/// away), the top hits by that product. Lucene.NET answers it with a collector over the column's doc values, which is how its public API expresses a function score.
+/// </summary>
+public sealed record DecayedQuery(string[] Terms, long Origin, long Scale) : HarnessQuery;
+
+/// <summary>Documents with a synthesized geo point within a radius of a centre (an information row: Lucene.NET's spatial module is not part of the pinned comparator set).</summary>
+public sealed record GeoQuery(double Latitude, double Longitude, double RadiusMeters) : HarnessQuery;
+
+/// <summary>
+/// Synthesized coordinates for the geo row, because the abstracts carry none: from a hash of the document id, 70% of the points fall
+/// within about 0.3 degrees of one of 200 seeded city-like centres and 30% are uniform on the sphere. The same id always gives the same point.
+/// </summary>
+public static class GeoSynth
+{
+    /// <summary>The 200 centres, uniform on the sphere, from a fixed seed.</summary>
+    public static readonly (double Latitude, double Longitude)[] Centres = MakeCentres();
+
+    private static (double, double)[] MakeCentres()
+    {
+        var rng = new Random(7);
+        var c = new (double, double)[200];
+        for (int i = 0; i < c.Length; i++)
+        {
+            c[i] = (Math.Asin((rng.NextDouble() * 2) - 1) * 180 / Math.PI, (rng.NextDouble() * 360) - 180);
+        }
+
+        return c;
+    }
+
+    private static ulong Mix(ref ulong state)
+    {
+        ulong z = state += 0x9E3779B97F4A7C15UL;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9UL;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBUL;
+        return z ^ (z >> 31);
+    }
+
+    /// <summary>The point of a document.</summary>
+    /// <param name="id">The document identifier.</param>
+    /// <returns>Latitude and longitude in degrees.</returns>
+    public static (double Latitude, double Longitude) For(string id)
+    {
+        ulong h = 14695981039346656037UL;
+        foreach (char ch in id)
+        {
+            h = (h ^ ch) * 1099511628211UL;
+        }
+
+        ulong state = h;
+        double u() => (Mix(ref state) >> 11) * (1.0 / (1UL << 53));
+        if (u() < 0.7)
+        {
+            var (cla, clo) = Centres[(int)(Mix(ref state) % (ulong)Centres.Length)];
+            double r = Math.Sqrt(-2 * Math.Log(1 - u())) * 0.3;
+            double a = 2 * Math.PI * u();
+            double lat = Math.Clamp(cla + (r * Math.Sin(a)), -90, 90);
+            double lng = clo + (r * Math.Cos(a) / Math.Max(0.05, Math.Cos(lat * Math.PI / 180)));
+            lng = ((lng + 540) % 360) - 180;
+            return (lat, lng);
+        }
+
+        return (Math.Asin((u() * 2) - 1) * 180 / Math.PI, (u() * 360) - 180);
+    }
+}
+
 /// <summary>An engine under test: Lucene.NET today, OneIndex through its adapter, anything else that can index and answer <see cref="HarnessQuery"/>.</summary>
 public interface ITextEngine : IDisposable
 {

@@ -17,7 +17,7 @@ public sealed class TextCodecIntegrationTests
     public void FlushMergeAndReopenThroughTheIndexWriter()
     {
         var storage = new MemoryStorage();
-        var options = new IndexWriterOptions { Codecs = [new TextSegmentCodec()], MaxBufferedDocuments = 50, AutoMerge = false };
+        var options = new IndexWriterOptions { Codecs = [new TextSegmentCodec { IndexNumericTerms = true }], MaxBufferedDocuments = 50, AutoMerge = false };
         var expected = new Dictionary<string, List<string>>(); // id -> body tokens
         using (IndexWriter writer = IndexWriter.Open(storage, TestSchema, options))
         {
@@ -43,7 +43,7 @@ public sealed class TextCodecIntegrationTests
             writer.Commit();
         }
 
-        using IndexSnapshot snapshot = IndexSnapshot.Open(storage, [new TextSegmentCodec()]);
+        using IndexSnapshot snapshot = IndexSnapshot.Open(storage, [new TextSegmentCodec { IndexNumericTerms = true }]);
         Assert.Equal(1, snapshot.SegmentCount);
         SegmentReader segment = snapshot.GetSegment(0);
         ITextFieldSource text = segment.GetPart<ITextFieldSource>()!;

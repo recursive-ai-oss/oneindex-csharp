@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using OneIndex.Aggregations;
 using OneIndex.Analysis;
 using OneIndex.Index;
@@ -10,7 +9,7 @@ namespace OneIndex.Harness;
 /// <summary>
 /// OneIndex behind the harness: the BEIR profile (title, text and a flat title+text field, English analysis, frequencies only) and
 /// free-text <see cref="MatchQuery"/> / <see cref="TermsQuery"/> scoring; and the benchmark profile's term, facet and statistics rows.
-/// Filters, sorts and the other rows are reported as unsupported until their queries exist.
+/// The filtered row (a numeric range and three keyword values as non-scoring filters) and the sorted row (the two terms ordered by the `len` column, descending, ties by identifier) run through the query objects and the sort collector; the other rows are reported as unsupported until their queries exist.
 /// </summary>
 public sealed class OneIndexEngine : ITextEngine
 {
@@ -21,7 +20,6 @@ public sealed class OneIndexEngine : ITextEngine
     private SearchContext? _context;
     private IndexSearcher? _searcher;
     private string[] _idOf = [];
-    private readonly ConcurrentQueue<string> _ids = new();
     private float _k1 = Bm25Parameters.Default.K1;
     private float _b = Bm25Parameters.Default.B;
 
@@ -39,7 +37,10 @@ public sealed class OneIndexEngine : ITextEngine
     }
 
     /// <inheritdoc/>
-    public bool Supports(Type queryType) => queryType == typeof(MatchQuery) || queryType == typeof(TermsQuery) || queryType == typeof(FacetQuery) || queryType == typeof(StatsQuery);
+    public bool Supports(Type queryType) => queryType == typeof(MatchQuery) || queryType == typeof(TermsQuery) || queryType == typeof(FacetQuery) || queryType == typeof(StatsQuery) || queryType == typeof(SortedQuery) || queryType == typeof(DecayedQuery) || queryType == typeof(FilteredQuery) || (queryType == typeof(GeoQuery) && WithGeo);
+
+    // The geo row indexes synthesized coordinates in a second field; it is opt-in so the other rows keep the matched index.
+    private static bool WithGeo => Environment.GetEnvironmentVariable("ONEINDEX_BENCH_GEO") == "1";
 
     /// <inheritdoc/>
     public void Create(EngineSettings settings)
@@ -51,17 +52,17 @@ public sealed class OneIndexEngine : ITextEngine
         if (settings.Profile == IndexProfile.Bench && settings.Analysis == AnalysisKind.Standard)
         {
             // The benchmark profile: body text, a numeric column and a keyword facet column, standard analysis.
-            schema = new SchemaBuilder().Id("id")
+            SchemaBuilder builder = new SchemaBuilder().Id("id")
                 .Add(new FieldDefinition("text", FieldType.Text) { Analyzer = "standard", IndexOptions = IndexOptions.Freqs, Stored = false })
                 .Add(new FieldDefinition("len", FieldType.Integral) { Column = true, Stored = false })
-                .Add(new FieldDefinition("cat", FieldType.Keyword) { Facet = true, Stored = false })
-                .Build();
+                .Add(new FieldDefinition("cat", FieldType.Keyword) { Facet = true, Stored = false });
+            schema = (WithGeo ? builder.Add(new FieldDefinition("loc", FieldType.GeoPoint) { Column = true, Stored = false }) : builder).Build();
         }
         else if (settings.Profile == IndexProfile.Beir && settings.Analysis == AnalysisKind.English)
         {
             FieldDefinition Text(string name) => new(name, FieldType.Text) { Analyzer = "en", IndexOptions = IndexOptions.Freqs, Stored = false };
             // A match in the title says more than one in the body: its BM25F weight is 3 (chosen on the four BEIR gate sets, docs/scoring.md).
-            const float titleBoost = 3f;
+            float titleBoost = float.TryParse(Environment.GetEnvironmentVariable("ONEINDEX_TITLE_WEIGHT"), System.Globalization.CultureInfo.InvariantCulture, out float w) ? w : 3f;
             schema = new SchemaBuilder().Id("id").Add(new FieldDefinition("title", FieldType.Text) { Analyzer = "en", IndexOptions = IndexOptions.Freqs, Stored = false, Boost = titleBoost }).Add(Text("text")).Add(Text("all")).Build();
         }
         else
@@ -78,14 +79,20 @@ public sealed class OneIndexEngine : ITextEngine
     {
         if (_settings!.Profile == IndexProfile.Bench)
         {
-            _writer!.Upsert(new Document().Add("id", doc.Id).Add("text", doc.Text).Add("len", doc.Length).Add("cat", doc.Category));
+            Document d = new Document().Add("id", doc.Id).Add("text", doc.Text).Add("len", doc.Length).Add("cat", doc.Category);
+            if (WithGeo)
+            {
+                (double lat, double lng) = GeoSynth.For(doc.Id);
+                d.Add("loc", FieldValue.FromGeoPoint(lat, lng));
+            }
+
+            _writer!.Upsert(d);
         }
         else
         {
-            _writer!.Upsert(new Document().Add("id", doc.Id).Add("title", doc.Title).Add("text", doc.Text).Add("all", doc.Title + " " + doc.Text));
+            // Corpus identifiers are unique, so the bulk path skips the per-document lookup in every segment.
+            _writer!.AddUnique(new Document().Add("id", doc.Id).Add("title", doc.Title).Add("text", doc.Text).Add("all", doc.Title + " " + doc.Text));
         }
-
-        _ids.Enqueue(doc.Id);
     }
 
     /// <inheritdoc/>
@@ -101,13 +108,14 @@ public sealed class OneIndexEngine : ITextEngine
         _snapshot?.Dispose();
         _snapshot = _writer!.OpenSnapshot();
         _context = SnapshotSearch.CreateContext(_snapshot);
-        // Hits carry document numbers; until stored fields exist the adapter learns each document's identifier by looking it up.
+        // Hits carry document numbers; the identifier of each comes from the stored source, so a reopened index needs no side table.
         _idOf = new string[_context.MaxDoc];
-        foreach (string id in _ids)
+        foreach (LeafContext leaf in _context.Leaves)
         {
-            if (_snapshot.TryFindById(id, out int segment, out int docId))
+            IStoredFieldsReader stored = leaf.Reader.StoredFields ?? throw new InvalidOperationException("The index keeps no stored source.");
+            for (int d = 0; d < leaf.Reader.MaxDoc; d++)
             {
-                _idOf[_context.Leaves[segment].DocBase + docId] = id;
+                _idOf[leaf.DocBase + d] = stored.GetDocument(d).Get("id").AsText();
             }
         }
 
@@ -134,6 +142,10 @@ public sealed class OneIndexEngine : ITextEngine
             TermsQuery t => TermsOf(t.Terms),
             FacetQuery f => TermsOf(f.Terms),
             StatsQuery st => TermsOf(st.Terms),
+            SortedQuery so => TermsOf(so.Terms),
+            DecayedQuery dq => new FunctionScoreQuery(TermsOf(dq.Terms), [new DecayFunction(DecayShape.Gauss, "len", dq.Origin, dq.Scale)]),
+            FilteredQuery fq => Filtered(fq),
+            GeoQuery g => new GeoRadiusQuery("loc", g.Latitude, g.Longitude, g.RadiusMeters),
             _ => throw new NotSupportedException(query.GetType().Name),
         };
         if (query is FacetQuery)
@@ -154,7 +166,15 @@ public sealed class OneIndexEngine : ITextEngine
             var s = stats.GetResults().Get<StatsResult>("len");
             return new SearchResult([], s.Count, null, (s.Count, (long)(s.Min ?? 0), (long)(s.Max ?? 0), (long)s.Sum));
         }
-        TopDocs top = _searcher!.Search(q, k, countExactly: false);
+        if (query is SortedQuery)
+        {
+            var sorted = new TopFieldCollector([new FieldSort("len") { Direction = SortDirection.Descending }], k, tieBreakField: "id");
+            _searcher!.Search(q, sorted);
+            TopFieldDocs page = sorted.GetTopDocs();
+            return new SearchResult([.. page.Hits.Select(h => new Hit(_idOf[h.DocId], 0f))], page.TotalHits);
+        }
+
+        TopDocs top = _searcher!.Search(q, k, countExactly: query is GeoQuery);
         var hits = new Hit[top.Hits.Count];
         for (int i = 0; i < hits.Length; i++)
         {
@@ -162,6 +182,18 @@ public sealed class OneIndexEngine : ITextEngine
         }
 
         return new SearchResult(hits, top.TotalHits);
+    }
+
+    // The two terms score; the length range and the three categories only select.
+    private static BooleanQuery Filtered(FilteredQuery fq)
+    {
+        var categories = new BooleanQuery([.. fq.Categories.Select(c => new BooleanClause(new TermQuery("cat", c), Occur.Should))]) { MinimumShouldMatch = 1 };
+        return new BooleanQuery(
+        [
+            new BooleanClause(TermsOf(fq.Terms), Occur.Must),
+            new BooleanClause(new RangeQuery("len", FieldValue.FromInt64(fq.MinLength), FieldValue.FromInt64(fq.MaxLength)), Occur.Filter),
+            new BooleanClause(categories, Occur.Filter),
+        ]);
     }
 
     /// <summary>The terms the English analysis makes of a text, in order.</summary>
@@ -195,6 +227,18 @@ public sealed class OneIndexEngine : ITextEngine
         _searcher.Search(q, pruned);
         TopDocs page = pruned.Inner.GetTopDocs();
         return (exact.TotalHits, pruned.Collected, exact.Hits.SequenceEqual(page.Hits));
+    }
+
+    /// <summary>Bytes the calling thread allocates answering one pruned top-k BM25F disjunction (the search call only, after the query object exists).</summary>
+    /// <param name="terms">The analyzed query terms.</param>
+    /// <param name="k">The page size.</param>
+    /// <returns>Allocated bytes.</returns>
+    public long MeasureSearchAllocation(IReadOnlyList<string> terms, int k)
+    {
+        Query q = new BooleanQuery([.. terms.Select(t => new BooleanClause(new MultiFieldTermQuery(["title", "text"], t), Occur.Should))]);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        _ = _searcher!.Search(q, k, countExactly: false);
+        return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
     /// <inheritdoc/>

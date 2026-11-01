@@ -77,6 +77,8 @@ public class TextRows
     [Benchmark(OperationsPerInvoke = Queries)] public long Stats() => Row(RowKind.Stats);
 
     [Benchmark(OperationsPerInvoke = Queries)] public long Sort() => Row(RowKind.Sort);
+
+    [Benchmark(OperationsPerInvoke = Queries)] public long FunctionScore() => Row(RowKind.FunctionScore);
 }
 
 /// <summary>A starting benchmark: the checksum every index file carries.</summary>

@@ -47,7 +47,7 @@ public class LinqTests
     private static readonly string[] Labels = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"];
     private static readonly DateTime Epoch = new(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
-    private static List<DiffDoc> MakeDocs(Random random, int count)
+    internal static List<DiffDoc> MakeDocs(Random random, int count)
     {
         var docs = new List<DiffDoc>(count);
         for (int i = 0; i < count; i++)
@@ -72,7 +72,7 @@ public class LinqTests
         return docs;
     }
 
-    private sealed class ExpressionGenerator(Random random, ParameterExpression x)
+    internal sealed class ExpressionGenerator(Random random, ParameterExpression x)
     {
         private static readonly ExpressionType[] Operators =
             [ExpressionType.Equal, ExpressionType.NotEqual, ExpressionType.LessThan, ExpressionType.LessThanOrEqual, ExpressionType.GreaterThan, ExpressionType.GreaterThanOrEqual];

@@ -468,6 +468,7 @@ public sealed class Schema : IEquatable<Schema>
         string id = src.ReadString(limits.MaxStringBytes, "identifier field");
         int[] parents = new int[count];
         Array.Fill(parents, -1);
+        bool skippedSection = false;
         if (version >= 2)
         {
             int sections = src.ReadCount(16, "section count");
@@ -507,8 +508,9 @@ public sealed class Schema : IEquatable<Schema>
                 }
                 else
                 {
-                    // A section this build does not know may change what the schema means, so it is never skipped.
-                    throw new UnsupportedFormatException("schema", $"schema section {sectionId} is not understood by this build");
+                    // A section from a newer build (a settings record, say) is skipped: sections only add information, and the
+                    // fields above are complete without it. The payload was already length- and limit-checked by ReadBytes.
+                    skippedSection = true;
                 }
             }
         }
@@ -518,7 +520,7 @@ public sealed class Schema : IEquatable<Schema>
             throw new MalformedInputException($"{src.Remaining} unexpected bytes follow the schema");
         }
 
-        if (version >= 2 && Array.TrueForAll(parents, static p => p < 0))
+        if (version >= 2 && !skippedSection && Array.TrueForAll(parents, static p => p < 0))
         {
             throw new MalformedInputException("a version 2 schema lists no dynamic field");
         }
@@ -622,10 +624,10 @@ public sealed class SchemaBuilder
     /// <returns>This builder.</returns>
     public SchemaBuilder Bool(string name) => Add(new FieldDefinition(name, FieldType.Bool) { Column = true });
 
-    /// <summary>Adds a geo point field.</summary>
+    /// <summary>Adds a geo point field, indexed for radius and bounding box queries and kept in a column for distance sorting.</summary>
     /// <param name="name">The field name.</param>
     /// <returns>This builder.</returns>
-    public SchemaBuilder GeoPoint(string name) => Add(new FieldDefinition(name, FieldType.GeoPoint));
+    public SchemaBuilder GeoPoint(string name) => Add(new FieldDefinition(name, FieldType.GeoPoint) { Column = true });
 
     /// <summary>Adds a stored-only bytes field.</summary>
     /// <param name="name">The field name.</param>

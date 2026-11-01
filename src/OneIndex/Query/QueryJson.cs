@@ -34,6 +34,12 @@ public sealed record QueryRequest
     /// <summary>Snippet settings, or <see langword="null"/> for the defaults.</summary>
     public HighlightOptions? Highlight { get; init; }
 
+    /// <summary>The ordering of the hits, or <see langword="null"/> for relevance order.</summary>
+    public QuerySort? Sort { get; init; }
+
+    /// <summary>A <see cref="SortCursor.ToToken"/> token to continue after (search-after); needs <see cref="Sort"/>. <see langword="null"/> for the first page.</summary>
+    public string? SearchAfter { get; init; }
+
     /// <summary>The query the engine runs: <see cref="Query"/> (every document when absent) with <see cref="Filter"/> as a non-scoring restriction.</summary>
     /// <returns>The combined query.</returns>
     public Query ToQuery()
@@ -43,12 +49,35 @@ public sealed record QueryRequest
     }
 }
 
+/// <summary>The sort keys of a query JSON document. Equal when the keys are equal in order.</summary>
+/// <param name="Keys">The keys, 1 to 16.</param>
+public sealed record QuerySort(IReadOnlyList<SortCriterion> Keys)
+{
+    /// <summary>Compares the keys one by one.</summary>
+    /// <param name="other">The other sort.</param>
+    /// <returns><see langword="true"/> when equal.</returns>
+    public bool Equals(QuerySort? other) => other is not null && Keys.SequenceEqual(other.Keys);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        // In-process hash tables only; never persisted.
+        var hash = default(HashCode);
+        foreach (SortCriterion k in Keys)
+        {
+            hash.Add(k);
+        }
+
+        return hash.ToHashCode();
+    }
+}
+
 /// <summary>
 /// Versioned query JSON: a document with <c>"v": 1</c> that describes a search, checked against a schema as it is read. Unknown
 /// properties, wrong types and unknown fields are errors that name the JSON path. Reading uses <see cref="JsonDocument"/> and writing
 /// uses <see cref="Utf8JsonWriter"/>, with no reflection. The format is in <c>docs/query-json.md</c>.
 /// </summary>
-public static class QueryJson
+public static partial class QueryJson
 {
     /// <summary>The format version this build reads and writes.</summary>
     public const int Version = 1;
@@ -241,6 +270,22 @@ public static class QueryJson
                 w.WriteEndObject();
             }
 
+            if (request.Sort is { } sort)
+            {
+                w.WriteStartArray("sort");
+                foreach (SortCriterion key in sort.Keys)
+                {
+                    w.WriteStringValue(SortText.Write(key));
+                }
+
+                w.WriteEndArray();
+            }
+
+            if (request.SearchAfter is { } after)
+            {
+                w.WriteString("searchAfter", after);
+            }
+
             w.WriteEndObject();
         }
 
@@ -366,8 +411,26 @@ public static class QueryJson
                 w.WriteEndArray();
                 w.WriteString("term", m.Term);
                 break;
+            case GeoRadiusQuery g:
+                w.WriteString("type", "geoRadius");
+                w.WriteString("field", g.Field);
+                w.WriteNumber("lat", g.Latitude);
+                w.WriteNumber("lng", g.Longitude);
+                w.WriteNumber("meters", g.RadiusMeters);
+                break;
+            case GeoBoundingBoxQuery x:
+                w.WriteString("type", "geoBoundingBox");
+                w.WriteString("field", x.Field);
+                w.WriteNumber("north", x.North);
+                w.WriteNumber("south", x.South);
+                w.WriteNumber("west", x.West);
+                w.WriteNumber("east", x.East);
+                break;
             case BooleanQuery b:
                 WriteBoolean(w, b);
+                break;
+            case FunctionScoreQuery fs:
+                WriteFunctionScore(w, fs);
                 break;
             default:
                 throw new ArgumentException($"A {q.GetType().Name} cannot be written as query JSON.", nameof(q));
@@ -447,15 +510,15 @@ public static class QueryJson
 }
 
 /// <summary>Reads query JSON into query objects. One instance reads one document.</summary>
-internal sealed class QueryJsonReader
+internal sealed partial class QueryJsonReader
 {
-    private static readonly string[] RequestProperties = ["v", "q", "query", "filter", "limit", "offset", "countExactly", "highlight"];
+    private static readonly string[] RequestProperties = ["v", "q", "query", "filter", "limit", "offset", "countExactly", "highlight", "sort", "searchAfter"];
 
     // Names of features the format keeps room for. They are rejected with a message of their own, not as typos.
-    private static readonly string[] Reserved = ["sort", "facets", "aggregations", "distinct", "hybrid", "vector", "searchAfter"];
+    private static readonly string[] Reserved = ["facets", "aggregations", "distinct", "hybrid", "vector"];
 
     private static readonly string[] NodeTypes =
-        ["matchAll", "text", "strict", "filter", "term", "phrase", "prefix", "fuzzy", "regex", "range", "exists", "multiFieldTerm", "bool"];
+        ["matchAll", "text", "strict", "filter", "term", "phrase", "prefix", "fuzzy", "regex", "range", "exists", "multiFieldTerm", "geoRadius", "geoBoundingBox", "bool", "functionScore"];
 
     private readonly Schema _schema;
     private readonly UserTextCompiler _userText;
@@ -518,13 +581,34 @@ internal sealed class QueryJsonReader
         bool exact = root.TryGetProperty("countExactly", out JsonElement c) && ReadBool(c, "$.countExactly");
         HighlightOptions? highlight = root.TryGetProperty("highlight", out JsonElement h) ? ReadHighlight(h) : null;
 
+        QuerySort? sort = root.TryGetProperty("sort", out JsonElement sortElement) ? ReadSort(sortElement) : null;
+        string? after = null;
+        if (root.TryGetProperty("searchAfter", out JsonElement afterElement))
+        {
+            after = ReadString(afterElement, "$.searchAfter");
+            if (sort is null)
+            {
+                throw Err("$.searchAfter", "searchAfter continues a sorted search; add a \"sort\".");
+            }
+
+            if (!SortCursor.TryParse(after, out SortCursor? cursor) || cursor!.Fingerprint != SortSpec.Fingerprint(sort.Keys) || cursor.Values.Count != sort.Keys.Count)
+            {
+                throw Err("$.searchAfter", "This is not a cursor made by the same sort. Use the cursor token of the last hit of the previous page.");
+            }
+
+            if (offset != 0)
+            {
+                throw Err("$.offset", "offset cannot be combined with searchAfter.");
+            }
+        }
+
         Query? main = scored.Count switch
         {
             0 => null,
             1 => scored[0],
             _ => new BooleanQuery(scored.ConvertAll(static x => new BooleanClause(x, Occur.Must))),
         };
-        return new QueryRequest { Query = main, Filter = filter, Limit = limit, Offset = offset, CountExactly = exact, Highlight = highlight };
+        return new QueryRequest { Query = main, Filter = filter, Limit = limit, Offset = offset, CountExactly = exact, Highlight = highlight, Sort = sort, SearchAfter = after };
     }
 
     private static QueryParseException Err(string path, string detail, string? suggestion = null)
@@ -731,8 +815,36 @@ internal sealed class QueryJsonReader
 
             case "multiFieldTerm":
                 return ReadMultiFieldTerm(e, path);
+            case "geoRadius":
+                {
+                    CheckProperties(e, path, ["type", "field", "lat", "lng", "meters", "boost"]);
+                    string field = ReadGeoField(e, path);
+                    double lat = ReadNumber(Require(e, path, "lat"), Child(path, "lat"), -90, 90);
+                    double lng = ReadNumber(Require(e, path, "lng"), Child(path, "lng"), -180, 180);
+                    double meters = ReadNumber(Require(e, path, "meters"), Child(path, "meters"), 0, double.MaxValue);
+                    return Boosted(new GeoRadiusQuery(field, lat, lng, meters), e, path);
+                }
+
+            case "geoBoundingBox":
+                {
+                    CheckProperties(e, path, ["type", "field", "north", "south", "west", "east", "boost"]);
+                    string field = ReadGeoField(e, path);
+                    double north = ReadNumber(Require(e, path, "north"), Child(path, "north"), -90, 90);
+                    double south = ReadNumber(Require(e, path, "south"), Child(path, "south"), -90, 90);
+                    double west = ReadNumber(Require(e, path, "west"), Child(path, "west"), -180, 180);
+                    double east = ReadNumber(Require(e, path, "east"), Child(path, "east"), -180, 180);
+                    if (south > north)
+                    {
+                        throw Err(Child(path, "south"), "south is above north.");
+                    }
+
+                    return Boosted(new GeoBoundingBoxQuery(field, north, south, west, east), e, path);
+                }
+
             case "bool":
                 return ReadBoolQuery(e, path, depth);
+            case "functionScore":
+                return ReadFunctionScore(e, path, depth);
             default:
                 {
                     string? near = QuerySyntax.Nearest(type, NodeTypes);
@@ -740,6 +852,47 @@ internal sealed class QueryJsonReader
                     throw Err(Child(path, "type"), $"Unknown query type \"{type}\".{hint} Types: {string.Join(", ", NodeTypes)}.", near);
                 }
         }
+    }
+
+    private string ReadGeoField(JsonElement obj, string path)
+    {
+        string fp = Child(path, "field");
+        string name = ReadString(Require(obj, path, "field"), fp);
+        return SortText.GeoFieldOrThrow(_schema, name, fp);
+    }
+
+    private static double ReadNumber(JsonElement e, string path, double min, double max)
+    {
+        if (e.ValueKind != JsonValueKind.Number || !e.TryGetDouble(out double v) || !double.IsFinite(v))
+        {
+            throw Err(path, "Expected a finite number.");
+        }
+
+        if (v < min || v > max)
+        {
+            throw Err(path, $"Expected a number from {min.ToString(CultureInfo.InvariantCulture)} to {(max == double.MaxValue ? "a finite maximum" : max.ToString(CultureInfo.InvariantCulture))}, got {v.ToString(CultureInfo.InvariantCulture)}.");
+        }
+
+        return v;
+    }
+
+    private QuerySort ReadSort(JsonElement e)
+    {
+        const string path = "$.sort";
+        if (e.ValueKind != JsonValueKind.Array || e.GetArrayLength() is < 1 or > 16)
+        {
+            throw Err(path, "sort is an array of 1 to 16 strings such as \"Modified:desc\", \"_score\" or \"_geoPoint(48.85, 2.29):asc\".");
+        }
+
+        var keys = new List<SortCriterion>();
+        int i = 0;
+        foreach (JsonElement item in e.EnumerateArray())
+        {
+            string ip = Index(path, i++);
+            keys.Add(SortText.Read(ReadString(item, ip), _schema, ip));
+        }
+
+        return new QuerySort(keys);
     }
 
     private static JsonElement Require(JsonElement obj, string path, string name)

@@ -262,6 +262,17 @@ public sealed class SchemaEvolutionTests
         Assert.Throws<ArgumentException>(() => CommitFileFormat.Serialize(wrongEpoch));
     }
 
+    [Fact]
+    public void SchemaSectionsFromANewerBuildAreSkipped()
+    {
+        // A version 2 record with a section id this build does not define (7) after the fields: the fields still read.
+        byte[] bytes = [.. V1().Serialize(), 1, 7, 2, 9, 9];
+        bytes[4] = 2;
+        Schema read = Schema.Deserialize(bytes);
+        Assert.Equal(V1().Fields.Select(f => f.Name), read.Fields.Select(f => f.Name));
+        Assert.Equal(V1().Serialize(), read.Serialize());
+    }
+
     private static Dictionary<string, byte[]> Everything(MemoryStorage storage)
         => storage.List().Order(StringComparer.Ordinal).ToDictionary(n => n, n => TestHelpers.ReadAll(storage, n));
 

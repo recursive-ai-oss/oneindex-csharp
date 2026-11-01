@@ -68,6 +68,21 @@ public abstract class QueryVisitor<TResult>
     /// <returns>The result.</returns>
     public virtual TResult VisitRegex(RegexQuery query) => VisitUnknown(query);
 
+    /// <summary>Visits a <see cref="GeoRadiusQuery"/>.</summary>
+    /// <param name="query">The query.</param>
+    /// <returns>The result.</returns>
+    public virtual TResult VisitGeoRadius(GeoRadiusQuery query) => VisitUnknown(query);
+
+    /// <summary>Visits a <see cref="GeoBoundingBoxQuery"/>.</summary>
+    /// <param name="query">The query.</param>
+    /// <returns>The result.</returns>
+    public virtual TResult VisitGeoBoundingBox(GeoBoundingBoxQuery query) => VisitUnknown(query);
+
+    /// <summary>Visits a <see cref="FunctionScoreQuery"/>.</summary>
+    /// <param name="query">The query.</param>
+    /// <returns>The result.</returns>
+    public virtual TResult VisitFunctionScore(FunctionScoreQuery query) => VisitUnknown(query);
+
     /// <summary>Called for a kind the visitor does not handle.</summary>
     /// <param name="query">The query.</param>
     /// <returns>Never returns normally.</returns>
@@ -266,4 +281,34 @@ public sealed record RegexQuery(string Field, string Pattern) : Query
 {
     /// <inheritdoc/>
     public override TResult Accept<TResult>(QueryVisitor<TResult> visitor) => visitor.VisitRegex(this);
+}
+
+/// <summary>
+/// Documents with a geo point within a distance of a centre, measured along the great circle on a spherical Earth
+/// (<see cref="GeoMath.HaversineMeters"/>). A document with several points matches when any is inside. Matches score as the boost.
+/// </summary>
+/// <param name="Field">The geo point field; it must be indexed and keep a column.</param>
+/// <param name="Latitude">The centre latitude in degrees, -90 to 90.</param>
+/// <param name="Longitude">The centre longitude in degrees, -180 to 180.</param>
+/// <param name="RadiusMeters">The radius in metres, 0 or more and finite. A point exactly this far away is inside.</param>
+public sealed record GeoRadiusQuery(string Field, double Latitude, double Longitude, double RadiusMeters) : Query
+{
+    /// <inheritdoc/>
+    public override TResult Accept<TResult>(QueryVisitor<TResult> visitor) => visitor.VisitGeoRadius(this);
+}
+
+/// <summary>
+/// Documents with a geo point inside a latitude and longitude rectangle, edges included. When <paramref name="West"/> is greater than
+/// <paramref name="East"/> the rectangle runs east from <paramref name="West"/> across the antimeridian to <paramref name="East"/>.
+/// A rectangle from -180 to 180 spans every longitude. Matches score as the boost.
+/// </summary>
+/// <param name="Field">The geo point field; it must be indexed and keep a column.</param>
+/// <param name="North">The northern edge, -90 to 90 and not below <paramref name="South"/>.</param>
+/// <param name="South">The southern edge, -90 to 90.</param>
+/// <param name="West">The western edge, -180 to 180.</param>
+/// <param name="East">The eastern edge, -180 to 180.</param>
+public sealed record GeoBoundingBoxQuery(string Field, double North, double South, double West, double East) : Query
+{
+    /// <inheritdoc/>
+    public override TResult Accept<TResult>(QueryVisitor<TResult> visitor) => visitor.VisitGeoBoundingBox(this);
 }
