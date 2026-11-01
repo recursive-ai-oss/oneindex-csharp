@@ -159,6 +159,8 @@ public sealed class HighlightTerms
 
         public override int VisitGeoBoundingBox(GeoBoundingBoxQuery query) => 0;
 
+        public override int VisitKnn(KnnQuery query) => 0;
+
         public override int VisitFunctionScore(FunctionScoreQuery query)
         {
             query.Inner.Accept(this);

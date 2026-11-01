@@ -17,6 +17,7 @@
 | `strict` | UTF-16 text | the strict query parser, its printer and binder: only `QueryParseException` may come out; what parses prints and reads back to an equal tree; the compiled query runs on a small index |
 | `filter` | UTF-16 text | the filter-string parser and printer (geo conditions included), same checks |
 | `queryjson` | UTF-8 bytes | the query JSON reader and writer (geo nodes, function-score nodes, `sort` and `searchAfter` included): only `QueryParseException`; write then read gives an equal request; the compiled query runs, and a sorted request runs its first page and a page after its cursor |
+| `vectors` | the vectors file or the graph file of a segment (byte 0: bit 0 repairs header and footer, bit 1 picks the graph file, bit 2 skips block checksums) | the directory, the ordinal map, the blocks and the upper layers; every stored vector, exact and graph searches with deletes and a filter |
 | `dynamic` | first byte = route, then JSON bytes | hostile JSON indexed by path (directly, or after a schema change that rebuilds it from stored source), committed, reopened and queried: only typed exceptions; derived fields stay within the path limit; the stored value comes back whole |
 | `wordpiece` | UTF-16 text | the WordPiece tokenizer over a small synthetic vocabulary: nothing may be thrown, ids stay in the vocabulary, a shorter limit gives a prefix of a longer one, a batch row equals the single encoding |
 

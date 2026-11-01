@@ -263,6 +263,39 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         return new SearchQuery<T>(this, null, query, [], 20, 0, false, null);
     }
 
+    /// <summary>
+    /// Starts a vector search: the documents whose vector property is nearest to a query vector, best first. <c>Where</c> filters restrict which documents
+    /// may be neighbours before the nearest are picked, so a full page comes back whenever enough documents pass. The search keeps the
+    /// <paramref name="neighbors"/> nearest overall; <c>Take</c> and <c>Skip</c> page within them. See docs/vectors.md.
+    /// </summary>
+    /// <typeparam name="TVector">The property type, <c>float[]</c>.</typeparam>
+    /// <param name="member">The vector property, marked <see cref="VectorAttribute"/>, like <c>x =&gt; x.Embedding</c>.</param>
+    /// <param name="vector">The query vector, as long as the property's <c>Dimensions</c> and finite.</param>
+    /// <param name="neighbors">How many nearest documents to find, 1 to 10,000. Default 20.</param>
+    /// <returns>The search. Hits score their similarity (see docs/vectors.md).</returns>
+    /// <exception cref="ArgumentException">The property is not a vector property, or the vector has the wrong length or holds a NaN or infinity.</exception>
+    public SearchQuery<T> SearchVector<TVector>(Expression<Func<T, TVector>> member, float[] vector, int neighbors = 20)
+    {
+        ArgumentNullException.ThrowIfNull(vector);
+        MappedMember m = MemberNames.Resolve(_mapping, member, nameof(SearchVector));
+        if (m.Type != FieldType.Vector)
+        {
+            throw new ArgumentException($"SearchVector: '{m.Name}' is not a [Vector] property.", nameof(member));
+        }
+
+        if (vector.Length != m.Dimensions || vector.Any(x => !float.IsFinite(x)))
+        {
+            throw new ArgumentException($"SearchVector: the query vector must hold {m.Dimensions} finite numbers.", nameof(vector));
+        }
+
+        if (neighbors < 1 || neighbors > KnnQuery.MaxK)
+        {
+            throw new ArgumentOutOfRangeException(nameof(neighbors), $"neighbors must be from 1 to {KnnQuery.MaxK}.");
+        }
+
+        return SearchBy(new KnnQuery(m.Name, (float[])vector.Clone(), neighbors));
+    }
+
     /// <summary>Starts a search with a query in the strict syntax (fields, AND/OR/NOT, phrases with slop, prefixes, fuzzy terms, regular expressions, ranges, boosts). See docs/query-syntax.md.</summary>
     /// <param name="query">The query text.</param>
     /// <returns>The search.</returns>

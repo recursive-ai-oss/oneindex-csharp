@@ -75,9 +75,22 @@ internal static class CommitTarget
 
     private static void CheckSchema(ReadOnlySpan<byte> data)
     {
-        if (Schema.TryDeserialize(data, Limits, out Schema? schema, out _) && !schema.Serialize().AsSpan().SequenceEqual(data))
+        if (!Schema.TryDeserialize(data, Limits, out Schema? schema, out _))
         {
-            throw new InvalidOperationException("a schema that parsed did not serialize back to the same bytes");
+            return;
+        }
+
+        byte[] again = schema.Serialize();
+        if (again.AsSpan().SequenceEqual(data))
+        {
+            return;
+        }
+
+        // Sections this build does not know are skipped on read and so are not written back: the rewritten schema must then be a
+        // fixed point (it parses and writes the same bytes), which is the form the commit file carries from then on.
+        if (!Schema.TryDeserialize(again, Limits, out Schema? second, out _) || !second.Serialize().AsSpan().SequenceEqual(again))
+        {
+            throw new InvalidOperationException("a schema that parsed did not serialize back to a stable form");
         }
     }
 

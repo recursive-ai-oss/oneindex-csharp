@@ -18,6 +18,7 @@
     <Compile Include="../../fuzz/OneIndex.Fuzz/QueryTarget.cs" Link="Fuzz/QueryTarget.cs" />
     <Compile Include="../../fuzz/OneIndex.Fuzz/DocValuesFixture.cs" Link="Fuzz/DocValuesFixture.cs" />
     <Compile Include="../../fuzz/OneIndex.Fuzz/DocValuesTarget.cs" Link="Fuzz/DocValuesTarget.cs" />
+    <Compile Include="../../fuzz/OneIndex.Fuzz/VectorTarget.cs" Link="Fuzz/VectorTarget.cs" />
   </ItemGroup>
 
   <ItemGroup>

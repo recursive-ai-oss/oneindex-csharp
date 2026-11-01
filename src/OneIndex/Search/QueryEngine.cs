@@ -76,6 +76,8 @@ public sealed class QueryEngine : IWeightFactory
             return TermWeight.Create(context, options.Bm25, [RequireTextField(query.Field)], query.Term, query.Boost);
         }
 
+        public override Weight VisitKnn(KnnQuery query) => KnnWeight.Create(context, query, query.Filter?.Accept(this));
+
         public override Weight VisitMultiFieldTerm(MultiFieldTermQuery query)
         {
             CheckBoost(query);

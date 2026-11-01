@@ -10,6 +10,8 @@ FunctionScoreScenario.Run();
 QueryFormsScenario.Run();
 QueryFormsLowLevelScenario.Run();
 ModelsScenario.Run();
+VectorScenario.RunLowLevel();
+VectorScenario.RunHappyPath();
 SmokeScenario.RunWriter(new MemoryStorage(), threadedMerges: true);
 SmokeScenario.RunWriter(new MemoryStorage(), threadedMerges: false);
 
