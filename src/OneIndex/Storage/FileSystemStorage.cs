@@ -1,9 +1,12 @@
+using System.IO.MemoryMappedFiles;
 using Microsoft.Win32.SafeHandles;
 
 namespace OneIndex.Storage;
 
 /// <summary>
-/// Files in a local directory, read with positional reads (no memory mapping) and written append-only with an explicit fsync.
+/// Files in a local directory, written append-only with an explicit fsync. Reads of files of 64 KiB or more are copied out of a
+/// read-only memory mapping on Unix, so a cached range costs a copy and no system call; smaller files, Windows (where a mapped file
+/// cannot be deleted by a merge) and any file that cannot be mapped use positional reads. Callers never see the difference.
 /// Several processes may read the directory while one writes.
 /// <para>
 /// <b>Directory durability.</b> .NET cannot open a directory to fsync it, so <see cref="SyncDirectory"/> fsyncs each file that
@@ -83,7 +86,7 @@ public sealed class FileSystemStorage : StorageBase, IStorage
             _unsyncedNames.Add(name);
         }
 
-        return new FileWriter(name, handle);
+        return new FileWriter(name, handle, Synced);
     }
 
     /// <inheritdoc/>
@@ -138,6 +141,9 @@ public sealed class FileSystemStorage : StorageBase, IStorage
 
     /// <inheritdoc/>
     public bool SupportsLocks => !_readOnly;
+
+    /// <inheritdoc/>
+    public bool SupportsConcurrentSync => !OperatingSystem.IsBrowser();
 
     /// <summary>
     /// Opens the file with <see cref="FileShare.None"/>. On Linux and macOS the runtime takes a non-blocking <c>flock</c> on the
@@ -216,6 +222,16 @@ public sealed class FileSystemStorage : StorageBase, IStorage
         }
     }
 
+    // A file synced after it was created needs no second flush for its name: on the journalling file systems this storage relies on
+    // (see the class remarks) that flush already committed the directory entry. A later rename adds the new name again.
+    private void Synced(string name)
+    {
+        lock (_gate)
+        {
+            _unsyncedNames.Remove(name);
+        }
+    }
+
     private string PathOf(string name)
     {
         StorageNames.Validate(name);
@@ -237,22 +253,65 @@ public sealed class FileSystemStorage : StorageBase, IStorage
         public void Dispose() => handle.Dispose();
     }
 
-    private sealed class FileReader(string name, SafeFileHandle handle) : IRangeReader
+    private sealed class FileReader : IRangeReader
     {
-        private readonly long _length = RandomAccess.GetLength(handle);
+        // Below this size the mapping costs more than the few reads it saves.
+        private const long MapThreshold = 64 * 1024;
 
-        public string Name => name;
+        private readonly string _name;
+        private readonly SafeFileHandle _handle;
+        private readonly long _length;
+        private readonly MemoryMappedFile? _file;
+        private readonly MemoryMappedViewAccessor? _view;
+
+        public FileReader(string name, SafeFileHandle handle)
+        {
+            _name = name;
+            _handle = handle;
+            _length = RandomAccess.GetLength(handle);
+            if (_length >= MapThreshold && !OperatingSystem.IsWindows() && !OperatingSystem.IsBrowser())
+            {
+                try
+                {
+                    _file = MemoryMappedFile.CreateFromFile(handle, null, 0, MemoryMappedFileAccess.Read, HandleInheritability.None, leaveOpen: true);
+                    _view = _file.CreateViewAccessor(0, _length, MemoryMappedFileAccess.Read);
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or OutOfMemoryException)
+                {
+                    // Mapping is an optimization: fall back to positional reads.
+                    _view?.Dispose();
+                    _file?.Dispose();
+                    _view = null;
+                    _file = null;
+                }
+            }
+        }
+
+        public string Name => _name;
 
         public long Length => _length;
 
         public int Read(long offset, Span<byte> destination, CancellationToken cancellationToken = default)
         {
             ArgumentOutOfRangeException.ThrowIfNegative(offset);
+            if (_view is not null)
+            {
+                // Immutable files: the mapping covers exactly the length seen at open, and a range past it reads short, like a pread.
+                long available = _length - offset;
+                int count = available <= 0 ? 0 : (int)Math.Min(destination.Length, available);
+                if (count > 0)
+                {
+                    _view.SafeMemoryMappedViewHandle.ReadSpan((ulong)offset, destination[..count]);
+                }
+
+                return count;
+            }
+
             int total = 0;
             while (total < destination.Length)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                int n = RandomAccess.Read(handle, destination[total..], offset + total);
+                int n = RandomAccess.Read(_handle, destination[total..], offset + total);
                 if (n == 0)
                 {
                     break;
@@ -267,10 +326,16 @@ public sealed class FileSystemStorage : StorageBase, IStorage
         public async ValueTask<int> ReadAsync(long offset, Memory<byte> destination, CancellationToken cancellationToken = default)
         {
             ArgumentOutOfRangeException.ThrowIfNegative(offset);
+            if (_view is not null)
+            {
+                // A mapped range is a copy from memory: nothing to wait for.
+                return Read(offset, destination.Span, cancellationToken);
+            }
+
             int total = 0;
             while (total < destination.Length)
             {
-                int n = await RandomAccess.ReadAsync(handle, destination[total..], offset + total, cancellationToken).ConfigureAwait(false);
+                int n = await RandomAccess.ReadAsync(_handle, destination[total..], offset + total, cancellationToken).ConfigureAwait(false);
                 if (n == 0)
                 {
                     break;
@@ -282,10 +347,15 @@ public sealed class FileSystemStorage : StorageBase, IStorage
             return total;
         }
 
-        public void Dispose() => handle.Dispose();
+        public void Dispose()
+        {
+            _view?.Dispose();
+            _file?.Dispose();
+            _handle.Dispose();
+        }
     }
 
-    private sealed class FileWriter(string name, SafeFileHandle handle) : IStorageWriter
+    private sealed class FileWriter(string name, SafeFileHandle handle, Action<string> synced) : IStorageWriter
     {
         private readonly byte[] _buffer = new byte[WriteBufferSize];
         private int _buffered;
@@ -350,6 +420,7 @@ public sealed class FileSystemStorage : StorageBase, IStorage
             cancellationToken.ThrowIfCancellationRequested();
             FlushBuffer();
             RandomAccess.FlushToDisk(handle);
+            synced(name);
         }
 
         public async ValueTask SyncAsync(CancellationToken cancellationToken = default)
@@ -360,6 +431,7 @@ public sealed class FileSystemStorage : StorageBase, IStorage
             // .NET has no asynchronous fsync, so the flush below blocks.
             cancellationToken.ThrowIfCancellationRequested();
             RandomAccess.FlushToDisk(handle);
+            synced(name);
         }
 
         public void Dispose()

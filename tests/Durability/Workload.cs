@@ -15,7 +15,7 @@ public static class Workload
         .Keyword("tag")
         .Text("body")
         .Integral("n")
-        .Add(new FieldDefinition("v", FieldType.Vector) { Dimensions = VectorDimensions, FlatThreshold = 3, HnswM = 4, EfConstruction = 16 })
+        .Add(new FieldDefinition("v", FieldType.Vector) { Dimensions = VectorDimensions, FlatThreshold = 3, HnswM = 4, EfConstruction = 16, Quantization = VectorQuantization.Scalar4 })
         .Build();
 
     /// <summary>The length of the vector every document carries; its content is a function of the document's number.</summary>
@@ -35,7 +35,7 @@ public static class Workload
     }
 
     /// <summary>
-    /// The schema the evolution campaigns switch to: a stemming analyzer on the body, a column on the tag and a new field. Moving between
+    /// The schema the evolution campaigns switch to: a stemming analyzer on the body, a column on the tag, a new field and a different graph size for the vectors. Moving between
     /// <see cref="Schema"/> and this one in either direction rebuilds the segments from stored source.
     /// </summary>
     public static readonly Schema SchemaV2 = new SchemaBuilder()
@@ -44,6 +44,7 @@ public static class Workload
         .Add(new FieldDefinition("body", FieldType.Text) { Analyzer = "en" })
         .Integral("n")
         .Keyword("extra")
+        .Add(new FieldDefinition("v", FieldType.Vector) { Dimensions = VectorDimensions, FlatThreshold = 3, HnswM = 6, EfConstruction = 16 })
         .Build();
 
     /// <summary>The schema of an evolution campaign cycle: 1 is <see cref="Schema"/>, 2 is <see cref="SchemaV2"/>.</summary>

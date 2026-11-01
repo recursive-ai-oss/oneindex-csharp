@@ -242,6 +242,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
         long epoch = commit?.SchemaEpoch ?? 0;
         bool adopt = false;
         bool resumePending = false;
+        bool settingsChanged = false;
         if (commit is not null && !commit.SchemaBytes.IsEmpty)
         {
             Schema committed = Schema.Deserialize(commit.SchemaBytes.Span, options.Limits);
@@ -273,6 +274,9 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
                 adopt = pending is not null;
             }
 
+            // Settings only affect queries: a change in them alone is used at once and the next commit records them.
+            settingsChanged = schema is not null && !(target ?? effective).Equals(committed) && (target ?? effective).HasSameFields(committed);
+
             if (target is null && commit.Pending is not null)
             {
                 adopt = true;
@@ -288,7 +292,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
             effective = schema ?? throw new ArgumentException("A new index needs a schema.", nameof(schema));
         }
 
-        var writer = new IndexWriter(storage, effective, epoch, target, options, writerLock);
+        var writer = new IndexWriter(storage, effective, epoch, target, options, writerLock) { SchemaSettingsChanged = settingsChanged };
         try
         {
             writer.Recover(commit, resumePending, cancellationToken);
@@ -308,6 +312,9 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
             throw;
         }
     }
+
+    /// <summary>Whether the schema given to <c>Open</c> had the committed fields but different text settings. The new settings are in force and the next commit records them.</summary>
+    public bool SchemaSettingsChanged { get; private init; }
 
     /// <summary>Opens the writer (see <see cref="Open(IStorage, Schema?, IndexWriterOptions?, CancellationToken)"/>).</summary>
     /// <param name="storage">A writable storage.</param>
@@ -596,7 +603,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
 
             try
             {
-                CommitProtocol.Commit(_storage, next, _limits, cancellationToken);
+                CommitProtocol.Commit(_storage, next, _limits, _current is null ? null : FilesOf(_current).ToHashSet(StringComparer.Ordinal), cancellationToken);
             }
             catch (Exception e)
             {
@@ -1040,7 +1047,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
         }
 
         string name = NewSegmentName();
-        var sink = new SegmentFileSink(_storage, name);
+        var sink = new SegmentFileSink(_storage, name) { DeferSync = true };
         try
         {
             IReadOnlyList<Document> expanded = DynamicFields.Expand(_schema, docs, _limits, out Schema flushSchema);
@@ -1062,9 +1069,12 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
 
                 IdsFormat.Write(sink, entries, cancellationToken);
             }
+
+            sink.SyncPending(cancellationToken);
         }
         catch
         {
+            sink.AbortPending();
             foreach (string n in sink.CreatedNames)
             {
                 _refs.TryDelete(n);

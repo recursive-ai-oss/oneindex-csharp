@@ -159,14 +159,14 @@ public class MiniLmRerankerTests : IDisposable
     [Fact]
     public void TheSearchStageRerankesWithTheRealModel()
     {
-        using SearchIndex<PlainDoc> index = SearchIndex.InMemory<PlainDoc>(null, Model);
-        PlainDoc[] docs =
+        using SearchIndex<RerankPlainDoc> index = SearchIndex.InMemory<RerankPlainDoc>(null, null, Model);
+        RerankPlainDoc[] docs =
         [
             new() { Id = "photo", Title = "Photosynthesis", Body = Passages[0] },
             new() { Id = "market", Title = "Markets", Body = Passages[1] + " food" },
             new() { Id = "leaves", Title = "Leaves", Body = Passages[2] },
         ];
-        foreach (PlainDoc d in docs)
+        foreach (RerankPlainDoc d in docs)
         {
             index.Upsert(d);
         }
@@ -175,7 +175,7 @@ public class MiniLmRerankerTests : IDisposable
         const string query = "how do plants make food";
         float[] scores = Model.Score(query, [.. docs.Select(static d => d.Title + " " + d.Body)]);
         string[] want = [.. docs.Select((d, i) => (d.Id, Score: scores[i])).OrderByDescending(static x => x.Score).Select(static x => x.Id)];
-        List<SearchHit<PlainDoc>> hits = index.Search("plants OR food").Rerank(query: query).ToList();
+        List<SearchHit<RerankPlainDoc>> hits = index.Search("plants OR food").Rerank(query: query).ToList();
         Assert.Equal(want, hits.Select(static h => h.Id));
         Assert.Equal("market", want[^1]);
         Assert.Equal(scores.Max(), hits[0].Score);

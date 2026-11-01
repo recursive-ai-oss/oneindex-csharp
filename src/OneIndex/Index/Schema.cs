@@ -36,6 +36,9 @@ public enum FieldType : byte
 
     /// <summary>A JSON value, stored whole and indexed by leaf path (docs/dynamic.md).</summary>
     Json = 10,
+
+    /// <summary>A learned sparse vector (token to weight), indexed as postings whose frequencies are quantized weights (docs/sparse.md).</summary>
+    Sparse = 11,
 }
 
 /// <summary>How much of each posting a text field records.</summary>
@@ -122,6 +125,22 @@ public sealed class FieldDefinition
     /// <summary>A segment with fewer vectors than this is searched exactly and gets no graph. Default 1000, 0 to 100 million. Vector fields only.</summary>
     public int FlatThreshold { get; init; } = DefaultFlatThreshold;
 
+    /// <summary>
+    /// A compressed copy the graph search runs on: <see cref="VectorQuantization.Scalar8"/>, <see cref="VectorQuantization.Scalar4"/> or the
+    /// sign-bit <see cref="VectorQuantization.OneBit"/>. The full-precision vectors stay in the segment and rerank the candidates.
+    /// Default <see cref="VectorQuantization.None"/>. Vector fields only; <see cref="VectorQuantization.OneBit"/> needs the cosine or dot-product metric.
+    /// </summary>
+    public VectorQuantization Quantization { get; init; }
+
+    /// <summary>
+    /// For a quantized field: the graph search keeps <c>Oversample * k</c> candidates by their compressed distance and the full-precision
+    /// vectors pick the best <c>k</c> of them. 0 (the default) means the codec's own default (see <see cref="VectorQuantizer.DefaultOversample"/>);
+    /// otherwise 1 to 100.
+    /// </summary>
+    public float Oversample { get; init; }
+
+    internal bool HasCustomQuantization => Type == FieldType.Vector && (Quantization != VectorQuantization.None || Oversample != 0);
+
     internal bool HasCustomVectorSettings => Type == FieldType.Vector && (Metric != VectorMetric.Cosine || HnswM != DefaultHnswM || EfConstruction != DefaultEfConstruction || FlatThreshold != DefaultFlatThreshold);
 
     /// <summary>The default for <see cref="HnswM"/>.</summary>
@@ -152,16 +171,19 @@ public sealed class Schema : IEquatable<Schema>
     /// <summary>The section that lists derived (dynamic) fields: pairs of field index and parent field index.</summary>
     private const int SectionDynamicFields = 1;
     private const int SectionVectorSettings = 3;
+    private const int SectionQuantization = 4;
 
+    private const int TextSettingsSection = 2;
     private static readonly byte[] MagicBytes = "OIXS"u8.ToArray();
     private readonly string[] _jsonFields;
     private readonly Dictionary<string, int> _ids;
     private readonly byte[] _serialized;
 
-    internal Schema(IReadOnlyList<FieldDefinition> fields, string? idField, IndexLimits limits)
+    internal Schema(IReadOnlyList<FieldDefinition> fields, string? idField, IndexLimits limits, TextSettings? settings = null)
     {
         Fields = [.. fields];
         IdField = idField;
+        Settings = settings ?? TextSettings.Default;
         _ids = new Dictionary<string, int>(fields.Count, StringComparer.Ordinal);
         for (int i = 0; i < fields.Count; i++)
         {
@@ -169,11 +191,23 @@ public sealed class Schema : IEquatable<Schema>
         }
 
         _jsonFields = [.. fields.Where(static f => f.Type == FieldType.Json && f.Indexed && f.DynamicParent is null).Select(static f => f.Name)];
-        _serialized = Write(this);
+        _serialized = Write(this, true);
         if (_serialized.Length > limits.MaxSchemaBytes)
         {
             throw new ArgumentException($"The serialized schema is {_serialized.Length} bytes, over the limit of {limits.MaxSchemaBytes}.");
         }
+    }
+
+    /// <summary>The query-time text settings (typo tolerance, as-you-type, synonyms, stop words) recorded with the schema. Default <see cref="TextSettings.Default"/>.</summary>
+    public TextSettings Settings { get; }
+
+    /// <summary>Whether the other schema declares the same fields and identifier, ignoring <see cref="Settings"/>. Settings only affect queries, so a schema that differs only in them can be adopted without rebuilding.</summary>
+    /// <param name="other">The schema to compare with.</param>
+    /// <returns><see langword="true"/> when the fields match.</returns>
+    public bool HasSameFields(Schema other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        return Write(this, false).AsSpan().SequenceEqual(Write(other, false));
     }
 
     /// <summary>The empty schema.</summary>
@@ -238,7 +272,7 @@ public sealed class Schema : IEquatable<Schema>
             return this;
         }
 
-        var builder = new SchemaBuilder(IndexLimits.Default) { IdFieldName = IdField };
+        var builder = new SchemaBuilder(IndexLimits.Default) { IdFieldName = IdField, Settings = Settings };
         foreach (FieldDefinition f in Fields.Where(static f => f.DynamicParent is null))
         {
             builder.Add(f);
@@ -255,7 +289,7 @@ public sealed class Schema : IEquatable<Schema>
     {
         // Declared fields keep their positions; derived fields follow in name order, so the schema depends on which paths exist and
         // not on the order they were met in.
-        var builder = new SchemaBuilder(limits) { IdFieldName = IdField };
+        var builder = new SchemaBuilder(limits) { IdFieldName = IdField, Settings = Settings };
         foreach (FieldDefinition f in Fields.Where(static f => f.DynamicParent is null))
         {
             builder.Add(f);
@@ -412,11 +446,15 @@ public sealed class Schema : IEquatable<Schema>
         FieldType.Bytes => kind == FieldValueKind.Bytes,
         FieldType.Vector => kind == FieldValueKind.Vector,
         FieldType.Json => kind == FieldValueKind.Json,
+        FieldType.Sparse => kind == FieldValueKind.Sparse,
         _ => false,
     };
 
-    private static byte[] Write(Schema schema)
+    // Version 1 holds no settings; version 2 appends them. Default settings are written as version 1 so that indexes that never used them
+    // keep their bytes.
+    private static byte[] Write(Schema schema, bool withSettings)
     {
+        bool settings = withSettings && !schema.Settings.IsDefault;
         var sink = new ByteSink();
         foreach (byte b in MagicBytes)
         {
@@ -425,7 +463,8 @@ public sealed class Schema : IEquatable<Schema>
 
         bool hasDerived = schema.Fields.Any(static f => f.DynamicParent is not null);
         bool hasVectorSettings = schema.Fields.Any(static f => f.HasCustomVectorSettings);
-        sink.WriteUInt32(hasDerived || hasVectorSettings ? 2u : 1u);
+        bool hasQuantization = schema.Fields.Any(static f => f.HasCustomQuantization);
+        sink.WriteUInt32(hasDerived || settings || hasVectorSettings || hasQuantization ? 2u : 1u);
         sink.WriteVarUInt((ulong)schema.Fields.Count);
         foreach (FieldDefinition f in schema.Fields)
         {
@@ -439,62 +478,98 @@ public sealed class Schema : IEquatable<Schema>
         }
 
         sink.WriteString(schema.IdField ?? string.Empty);
-        if (hasDerived || hasVectorSettings)
+        if (hasDerived || settings || hasVectorSettings || hasQuantization)
         {
-            // Version 2 appends sections: a count, then for each an id (ascending) and its bytes.
-            sink.WriteVarUInt((ulong)((hasDerived ? 1 : 0) + (hasVectorSettings ? 1 : 0)));
-        }
-
-        if (hasDerived)
-        {
-            var section = new ByteSink();
-            var pairs = new List<(int Field, int Parent)>();
-            for (int i = 0; i < schema.Fields.Count; i++)
+            // Version 2 appends sections: a count, then for each an id (ascending) and its bytes. Section 1 lists the derived
+            // (dynamic) fields, section 2 holds the text settings, section 3 the vector field settings, section 4 the compressed copies.
+            sink.WriteVarUInt((ulong)((hasDerived ? 1 : 0) + (settings ? 1 : 0) + (hasVectorSettings ? 1 : 0) + (hasQuantization ? 1 : 0)));
+            if (hasDerived)
             {
-                if (schema.Fields[i].DynamicParent is { } parent)
+                var section = new ByteSink();
+                var pairs = new List<(int Field, int Parent)>();
+                for (int i = 0; i < schema.Fields.Count; i++)
                 {
-                    pairs.Add((i, schema.GetFieldId(parent)));
+                    if (schema.Fields[i].DynamicParent is { } parent)
+                    {
+                        pairs.Add((i, schema.GetFieldId(parent)));
+                    }
                 }
-            }
 
-            section.WriteVarUInt((ulong)pairs.Count);
-            foreach ((int field, int parent) in pairs)
-            {
-                section.WriteVarUInt((ulong)field);
-                section.WriteVarUInt((ulong)parent);
-            }
-
-            sink.WriteVarUInt(SectionDynamicFields);
-            sink.WriteBytes(section.ToArray());
-        }
-
-        if (hasVectorSettings)
-        {
-            // Section 3: the index settings of the vector fields that differ from the defaults, by ascending field index. A reader that
-            // does not know the section skips it and sees the default settings.
-            var section = new ByteSink();
-            int n = 0;
-            foreach (FieldDefinition f in schema.Fields)
-            {
-                n += f.HasCustomVectorSettings ? 1 : 0;
-            }
-
-            section.WriteVarUInt((ulong)n);
-            for (int i = 0; i < schema.Fields.Count; i++)
-            {
-                FieldDefinition f = schema.Fields[i];
-                if (f.HasCustomVectorSettings)
+                section.WriteVarUInt((ulong)pairs.Count);
+                foreach ((int field, int parent) in pairs)
                 {
-                    section.WriteVarUInt((ulong)i);
-                    section.WriteByte((byte)f.Metric);
-                    section.WriteVarUInt((ulong)f.HnswM);
-                    section.WriteVarUInt((ulong)f.EfConstruction);
-                    section.WriteVarUInt((ulong)f.FlatThreshold);
+                    section.WriteVarUInt((ulong)field);
+                    section.WriteVarUInt((ulong)parent);
                 }
+
+                sink.WriteVarUInt(SectionDynamicFields);
+                sink.WriteBytes(section.ToArray());
             }
 
-            sink.WriteVarUInt(SectionVectorSettings);
-            sink.WriteBytes(section.ToArray());
+            if (settings)
+            {
+                var section = new ByteSink();
+                schema.Settings.Write(section);
+                sink.WriteVarUInt(TextSettingsSection);
+                sink.WriteBytes(section.WrittenSpan);
+            }
+
+            if (hasVectorSettings)
+            {
+                // The index settings of the vector fields that differ from the defaults, by ascending field index. A reader that
+                // does not know the section skips it and sees the default settings.
+                var section = new ByteSink();
+                int n = 0;
+                foreach (FieldDefinition f in schema.Fields)
+                {
+                    n += f.HasCustomVectorSettings ? 1 : 0;
+                }
+
+                section.WriteVarUInt((ulong)n);
+                for (int i = 0; i < schema.Fields.Count; i++)
+                {
+                    FieldDefinition f = schema.Fields[i];
+                    if (f.HasCustomVectorSettings)
+                    {
+                        section.WriteVarUInt((ulong)i);
+                        section.WriteByte((byte)f.Metric);
+                        section.WriteVarUInt((ulong)f.HnswM);
+                        section.WriteVarUInt((ulong)f.EfConstruction);
+                        section.WriteVarUInt((ulong)f.FlatThreshold);
+                    }
+                }
+
+                sink.WriteVarUInt(SectionVectorSettings);
+                sink.WriteBytes(section.ToArray());
+            }
+
+            if (hasQuantization)
+            {
+                // Section 4: the compressed copy of each vector field that has one (or a non-default oversample), by ascending field index:
+                // the field index, the codec byte and the oversample as the bits of a float. A reader that does not know the section sees
+                // unquantized fields, which still search correctly (the full-precision vectors are always there).
+                var section = new ByteSink();
+                int n = 0;
+                foreach (FieldDefinition f in schema.Fields)
+                {
+                    n += f.HasCustomQuantization ? 1 : 0;
+                }
+
+                section.WriteVarUInt((ulong)n);
+                for (int i = 0; i < schema.Fields.Count; i++)
+                {
+                    FieldDefinition f = schema.Fields[i];
+                    if (f.HasCustomQuantization)
+                    {
+                        section.WriteVarUInt((ulong)i);
+                        section.WriteByte((byte)f.Quantization);
+                        section.WriteUInt32(BitConverter.SingleToUInt32Bits(f.Oversample));
+                    }
+                }
+
+                sink.WriteVarUInt(SectionQuantization);
+                sink.WriteBytes(section.ToArray());
+            }
         }
 
         return sink.ToArray();
@@ -541,8 +616,10 @@ public sealed class Schema : IEquatable<Schema>
         Array.Fill(parents, -1);
         bool skippedSection = false;
         bool knownSection = false;
+        TextSettings settingsRead = TextSettings.Default;
         var settings = new VectorSettings[count];
         Array.Fill(settings, VectorSettings.Default);
+        var quantization = new (VectorQuantization Codec, float Oversample)[count];
         if (version >= 2)
         {
             int sections = src.ReadCount(16, "section count");
@@ -618,9 +695,50 @@ public sealed class Schema : IEquatable<Schema>
 
                     knownSection = true;
                 }
+                else if (sectionId == SectionQuantization)
+                {
+                    var inner = new ByteSource(payload);
+                    int entries = inner.ReadCount(count, "quantization count");
+                    int last = -1;
+                    for (int p = 0; p < entries; p++)
+                    {
+                        int field = inner.ReadCount(count - 1, "quantization field index");
+                        if (field <= last || (FieldType)defs[field].Type != FieldType.Vector)
+                        {
+                            throw new MalformedInputException("quantization entries are not in order or name a field that is not a vector");
+                        }
+
+                        byte codec = inner.ReadByte();
+                        float oversample = BitConverter.UInt32BitsToSingle(inner.ReadUInt32());
+                        if (codec > (byte)VectorQuantization.OneBit || !(oversample == 0 || (oversample >= 1 && oversample <= 100)) || (codec == 0 && oversample == 0))
+                        {
+                            throw new MalformedInputException($"vector field '{defs[field].Name}' has an unknown codec or an oversample outside 1 to 100");
+                        }
+
+                        quantization[field] = ((VectorQuantization)codec, oversample);
+                        last = field;
+                    }
+
+                    if (inner.Remaining != 0 || entries == 0)
+                    {
+                        throw new MalformedInputException("the quantization section is empty or has trailing bytes");
+                    }
+
+                    knownSection = true;
+                }
+                else if (sectionId == TextSettingsSection)
+                {
+                    var inner = new ByteSource(payload);
+                    settingsRead = TextSettings.Read(ref inner, limits);
+                    knownSection = true;
+                    if (inner.Remaining != 0)
+                    {
+                        throw new MalformedInputException("unexpected bytes after the text settings");
+                    }
+                }
                 else
                 {
-                    // A section from a newer build (a settings record, say) is skipped: sections only add information, and the
+                    // A section from a newer build is skipped: sections only add information, and the
                     // fields above are complete without it. The payload was already length- and limit-checked by ReadBytes.
                     skippedSection = true;
                 }
@@ -657,11 +775,14 @@ public sealed class Schema : IEquatable<Schema>
                 HnswM = vs.HnswM,
                 EfConstruction = vs.EfConstruction,
                 FlatThreshold = vs.FlatThreshold,
+                Quantization = quantization[i].Codec,
+                Oversample = quantization[i].Oversample,
                 DynamicParent = parents[i] >= 0 ? defs[parents[i]].Name : null,
             });
         }
 
         builder.IdFieldName = id.Length == 0 ? null : id;
+        builder.Settings = settingsRead;
         return builder.Build();
     }
 }
@@ -686,6 +807,9 @@ public sealed class SchemaBuilder
     }
 
     internal string? IdFieldName { get; set; }
+
+    /// <summary>The query-time text settings the schema carries. Default <see cref="TextSettings.Default"/>.</summary>
+    public TextSettings Settings { get; set; } = TextSettings.Default;
 
     /// <summary>Adds a field with explicit options.</summary>
     /// <param name="field">The field.</param>
@@ -765,6 +889,11 @@ public sealed class SchemaBuilder
     public SchemaBuilder Vector(string name, int dimensions, VectorMetric metric)
         => Add(new FieldDefinition(name, FieldType.Vector) { Dimensions = dimensions, Metric = metric });
 
+    /// <summary>Adds a learned sparse vector field (token to weight), searched by dot product with <see cref="Search.SparseQuery"/>.</summary>
+    /// <param name="name">The field name.</param>
+    /// <returns>This builder.</returns>
+    public SchemaBuilder Sparse(string name) => Add(new FieldDefinition(name, FieldType.Sparse));
+
     /// <summary>Adds a dynamic JSON field.</summary>
     /// <param name="name">The field name.</param>
     /// <returns>This builder.</returns>
@@ -799,7 +928,8 @@ public sealed class SchemaBuilder
             }
         }
 
-        return new Schema(_fields, IdFieldName, _limits);
+        Settings.Validate();
+        return new Schema(_fields, IdFieldName, _limits, Settings);
     }
 
     private void Validate(FieldDefinition f)
@@ -867,6 +997,16 @@ public sealed class SchemaBuilder
             if (f.Multi)
             {
                 throw new ArgumentException($"Vector field '{n}' holds one vector per document.");
+            }
+
+            if (!Enum.IsDefined(f.Quantization) || !(f.Oversample == 0 || (f.Oversample >= 1 && f.Oversample <= 100)) || (f.Quantization == VectorQuantization.None && f.Oversample != 0))
+            {
+                throw new ArgumentException($"Vector field '{n}' needs a known quantization and, with one, an oversample of 0 (the default) or 1 to 100.");
+            }
+
+            if (f.Quantization == VectorQuantization.OneBit && f.Metric == VectorMetric.Euclidean)
+            {
+                throw new ArgumentException($"Vector field '{n}' uses sign-bit quantization, which needs the cosine or dot-product metric.");
             }
 
             if (!Enum.IsDefined(f.Metric) || f.HnswM < 2 || f.HnswM > 256 || f.EfConstruction < f.HnswM || f.EfConstruction > 4096 || f.FlatThreshold < 0 || f.FlatThreshold > 100_000_000)

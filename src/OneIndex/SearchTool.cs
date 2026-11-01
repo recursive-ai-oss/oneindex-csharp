@@ -290,6 +290,25 @@ public static class SearchTool
             }, required: ["field", "vector"]));
         }
 
+        int sparseIndex = 0;
+        foreach (FieldDefinition sf in schema.Fields.Where(static f => f.Type == FieldType.Sparse && f.Indexed))
+        {
+            FieldDefinition sparse = sf;
+            Def("sparse" + (sparseIndex++).ToString(System.Globalization.CultureInfo.InvariantCulture), () => Node(w, "sparse", () =>
+            {
+                Field(w, [sparse.Name]);
+                w.WriteStartObject("weights");
+                w.WriteString("type", "object");
+                w.WriteNumber("maxProperties", SparseVector.MaxEntries);
+                w.WriteStartObject("additionalProperties");
+                w.WriteString("type", "number");
+                w.WriteNumber("minimum", 0);
+                w.WriteEndObject();
+                w.WriteString("description", "Weights by token: the documents sharing tokens score the dot product of the weights.");
+                w.WriteEndObject();
+            }, required: ["field", "weights"]));
+        }
+
         Def("bool", () => Node(w, "bool", () =>
         {
             foreach (string clause in ClauseNames)
@@ -423,17 +442,28 @@ public static class SearchTool
         Int(w, "offset", 0, QueryJson.MaxWindow, "How many of the best hits to skip. Default 0.");
         Typed(w, "countExactly", "boolean", "Count every match instead of giving a lower bound. Slower. Default false.");
         List<string> vectorFields = [.. schema.Fields.Where(static f => f.Type == FieldType.Vector && f.Indexed).Select(static f => f.Name)];
-        if (vectorFields.Count > 0)
+        bool hasSparse = schema.Fields.Any(static f => f.Type == FieldType.Sparse && f.Indexed);
+        if (vectorFields.Count > 0 || hasSparse)
         {
             w.WriteStartObject("hybrid");
             w.WriteString("type", "object");
             w.WriteString("description", "Combine the text search of q with a vector search over the meaning of q, when the index can embed text. Without it, results are text matches only.");
             w.WriteBoolean("additionalProperties", false);
             w.WriteStartObject("properties");
-            w.WriteStartObject("field");
-            EnumOf(w, vectorFields);
-            w.WriteString("description", "The vector field to search. Default: the only automatically embedded one.");
-            w.WriteEndObject();
+            if (vectorFields.Count > 0)
+            {
+                w.WriteStartObject("field");
+                EnumOf(w, vectorFields);
+                w.WriteString("description", "The vector field to search. Default: the only automatically embedded one.");
+                w.WriteEndObject();
+            }
+
+            if (hasSparse)
+            {
+                Typed(w, "sparse", "boolean", "Add a learned sparse list (the text of q encoded by the index's sparse encoder). Default false.");
+                Num(w, "sparseWeight", 0, 1000, "The sparse list's weight against the others. Default 1 for rrf, 0.5 for linear.");
+            }
+
             Num(w, "semanticRatio", 0, 1, "How much meaning counts against words: 0 words only, 1 meaning only. Default 0.75.");
             w.WriteStartObject("fusion");
             EnumOf(w, ["rrf", "linear"]);

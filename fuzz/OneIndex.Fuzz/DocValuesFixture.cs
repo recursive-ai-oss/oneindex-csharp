@@ -32,6 +32,7 @@ internal static class DocValuesFixture
         .Add(new FieldDefinition("secret", FieldType.Text) { Stored = false })
         .Add(new FieldDefinition("blob", FieldType.Bytes))
         .Vector("vec", 3)
+        .Sparse("sp")
         .Json("meta")
         .Build();
 
@@ -104,6 +105,17 @@ internal static class DocValuesFixture
             if (rng.Next(4) == 0)
             {
                 d.Add("vec", [(float)rng.NextDouble(), (float)rng.NextDouble(), -0f]);
+            }
+
+            if (rng.Next(3) == 0)
+            {
+                var entries = new List<KeyValuePair<string, float>>();
+                for (int t = rng.Next(1, 12); t > 0; t--)
+                {
+                    entries.Add(new("w" + rng.Next(200), (float)(rng.NextDouble() * (rng.Next(20) == 0 ? 1000 : 4))));
+                }
+
+                d.Add("sp", new SparseVector(entries));
             }
 
             if (rng.Next(4) == 0)
@@ -185,6 +197,7 @@ internal static class DocValuesFixture
             FieldValueKind.Bytes => a.AsBytes().Span.SequenceEqual(b.AsBytes().Span),
             FieldValueKind.Vector => a.AsVector().Span.Length == b.AsVector().Span.Length
                 && a.AsVector().Span.ToArray().Zip(b.AsVector().Span.ToArray(), (x, y) => BitConverter.SingleToUInt32Bits(x) == BitConverter.SingleToUInt32Bits(y)).All(x => x),
+            FieldValueKind.Sparse => a.AsSparse().Equals(b.AsSparse()),
             FieldValueKind.Json => a.AsJson().GetRawText() == b.AsJson().GetRawText(),
             _ => false,
         };

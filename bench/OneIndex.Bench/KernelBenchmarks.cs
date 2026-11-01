@@ -11,6 +11,11 @@ public class KernelBenchmarks
     private float[] _b = [];
     private sbyte[] _ia = [];
     private sbyte[] _ib = [];
+    private byte[] _packed = [];
+    private sbyte[] _low = [];
+    private sbyte[] _high = [];
+    private byte[] _bitsA = [];
+    private byte[] _bitsB = [];
 
     [Params(384, 768)]
     public int Dimensions { get; set; }
@@ -41,6 +46,22 @@ public class KernelBenchmarks
             _ia[i] = (sbyte)rng.Next(-127, 128);
             _ib[i] = (sbyte)rng.Next(-127, 128);
         }
+
+        int half = (Dimensions + 1) / 2;
+        _packed = new byte[half];
+        _low = new sbyte[half];
+        _high = new sbyte[half];
+        rng.NextBytes(_packed);
+        for (int i = 0; i < half; i++)
+        {
+            _low[i] = (sbyte)rng.Next(-127, 128);
+            _high[i] = (sbyte)rng.Next(-127, 128);
+        }
+
+        _bitsA = new byte[(Dimensions + 63) / 64 * 8];
+        _bitsB = new byte[_bitsA.Length];
+        rng.NextBytes(_bitsA);
+        rng.NextBytes(_bitsB);
     }
 
     [Benchmark]
@@ -51,4 +72,11 @@ public class KernelBenchmarks
 
     [Benchmark]
     public int DotInt8() => VectorKernels.DotInt8(Isa, _ia, _ib);
+
+    [Benchmark]
+    public int DotInt4() => QuantizedKernels.DotInt4(Isa, _packed, _low, _high);
+
+    // The popcount path has no width: one row, repeated for each Width parameter.
+    [Benchmark]
+    public int Hamming() => QuantizedKernels.Hamming(_bitsA, _bitsB);
 }

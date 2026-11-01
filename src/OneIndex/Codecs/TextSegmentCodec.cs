@@ -40,12 +40,19 @@ public sealed class TextSegmentCodec : ISegmentCodec
         var buffer = new InvertedBuffer(context.Limits);
         var analyzers = new Dictionary<string, Analyzer>(StringComparer.Ordinal);
         var numeric = new Dictionary<string, FieldType>(StringComparer.Ordinal);
+        var sparse = new HashSet<string>(StringComparer.Ordinal);
         foreach (FieldDefinition f in context.Schema.Fields)
         {
             if (IsTextIndexed(f))
             {
                 buffer.DeclareField(f.Name, FeaturesOf(f));
                 analyzers[f.Name] = CreateAnalyzer(f);
+            }
+            else if (f.Type == FieldType.Sparse && f.Indexed)
+            {
+                // Sparse weights are postings frequencies (docs/sparse.md).
+                buffer.DeclareField(f.Name, PostingsFeatures.Frequencies);
+                sparse.Add(f.Name);
             }
             else if (IndexNumericTerms && NumericTerms.IsNumeric(f.Type) && f.Indexed)
             {
@@ -55,7 +62,7 @@ public sealed class TextSegmentCodec : ISegmentCodec
             }
         }
 
-        if (analyzers.Count == 0 && numeric.Count == 0)
+        if (analyzers.Count == 0 && numeric.Count == 0 && sparse.Count == 0)
         {
             return;
         }
@@ -74,6 +81,18 @@ public sealed class TextSegmentCodec : ISegmentCodec
                 if (analyzers.TryGetValue(field.Name, out Analyzer? analyzer) && field.Value.Kind == FieldValueKind.Text)
                 {
                     buffer.AddField(d, field.Name, analyzer.GetTokens(field.Value.AsText().AsMemory()));
+                }
+                else if (field.Value.Kind == FieldValueKind.Sparse && sparse.Contains(field.Name))
+                {
+                    SparseVector sv = field.Value.AsSparse();
+                    for (int k = 0; k < sv.Count; k++)
+                    {
+                        int q = SparseVector.Quantize(sv.Weights[k]);
+                        if (q > 0)
+                        {
+                            buffer.AddWeightedTerm(d, field.Name, System.Text.Encoding.UTF8.GetBytes(sv.Tokens[k]), q);
+                        }
+                    }
                 }
                 else if (numeric.TryGetValue(field.Name, out FieldType type))
                 {

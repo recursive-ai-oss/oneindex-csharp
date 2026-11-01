@@ -29,6 +29,18 @@
     <None Include="$(OneIndexRerankerWeights)/LICENSE-ms-marco-MiniLM-L6-v2.txt" Pack="true" PackagePath="models/ms-marco-MiniLM-L6-v2/" Visible="false" />
   </ItemGroup>
 
+  <PropertyGroup Label="Packed sparse weights">
+    <!-- Written by tools/models/pack-sparse-weights.sh. A build without them compiles; OpenSearchSparseEncoder.Load() then reports that they are missing. -->
+    <OneIndexSparseWeights Condition="'$(OneIndexSparseWeights)' == ''">$(ArtifactsPath)/model-weights/neural-sparse</OneIndexSparseWeights>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(OneIndexSparseWeights)/model.onemodel') And Exists('$(OneIndexSparseWeights)/vocab.txt') And Exists('$(OneIndexSparseWeights)/idf.json')">
+    <EmbeddedResource Include="$(OneIndexSparseWeights)/model.onemodel" LogicalName="OneIndex.Models.Weights.neural-sparse.onemodel" />
+    <EmbeddedResource Include="$(OneIndexSparseWeights)/vocab.txt" LogicalName="OneIndex.Models.Weights.neural-sparse.vocab.txt" />
+    <EmbeddedResource Include="$(OneIndexSparseWeights)/idf.json" LogicalName="OneIndex.Models.Weights.neural-sparse.idf.json" />
+    <None Include="$(OneIndexSparseWeights)/LICENSE-neural-sparse.txt" Pack="true" PackagePath="models/neural-sparse/" Visible="false" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="../OneIndex/OneIndex.csproj" />
   </ItemGroup>

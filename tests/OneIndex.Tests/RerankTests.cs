@@ -69,7 +69,7 @@ public sealed class RerankDoc
 }
 
 /// <summary>A type that does not ask: <c>Rerank()</c> reads every full-text field.</summary>
-public sealed class PlainDoc
+public sealed class RerankPlainDoc
 {
     [SearchId]
     public string Id { get; set; } = "";
@@ -87,7 +87,7 @@ public sealed class RerankTests
 
     private static SearchIndex<RerankDoc> Corpus(int seed, int n, IReranker? reranker)
     {
-        SearchIndex<RerankDoc> index = SearchIndex.InMemory<RerankDoc>(null, reranker);
+        SearchIndex<RerankDoc> index = SearchIndex.InMemory<RerankDoc>(null, null, reranker);
         var rng = new Random(seed);
         string Text(int count) => string.Join(' ', Enumerable.Range(0, count).Select(_ => Words[rng.Next(Words.Length)]));
         for (int i = 0; i < n; i++)
@@ -199,12 +199,12 @@ public sealed class RerankTests
         Assert.Null(asking.Search().Take(5).Execute()[0].FirstStageScore); // no search text: nothing to read
         Assert.Null(asking.SearchBy(new Search.TermQuery("Body", "river")).Take(5).Execute()[0].FirstStageScore); // query objects have no text either
 
-        using SearchIndex<PlainDoc> plain = SearchIndex.InMemory<PlainDoc>(null, reranker);
-        plain.Upsert(new PlainDoc { Id = "a", Title = "river banks", Body = "the stone path" });
-        plain.Upsert(new PlainDoc { Id = "b", Title = "stone", Body = "river river" });
+        using SearchIndex<RerankPlainDoc> plain = SearchIndex.InMemory<RerankPlainDoc>(null, null, reranker);
+        plain.Upsert(new RerankPlainDoc { Id = "a", Title = "river banks", Body = "the stone path" });
+        plain.Upsert(new RerankPlainDoc { Id = "b", Title = "stone", Body = "river river" });
         plain.Commit();
         Assert.Null(plain.Search("river").Execute()[0].FirstStageScore);
-        SearchResults<PlainDoc> on = plain.Search("river").Rerank().Execute();
+        SearchResults<RerankPlainDoc> on = plain.Search("river").Rerank().Execute();
         Assert.All(on, static h => Assert.NotNull(h.FirstStageScore));
         float a = on.Single(static h => h.Id == "a").Score;
         Assert.Equal(ScriptedReranker.ScoreOf("river", "river banks the stone path"), a); // every full-text field, in order, joined by a space

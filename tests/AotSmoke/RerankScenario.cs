@@ -44,7 +44,7 @@ internal static class RerankScenario
                 throw new InvalidOperationException($"the reranker scored the unrelated passage higher: {scores[0]} {scores[1]}");
             }
 
-            using SearchIndex<Passage> index = SearchIndex.InMemory<Passage>(null, reranker);
+            using SearchIndex<Passage> index = SearchIndex.InMemory<Passage>(null, null, reranker);
             index.Upsert(new Passage { Id = "p1", Title = "Cooking", Body = "The recipe calls for two cups of flour, a pinch of salt and food." });
             index.Upsert(new Passage { Id = "p2", Title = "Biology", Body = "Plants make their food using light energy in a process called photosynthesis." });
             index.Commit();

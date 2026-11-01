@@ -101,8 +101,28 @@ converted to the OneModel file format with the matrix-multiply weights and the w
 - Licence: MIT (the model card's metadata states `license: mit`, and its License section: "The released models can be used for commercial
   purposes free of charge.")
 - The licence text packed with the weights is `models/bge-small-en-v1.5/LICENSE-bge-small-en-v1.5.txt` in the package.
-- Provenance: we did not train this model; the weights are redistributed as published, converted and quantized. Training data as the authors state it: the model card does not list the
-  sets; it points to the released BGE training data (BAAI-MTP, "the massive training data of BGE"), whose composition is described by its publisher.
+- Provenance: this project did not train the model. Its authors state that the English models were first fine-tuned on unlabeled
+  data including Wikipedia, CC-net, StackExchange, Reddit, S2ORC and the sentence-transformers training data, then on labeled NLI,
+  FEVER, NQ, HotpotQA, Quora, StackExchange Duplicates and MEDI data (Xiao et al., "C-Pack", arXiv:2309.07597).
+  The weights are distributed under the model's MIT licence; the licences of the training sets are not conferred on the weights by
+  this project and are not verified here. Anyone who needs weights with a different training history can load their own by path.
+
+The tests and tools also run the Hugging Face `tokenizers` and ONNX Runtime packages as reference implementations (fetched into a cache,
+not part of the repository or any package).
+
+### opensearch-project/opensearch-neural-sparse-encoding-doc-v3-distill (package `RecursiveAI.OneIndex.Models`)
+
+The default English learned sparse encoder packs the weights, vocabulary and query token weights of this model (OpenSearch project),
+converted to the OneModel file format with the matrix-multiply weights and the word-embedding table stored as 8-bit integers.
+
+- Source: https://huggingface.co/opensearch-project/opensearch-neural-sparse-encoding-doc-v3-distill, revision babf71f3c48695e2e53a978208e8aba48335e3c0
+- Licence: Apache License 2.0 (the model card's metadata states `license: apache-2.0`, and its License section: "This project is licensed under the Apache v2.0 License"). The licence text is packed as `models/neural-sparse/LICENSE-neural-sparse.txt`.
+- Provenance: this project did not train the model. The model card states: "The training datasets includes MS MARCO, eli5_question_answer,
+  squad_pairs, WikiAnswers, yahoo_answers_title_question, gooaq_pairs, stackexchange_duplicate_questions_body_body, wikihow,
+  S2ORC_title_abstract, stackexchange_duplicate_questions_title-body_title-body, yahoo_answers_question_answer, searchQA_top5_snippets,
+  stackexchange_duplicate_questions_title_title, yahoo_answers_title_answer, fever, fiqa, hotpotqa, nfcorpus, scifact." The weights are
+  distributed under the model's Apache-2.0 licence; the licences of the training sets are not conferred on the weights by this project and
+  are not verified here. Anyone who needs weights with a different training history can load their own with `NeuralSparseEncoder`.
 
 ### cross-encoder/ms-marco-MiniLM-L6-v2 (package `RecursiveAI.OneIndex.Models`)
 
@@ -114,9 +134,6 @@ stored as 8-bit integers. The model was trained on the MS MARCO passage ranking 
 - Licence: Apache License 2.0 (the model card's metadata states `license: apache-2.0`).
 - The notice packed with the weights is `models/ms-marco-MiniLM-L6-v2/LICENSE-ms-marco-MiniLM-L6-v2.txt` in the package.
 - Provenance: we did not train this model; the weights are redistributed as published, converted and quantized. Training data as the authors state it: the MS MARCO passage ranking set. The weights are governed by their Apache-2.0 licence; the MS MARCO data terms are the data owner's and apply to that data, which is not included. Weights stay loadable from files (`MiniLmReranker.Open`), so an application can use another model or none.
-
-The tests and tools also run the Hugging Face `tokenizers` and ONNX Runtime packages as reference implementations (fetched into a cache,
-not part of the repository or any package).
 
 ## Build-time tooling
 

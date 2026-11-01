@@ -102,6 +102,13 @@ public interface IStorage
     /// <returns>A task that completes when the namespace changes are durable.</returns>
     ValueTask SyncDirectoryAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Whether writers of different files may be synced from different threads at the same time. When true the index writer syncs
+    /// the files of a new segment together, which is much faster on a disk with an expensive flush. Default false: files are synced one
+    /// after the other.
+    /// </summary>
+    bool SupportsConcurrentSync => false;
+
     /// <summary>Whether <see cref="TryLock"/> works on this storage. Default <see langword="false"/>: read-only and remote backends have nothing to lock.</summary>
     bool SupportsLocks => false;
 

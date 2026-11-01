@@ -33,6 +33,7 @@ internal static class QueryTextTargets
                 Body = string.Join(' ', Enumerable.Range(0, 6).Select(k => words[(i + (k * 5)) % words.Length])),
                 Tag = words[i % 4],
                 Number = i,
+                Expansion = i % 3 == 0 ? null : new SparseVector([new(words[i % words.Length], 1f + (i % 4)), new(words[(i * 5) % words.Length], 0.25f * (1 + (i % 7))), new("noise" + i, 0.01f)]),
                 Place = i % 5 == 0 ? null : new GeoPoint(((i * 37) % 180) - 90, ((i * 53) % 360) - 180),
             });
         }
@@ -233,6 +234,11 @@ internal static class QueryTextTargets
             "{\"v\":1,\"q\":\"cat dog\",\"hybrid\":{\"semanticRatio\":0.4,\"fusion\":\"linear\",\"window\":20,\"field\":\"Vec\"},\"filter\":\"Number > 1\",\"limit\":4}",
             "{\"v\":1,\"q\":\"cat\",\"hybrid\":{\"rankConstant\":30}}",
             "{\"v\":1,\"query\":{\"type\":\"hybrid\",\"text\":{\"type\":\"text\",\"text\":\"cat\"},\"vector\":{\"type\":\"knn\",\"field\":\"Vec\",\"vector\":[1,0,0.5],\"k\":5,\"filter\":{\"type\":\"exists\",\"field\":\"Number\"}},\"semanticRatio\":0.9,\"window\":50,\"boost\":2}}",
+            "{\"v\":1,\"query\":{\"type\":\"sparse\",\"field\":\"Expansion\",\"weights\":{\"cat\":1.5,\"dog\":0.25,\"overdue\":3},\"boost\":2},\"limit\":5}",
+            "{\"v\":1,\"query\":{\"type\":\"hybrid\",\"text\":{\"type\":\"text\",\"text\":\"cat\"},\"sparse\":{\"type\":\"sparse\",\"field\":\"Expansion\",\"weights\":{\"cat\":1}},\"sparseWeight\":0.5,\"fusion\":\"linear\"}}",
+            "{\"v\":1,\"query\":{\"type\":\"hybrid\",\"text\":{\"type\":\"text\",\"text\":\"dog\"},\"vector\":{\"type\":\"knn\",\"field\":\"Vec\",\"vector\":[1,0,0.5],\"k\":5},\"sparse\":{\"type\":\"bool\",\"must\":[{\"type\":\"sparse\",\"field\":\"Expansion\",\"weights\":{\"dog\":2}}],\"filter\":[{\"type\":\"exists\",\"field\":\"Number\"}]}}}",
+            "{\"v\":1,\"q\":\"cat\",\"hybrid\":{\"sparse\":true,\"sparseWeight\":2,\"semanticRatio\":0}}",
+            "{\"v\":1,\"query\":{\"type\":\"sparse\",\"field\":\"Expansion\",\"weights\":{\"\":1}}}",
             "{\"v\":1,\"hybrid\":{}}",
             "{\"v\":1,\"q\":\"cat dog\",\"rerank\":{\"window\":30},\"filter\":\"Number > 1\",\"limit\":4}",
             "{\"v\":1,\"q\":\"cat\",\"rerank\":{},\"hybrid\":{\"semanticRatio\":0.4,\"field\":\"Vec\"}}",

@@ -234,6 +234,29 @@ public sealed class IndexFileWriter : IDisposable, IAsyncDisposable
         return new IndexFileSummary(length, crc);
     }
 
+    /// <summary>
+    /// Appends the footer like <see cref="Finish"/> but leaves the fsync to the caller, who gets the open writer back and must
+    /// <see cref="IStorageWriter.Sync"/> and dispose it before the file is referenced by a commit. Lets a segment's files be
+    /// flushed together instead of one after the other.
+    /// </summary>
+    /// <param name="writer">The still-open writer, owned by the caller from now on.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The final length and checksum, to record in a commit.</returns>
+    internal IndexFileSummary FinishUnsynced(out IStorageWriter writer, CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_finished, this);
+        Span<byte> footer = stackalloc byte[IndexFile.FooterLength]; // fixed 12-byte buffer
+        BinaryPrimitives.WriteUInt32LittleEndian(footer, IndexFile.FooterMagic);
+        BinaryPrimitives.WriteUInt32LittleEndian(footer[4..], IndexFile.AlgorithmCrc32C);
+        uint crc = Crc32C.Update(_crc, footer[..8]);
+        BinaryPrimitives.WriteUInt32LittleEndian(footer[8..], crc);
+        _writer.Write(footer, cancellationToken);
+        long length = _writer.Position;
+        _finished = true;
+        writer = _writer;
+        return new IndexFileSummary(length, crc);
+    }
+
     /// <summary>The asynchronous twin of <see cref="Finish"/>.</summary>
     /// <param name="cancellationToken">Cancels the call.</param>
     /// <returns>The final length and checksum, to record in a commit.</returns>

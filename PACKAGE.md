@@ -4,21 +4,18 @@
 
 OneIndex is unaffiliated with other products named OneIndex, OneSearch or similar.
 
-**Pre-alpha.** This preview contains the storage layer, the commit format and protocol, and the contracts for the engine; search itself is not built yet.
+**Preview.** Full-text search (BM25F, phrase, prefix, fuzzy, typo tolerance, as-you-type), filters, facets, aggregations, geo, sorting, LINQ, user-text and query-JSON surfaces, and the first vector and hybrid search features. APIs and file formats may change between previews. What works, the measured results and the known gaps: https://github.com/recursive-ai-oss/oneindex-csharp#what-exists
+
+## Bundled models (`RecursiveAI.OneIndex.Models`)
+
+The models package carries third-party model weights under their own permissive licences. This project did not train them, and each one can be replaced with weights of your choosing loaded from a path.
+
+- **BAAI/bge-small-en-v1.5** (default English embedder). MIT. Its authors state that the English models were trained first on unlabeled data including Wikipedia, CC-net, StackExchange, Reddit, S2ORC and the sentence-transformers training data, then on labeled NLI, FEVER, NQ, HotpotQA, Quora, StackExchange Duplicates and MEDI data (Xiao et al., "C-Pack", arXiv:2309.07597). Details and licence texts: THIRD-PARTY-NOTICES.md in the repository.
+- **opensearch-project/opensearch-neural-sparse-encoding-doc-v3-distill** (default learned sparse encoder). Apache-2.0. Its model card states these training sets: MS MARCO, eli5_question_answer, squad_pairs, WikiAnswers, yahoo_answers_title_question, gooaq_pairs, stackexchange_duplicate_questions_body_body, wikihow, S2ORC_title_abstract, stackexchange_duplicate_questions_title-body_title-body, yahoo_answers_question_answer, searchQA_top5_snippets, stackexchange_duplicate_questions_title_title, yahoo_answers_title_answer, fever, fiqa, hotpotqa, nfcorpus and scifact. The weights are distributed under the model's Apache-2.0 licence; check the terms of those sets if your use needs them. Weights can also be supplied from files (`NeuralSparseEncoder`, `OpenSearchSparseEncoder.Open`).
+- **cross-encoder/ms-marco-MiniLM-L6-v2** (default reranker). Apache-2.0. Its model card states that it was trained on the MS MARCO passage ranking set; the data is not included and its terms are the data owner's, not conferred on the weights by this project.
 
 - Repository and documentation: https://github.com/recursive-ai-oss/oneindex-csharp
 - Project page: https://recursiveai.org/oneindex/
 - Licence: MIT OR Apache-2.0
 
-## Bundled models (`RecursiveAI.OneIndex.Models`)
-
-The models package carries two third-party models. We did not train either; the weights are redistributed as published, converted to the OneModel format and
-quantized to int8. Each is governed by its weight licence, and its notice is packed under `models/`. Both can be replaced: `BgeSmallEmbedder.Open` and
-`MiniLmReranker.Open` load weights from files, and `IEmbedder` / `IReranker` accept any implementation.
-
-| Model | Role | Weight licence | Training data as the authors state it |
-|---|---|---|---|
-| BAAI/bge-small-en-v1.5 | default dense embedder | MIT | Not listed on the model card, which points to the released BGE training data (BAAI-MTP) |
-| cross-encoder/ms-marco-MiniLM-L6-v2 | default reranker | Apache-2.0 | The MS MARCO passage ranking set. The data is not included; its terms are the data owner's |
-
-See `THIRD-PARTY-NOTICES.md` for sources and revisions.
+The licence texts and sources are in THIRD-PARTY-NOTICES.md.

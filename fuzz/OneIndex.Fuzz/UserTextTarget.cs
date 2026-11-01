@@ -17,6 +17,8 @@ public class FuzzDocument
     public int Number { get; set; }
 
     public GeoPoint? Place { get; set; }
+
+    public SparseVector? Expansion { get; set; }
 }
 
 /// <summary>
@@ -35,15 +37,29 @@ internal sealed class FuzzMapping : SearchMapping<FuzzDocument>
             new MappedMember("Number", FieldType.Integral, multi: false, indexed: true, column: true, facet: false, fullText: false, isId: false, boost: 1f, analyzer: null),
             new MappedMember("Place", FieldType.GeoPoint, multi: false, indexed: true, column: true, facet: false, fullText: false, isId: false, boost: 1f, analyzer: null),
             new MappedMember("Vec", FieldType.Vector, multi: false, indexed: true, column: false, facet: false, fullText: false, isId: false, boost: 1f, analyzer: null, dimensions: 3),
+            new MappedMember("Expansion", FieldType.Sparse, multi: false, indexed: true, column: false, facet: false, fullText: false, isId: false, boost: 1f, analyzer: null),
         ])
     {
     }
+
+    // Typo tolerance with low thresholds, a listed word, synonyms of both kinds and stop words, so that the settings paths are fuzzed too.
+    protected override TextSettings CreateSettings() => new()
+    {
+        Typo = new TypoSettings { MinWordSizeForOneTypo = 3, MinWordSizeForTwoTypos = 6, DisableOnWords = ["cat"], DisableOnFields = ["Title"] },
+        Synonyms = [new SynonymRule(["dog", "cat"], []), new SynonymRule(["acme corp"], ["overdue", "state of the art"])],
+        StopWords = ["the", "of"],
+    };
 
     public override string? GetId(FuzzDocument value) => value.Id;
 
     public override Document ToDocument(FuzzDocument value)
     {
         Document d = new Document().Add("Id", value.Id).Add("Title", value.Title).Add("Body", value.Body).Add("Tag", value.Tag).Add("Number", (long)value.Number);
+        if (value.Expansion is { } e)
+        {
+            d.Add("Expansion", e);
+        }
+
         return value.Place is { } p ? d.Add("Place", FieldValue.FromGeoPoint(p.Latitude, p.Longitude)) : d;
     }
 
@@ -55,6 +71,7 @@ internal sealed class FuzzMapping : SearchMapping<FuzzDocument>
             Body = document.Get("Body").AsText(),
             Tag = document.Get("Tag").AsText(),
             Number = (int)document.Get("Number").AsInt64(),
+            Expansion = document.Fields.Any(f => f.Name == "Expansion") ? document.Get("Expansion").AsSparse() : null,
             Place = document.Fields.Any(f => f.Name == "Place") ? new GeoPoint(document.Get("Place").AsGeoPoint().Latitude, document.Get("Place").AsGeoPoint().Longitude) : null,
         };
 }
@@ -102,7 +119,7 @@ internal static class UserTextTarget
 
     public static void WriteSeeds(string directory)
     {
-        string[] seeds = ["overdue \"acme corp\" -draft", "cat OR dog", "\"unterminated", "-", "state-of-the-art", "", "\ud83d\ude00 \ud800 x"];
+        string[] seeds = ["overdue \"acme corp\" -draft", "cat OR dog", "\"unterminated", "-", "state-of-the-art", "", "\ud83d\ude00 \ud800 x", "acmee cor", "overdu runnr", "the of", "acme corp state of the a"];
         for (int i = 0; i < seeds.Length; i++)
         {
             byte[] bytes = new byte[seeds[i].Length * 2];

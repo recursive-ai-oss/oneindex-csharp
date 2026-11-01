@@ -26,12 +26,17 @@ public sealed class MappedMember
     /// <param name="hnswM">HNSW's M for a vector field.</param>
     /// <param name="efConstruction">HNSW's efConstruction for a vector field.</param>
     /// <param name="flatThreshold">The segment size below which a vector field is searched exactly.</param>
+    /// <param name="quantization">The compressed copy of a vector field.</param>
+    /// <param name="oversample">The oversample of a quantized vector field; 0 for the codec's default.</param>
     /// <param name="from">The text member a vector field is embedded from automatically, or <see langword="null"/>.</param>
     /// <param name="rerank">Whether a full-text field is read by the reranker (<see cref="FullTextAttribute.Rerank"/>).</param>
     public MappedMember(string name, FieldType type, bool multi, bool indexed, bool column, bool facet, bool fullText, bool isId, float boost, string? analyzer,
-        int dimensions = 0, Vectors.VectorMetric metric = Vectors.VectorMetric.Cosine, int hnswM = FieldDefinition.DefaultHnswM, int efConstruction = FieldDefinition.DefaultEfConstruction, int flatThreshold = FieldDefinition.DefaultFlatThreshold, string? from = null, bool rerank = false)
+        int dimensions = 0, Vectors.VectorMetric metric = Vectors.VectorMetric.Cosine, int hnswM = FieldDefinition.DefaultHnswM, int efConstruction = FieldDefinition.DefaultEfConstruction, int flatThreshold = FieldDefinition.DefaultFlatThreshold,
+        Vectors.VectorQuantization quantization = Vectors.VectorQuantization.None, float oversample = 0, string? from = null, bool rerank = false)
     {
         Rerank = rerank;
+        Quantization = quantization;
+        Oversample = oversample;
         From = from;
         Dimensions = dimensions;
         Metric = metric;
@@ -101,6 +106,12 @@ public sealed class MappedMember
     /// <summary>The segment size below which a vector field is searched exactly.</summary>
     public int FlatThreshold { get; }
 
+    /// <summary>The compressed copy of a vector field.</summary>
+    public Vectors.VectorQuantization Quantization { get; }
+
+    /// <summary>The oversample of a quantized vector field; 0 for the codec's default.</summary>
+    public float Oversample { get; }
+
     internal FieldDefinition ToDefinition()
     {
         if (Type == FieldType.Text)
@@ -116,7 +127,12 @@ public sealed class MappedMember
 
         if (Type == FieldType.Vector)
         {
-            return new FieldDefinition(Name, FieldType.Vector) { Dimensions = Dimensions, Metric = Metric, HnswM = HnswM, EfConstruction = EfConstruction, FlatThreshold = FlatThreshold };
+            return new FieldDefinition(Name, FieldType.Vector) { Dimensions = Dimensions, Metric = Metric, HnswM = HnswM, EfConstruction = EfConstruction, FlatThreshold = FlatThreshold, Quantization = Quantization, Oversample = Oversample };
+        }
+
+        if (Type == FieldType.Sparse)
+        {
+            return new FieldDefinition(Name, FieldType.Sparse);
         }
 
         return new FieldDefinition(Name, Type) { Multi = Multi, Indexed = Indexed, Column = Column, Facet = Facet };
@@ -154,6 +170,9 @@ public abstract class SearchMapping<T>
     /// <exception cref="InvalidOperationException">The type has no <see cref="SearchIdAttribute"/> member, or an analyzer is not registered.</exception>
     public Schema Schema => _schema ??= BuildSchema();
 
+    /// <summary>The text settings the type's class-level attributes declare. The generated mapping overrides this; the default is <see cref="TextSettings.Default"/>.</summary>
+    protected virtual TextSettings CreateSettings() => TextSettings.Default;
+
     /// <summary>Finds a member by property name.</summary>
     /// <param name="name">The property name.</param>
     /// <param name="member">The member when found.</param>
@@ -177,7 +196,7 @@ public abstract class SearchMapping<T>
 
     private Schema BuildSchema()
     {
-        var builder = new SchemaBuilder();
+        var builder = new SchemaBuilder { Settings = CreateSettings() };
         MappedMember? id = null;
         foreach (MappedMember m in _members)
         {
@@ -201,7 +220,16 @@ public abstract class SearchMapping<T>
             else
             {
                 builder.Add(m.ToDefinition());
-                if (m.From is not null)
+                if (m.From is not null && m.Type == FieldType.Sparse)
+                {
+                    if (!_byName.TryGetValue(m.From, out MappedMember? sparseSource) || sparseSource.Type is not (FieldType.Text or FieldType.Keyword))
+                    {
+                        throw new InvalidOperationException($"Member '{m.Name}': [Sparse(From = \"{m.From}\")] must name a text or keyword member of {typeof(T).Name}.");
+                    }
+
+                    builder.Add(new FieldDefinition(AutoSparse.KeyFieldName(m.Name), FieldType.Bytes));
+                }
+                else if (m.From is not null)
                 {
                     if (m.Type != FieldType.Vector || !_byName.TryGetValue(m.From, out MappedMember? source) || source.Type is not (FieldType.Text or FieldType.Keyword))
                     {

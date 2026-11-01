@@ -292,6 +292,14 @@ public sealed class SegmentFileSink
         _nameFor = nameFor ?? (part => $"{segmentName}.{part}");
     }
 
+    private readonly List<IStorageWriter> _unsynced = [];
+
+    /// <summary>
+    /// When set, completing a part leaves its file open and unsynced; <see cref="SyncPending"/> then flushes all of them together,
+    /// concurrently where the storage allows it. The caller must call it before anything refers to the files. Default off.
+    /// </summary>
+    internal bool DeferSync { get; init; }
+
     internal IReadOnlyList<SegmentFile> Files => _files;
 
     internal IReadOnlyList<string> CreatedNames => _created;
@@ -338,6 +346,50 @@ public sealed class SegmentFileSink
 
     internal void Register(SegmentFile file) => _files.Add(file);
 
+    internal void AddUnsynced(IStorageWriter writer) => _unsynced.Add(writer);
+
+    /// <summary>Syncs and closes every file completed with deferred sync.</summary>
+    internal void SyncPending(CancellationToken cancellationToken)
+    {
+        IStorageWriter[] writers = [.. _unsynced];
+        try
+        {
+            if (writers.Length > 1 && _storage.SupportsConcurrentSync)
+            {
+                // Concurrent fsyncs of different files let the file system fold their journal flushes together.
+                // Only a storage that says it is safe takes this path; the others sync in order, with identical results.
+                Parallel.ForEach(writers, new ParallelOptions { CancellationToken = cancellationToken }, static w => w.Sync());
+            }
+            else
+            {
+                foreach (IStorageWriter w in writers)
+                {
+                    w.Sync(cancellationToken);
+                }
+            }
+        }
+        catch (AggregateException e) when (e.InnerExceptions.Count > 0)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e.InnerExceptions[0]).Throw();
+            throw;
+        }
+        finally
+        {
+            AbortPending();
+        }
+    }
+
+    /// <summary>Closes files that were completed but not synced (after a failure), so they can be deleted.</summary>
+    internal void AbortPending()
+    {
+        foreach (IStorageWriter w in _unsynced)
+        {
+            w.Dispose();
+        }
+
+        _unsynced.Clear();
+    }
+
     internal void Account(long bytes) => _onBytes?.Invoke(bytes);
 }
 
@@ -377,7 +429,17 @@ public sealed class SegmentFileBuilder : IDisposable
     public void Complete(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_done, this);
-        IndexFileSummary summary = _writer.Finish(cancellationToken);
+        IndexFileSummary summary;
+        if (_sink.DeferSync)
+        {
+            summary = _writer.FinishUnsynced(out IStorageWriter open, cancellationToken);
+            _sink.AddUnsynced(open);
+        }
+        else
+        {
+            summary = _writer.Finish(cancellationToken);
+        }
+
         _done = true;
         _sink.Register(new SegmentFile(_part, _fileName, _codec, summary.Length, summary.Checksum));
     }
