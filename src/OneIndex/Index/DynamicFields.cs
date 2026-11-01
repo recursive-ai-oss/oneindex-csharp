@@ -62,6 +62,51 @@ internal static class DynamicFields
     /// <summary>One flattened leaf.</summary>
     internal readonly record struct Leaf(string Physical, DynamicKind Kind, string Parent, FieldValue Value);
 
+    /// <summary>
+    /// Checks that every string and property name of a JSON value decodes. A document parsed from bytes that are not valid UTF-8 can
+    /// reach here with strings that throw when read; refusing it at the write keeps the failure out of the later flush.
+    /// </summary>
+    /// <param name="root">The value.</param>
+    /// <param name="field">The field name, for the message.</param>
+    /// <exception cref="ArgumentException">Some string or name is not valid text.</exception>
+    public static void EnsureReadable(JsonElement root, string field)
+    {
+        var pending = new Stack<JsonElement>();
+        pending.Push(root);
+        try
+        {
+            while (pending.Count > 0)
+            {
+                JsonElement e = pending.Pop();
+                switch (e.ValueKind)
+                {
+                    case JsonValueKind.String:
+                        _ = e.GetString();
+                        break;
+                    case JsonValueKind.Object:
+                        foreach (JsonProperty p in e.EnumerateObject())
+                        {
+                            _ = p.Name;
+                            pending.Push(p.Value);
+                        }
+
+                        break;
+                    case JsonValueKind.Array:
+                        foreach (JsonElement item in e.EnumerateArray())
+                        {
+                            pending.Push(item);
+                        }
+
+                        break;
+                }
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new ArgumentException($"Field '{field}' holds JSON text that is not valid UTF-8.", nameof(root), ex);
+        }
+    }
+
     /// <summary>Flattens a JSON value into leaves, within the limits. Leaves over a limit are skipped (they stay in the stored source).</summary>
     public static void Flatten(string field, JsonElement root, IndexLimits limits, List<Leaf> sink)
     {

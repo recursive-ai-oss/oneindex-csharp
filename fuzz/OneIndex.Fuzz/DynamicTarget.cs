@@ -41,6 +41,15 @@ internal static class DynamicTarget
             var storage = new MemoryStorage();
             var options = new IndexWriterOptions { Limits = Limits, MaxBufferedDocuments = 2, AutoMerge = false };
             Schema first = new SchemaBuilder(Limits).Id("id").Add(new FieldDefinition("meta", FieldType.Json) { Indexed = !rebuild }).Build();
+            try
+            {
+                first.Validate(new Document().Add("id", "a").Add("meta", FieldValue.FromJson(value)));
+            }
+            catch (ArgumentException)
+            {
+                return; // bytes that are not valid UTF-8 inside a string are refused at the write
+            }
+
             using (IndexWriter w = IndexWriter.Open(storage, first, options))
             {
                 w.Upsert(new Document().Add("id", "a").Add("meta", FieldValue.FromJson(value)));

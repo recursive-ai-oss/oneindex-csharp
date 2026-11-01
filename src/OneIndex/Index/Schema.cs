@@ -268,6 +268,11 @@ public sealed class Schema : IEquatable<Schema>
                 throw new ArgumentException($"Field '{f.Name}' is {def.Type} but the value is {f.Value.Kind}.", nameof(document));
             }
 
+            if (def.Type == FieldType.Json && f.Value.Kind == FieldValueKind.Json)
+            {
+                DynamicFields.EnsureReadable(f.Value.AsJson(), f.Name);
+            }
+
             if (def.Type == FieldType.Vector && f.Value.AsVector().Length != def.Dimensions)
             {
                 throw new ArgumentException($"Field '{f.Name}' has {f.Value.AsVector().Length} dimensions but the schema declares {def.Dimensions}.", nameof(document));

@@ -32,6 +32,23 @@ public class DynamicFieldTests
         => string.Join(",", index.Search().Where(predicate).Take(1000).ToList().Select(h => h.Id).Order(StringComparer.Ordinal));
 
     [Fact]
+    public void JsonWithInvalidUtf8IsRefusedAtTheWriteAndTheWriterKeepsWorking()
+    {
+        // Found by the ingestion fuzz target (testdata/fuzz/dynamic-invalid-utf8.bin): the parser accepts the bytes, reading the string throws.
+        byte[] input = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(ThisFile())!, "..", "..", "testdata", "fuzz", "dynamic-invalid-utf8.bin"));
+        using JsonDocument bad = JsonDocument.Parse(input.AsMemory(1));
+        Schema schema = new SchemaBuilder().Id("id").Json("meta").Build();
+        using IndexWriter w = IndexWriter.Open(new MemoryStorage(), schema);
+        Assert.Throws<ArgumentException>(() => w.Upsert(new Document().Add("id", "a").Add("meta", FieldValue.FromJson(bad.RootElement))));
+        using JsonDocument good = JsonDocument.Parse("{\"a\":1}");
+        w.Upsert(new Document().Add("id", "b").Add("meta", FieldValue.FromJson(good.RootElement)));
+        w.Commit();
+        Assert.Equal(1, w.LiveDocumentCount);
+    }
+
+    private static string ThisFile([System.Runtime.CompilerServices.CallerFilePath] string path = "") => path;
+
+    [Fact]
     public void FiltersByPathWithTheDocumentedAccessor()
     {
         using SearchIndex<Activity> index = SearchIndex.InMemory<Activity>();
