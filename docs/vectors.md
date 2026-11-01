@@ -181,6 +181,8 @@ reorder the candidates, so a result's score is always the exact one, whatever th
   recall@10 against the exact top 10, queries/second as the median of three passes over the query set, `ef` swept over a grid; the
   reported row for a target is the smallest `ef` that reaches it. Hnsw.Net 0.1.4 and curiosity-ai HNSW 26.9.5494 run through their
   public API (the two cannot be referenced together, so `bench/OneIndex.VectorBench.Curiosity` is the same runner for the second).
+* Compressed copies: `tools/vector_codec_table.sh` (the `oneindex-segment` engine with `--quant` and `--oversample`); float rows against the comparators:
+  `tools/vector_bench_group.sh`.
 * Kernels: `bench/OneIndex.Bench` `KernelBenchmarks`.
 * Durability: `tests/Durability` carries a vector field (flat threshold 3, so merges of tiny segments build and continue graphs); every
   recovered snapshot is checked for the vector of every live document and for exact nearest neighbours against brute force.
@@ -188,50 +190,145 @@ reorder the candidates, so a result's score is always the exact one, whatever th
 
 ## Measured
 
-Indicative runs, one machine, single-threaded build and search, M=16, efConstruction=100, recall@10 against exact search, `ef` on a grid of
-22 values (the smallest `ef` that reaches the target is reported, so rows are quantized by the grid). The host was shared with other jobs
-(load 3 to 16), so timings are only indicative.
-
 Embedding sets (BAAI/bge-small-en-v1.5 at 384 dimensions, 150,000 base vectors; BAAI/bge-base-en-v1.5 at 768 dimensions, 75,000 base
 vectors; 1,000 held-out title queries; the first abstracts of the Wikipedia dump; manifests with SHA-256 are written by `tools/embeddings.py`).
-The sets are generated, never committed.
+The sets are generated, never committed. M=16, efConstruction=100, one thread for build and search, recall@10 against exact search, `ef` on a
+grid (the row for a target is the smallest `ef` that reaches it, so a row can overshoot its target). Queries per second are the median of three
+passes. The graph builder takes `1.5 x efConstruction` candidates per insertion on layer 0 (see HNSW above).
 
-| Set | Engine | Build | Peak RSS | @0.90 (ef, qps) | @0.95 | @0.99 |
+### Float graph against the managed comparators
+
+`tools/vector_bench_group.sh`, one engine after another on an otherwise idle machine. Hnsw.Net 0.1.4 and
+curiosity-ai HNSW 26.9.5494 run through their public API.
+
+| Machine | Set | Engine | Build | Peak RSS | @0.90 (ef, recall, qps) | @0.95 | @0.99 |
+|---|---|---|---|---|---|---|---|
+| x64 | 384 | OneIndex | 86.4 s | 510 MB | 180, 0.9065, 1494 | 450, 0.9543, 675 | not reached (0.9839 at 1300) |
+| x64 | 384 | Hnsw.Net | 88.2 s | 591 MB | 180, 0.9000, 1316 | 640, 0.9604, 445 | not reached (0.9806) |
+| x64 | 384 | curiosity-ai | 55.2 s | 675 MB | 900, 0.9150, 331 | not reached (0.9333) | not reached |
+| x64 | 768 | OneIndex | 60.6 s | 504 MB | 140, 0.9152, 1284 | 270, 0.9513, 735 | 1300, 0.9914, 198 |
+| x64 | 768 | Hnsw.Net | 63.7 s | 577 MB | 140, 0.9073, 1259 | 320, 0.9521, 650 | 1300, 0.9905, 195 |
+| x64 | 768 | curiosity-ai | 35.4 s | 676 MB | 450, 0.9037, 481 | 1300, 0.9514, 200 | not reached |
+| arm64 | 384 | OneIndex | 83.3 s | n/a | 180, 0.9065, 1313 | 450, 0.9543, 601 | not reached (0.9839) |
+| arm64 | 384 | Hnsw.Net | 112.2 s | n/a | 180, 0.9000, 1278 | 640, 0.9604, 437 | not reached (0.9806) |
+| arm64 | 384 | curiosity-ai | 64.2 s | n/a | 900, 0.9152, 304 | not reached | not reached |
+| arm64 | 768 | OneIndex | 56.8 s | n/a | 140, 0.9152, 1254 | 270, 0.9513, 707 | 1300, 0.9914, 183 |
+| arm64 | 768 | Hnsw.Net | 88.3 s | n/a | 140, 0.9073, 1231 | 320, 0.9521, 622 | 1300, 0.9905, 198 |
+| arm64 | 768 | curiosity-ai | 45.3 s | n/a | 450, 0.9049, 439 | 1300, 0.9527, 180 | not reached |
+
+Machines: x64 is a Ryzen 9 7950X3D (32 threads), .NET 10.0.402, load 3.7 before and 2.9 to 6.7 during; arm64 is an Apple M2 (8 cores), .NET 10.0.403, load
+about 2 to 4 throughout. Index files are 250.6 MB (384) and 240.5 MB (768) for the vectors file plus the graph; Hnsw.Net's saved index is 253.4 MB and 241.9 MB.
+
+Throughput at matched recall against Hnsw.Net, the faster managed comparator at every target both reach (curiosity-ai's graph only reaches 0.90 at `ef`
+900 on 384 and 450 on 768, and never reaches 0.95 on 384, so it is far behind at matched recall). The ratio is ours over Hnsw.Net, with queries per second
+linearly interpolated between grid points to the target recall; neither engine reaches 0.99 on 384, so the last 384 row is the best recall both reach (0.98).
+
+| Row | x64 | arm64 |
+|---|---|---|
+| 384 @0.90 | 1.23x | 1.11x |
+| 384 @0.95 | 1.34x | 1.24x |
+| 384 @0.98 (best both reach) | 1.31x | not measured |
+| 768 @0.90 | 1.12x | 1.11x |
+| 768 @0.95 | 1.13x | 1.13x |
+| 768 @0.99 | 1.09x | 1.00x |
+| Build time, ours over Hnsw.Net (smaller is better) | 0.98x (384), 0.95x (768) | 0.74x, 0.64x |
+
+Build time against curiosity-ai is 1.57x (384) and 1.71x (768) on x64: its graph builds faster and is much worse (recall 0.933 at `ef` 1300 on 384).
+
+Native libraries, information only (hnswlib 0.8.0, faiss-cpu 1.15.1 through `tools/native/vector_rows.py`, run on a busy host,
+so their throughput is not comparable to the rows above): 384 hnswlib builds in 127 s (contended) and reaches 0.90 at `ef` 270, 0.95 at 640; faiss builds in 36.5 s and
+reaches 0.90 at 270, 0.95 at 540. 768: hnswlib 30.9 s, 0.90 at 180, 0.95 at 450, 0.99 at 1800; faiss 24.3 s, 0.90 at 180, 0.95 at 380, 0.99 at 1800.
+
+The first version of this graph needed a larger `ef` than Hnsw.Net for the same recall. The changes (layer-0 neighbours chosen up to the paper's `Mmax0`, and a wider
+candidate list on layer 0 during insertion) follow the paper's parameters and were judged only by recall-against-`ef` curves of the comparator's public API. The curves (150,000 x 384; recall@10 at `ef` 140, 220, 450, 1300) were Hnsw.Net .8825, .9138, .9462, .9806; this
+the first version of this graph reached 0.90 at `ef` 220 to 270 and 0.95 at 640, and with the changes now in place .8878, .9206, .9543, .9839 (0.90
+at 180, 0.95 at 450). On 768 dimensions, factors 1.0, 1.25 and 1.5 reached 0.95 at `ef` 380, 320 and 270, and cost 64.8 s, 94.0 s and 107.2 s to build on a
+loaded host (Hnsw.Net 135.7 s in the same job); the factor of 1.5 is the one that keeps the 384-dimension build time at or below Hnsw.Net's (0.98x).
+Topping connections up with pruned candidates (`HnswBuilder.KeepPruned`) raised recall at a fixed small `ef` but lowered throughput at matched recall (50,000
+vectors, 0.90: 1540 against 1756 qps; 0.95: 853 against 1048), so it stays off.
+
+### Compressed copies
+
+`tools/vector_codec_table.sh`, segment engine (files on disk, rerank from the full-precision file), k = 10. The search width is `max(ef, 10 x oversample)`, so the
+`ef = 10` column shows each oversample on its own (width 10, 20, 30, 50, 100) and from `ef = 100` the oversample no longer binds. Recall is deterministic; queries per
+second come from a run on a host at load 10 to 25 and are indicative only (single runs vary by a factor of two between neighbouring grid points).
+
+Recall@10 by search width (`ef` for the float and the `bit-o1` rows):
+
+| Set | Codec (oversample) | w=10 | 20 | 30 | 50 | 100 | 220 | 450 | 900 | 1300 | Extra bytes per vector |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 384 | float | .4972 | .6313 | .7076 | .7802 | .8625 | .9214 | .9547 | .9761 | .9837 | 0 |
+| 384 | int8 (2) | .6341 | .6341 | .7056 | .7805 | .8606 | .9222 | .9550 | .9759 | .9835 | 400 |
+| 384 | int4 (3) | .6921 | .6921 | .6921 | .7733 | .8538 | .9181 | .9539 | .9755 | .9828 | 208 |
+| 384 | sign-bit | .2165 | .3500 | .4336 | .5355 | .6649 | .7818 | .8658 | .9264 | .9479 | 48 |
+| 768 | float | .5486 | .6814 | .7518 | .8248 | .8926 | .9414 | .9719 | .9862 | .9913 | 0 |
+| 768 | int8 (2) | .6831 | .6831 | .7508 | .8260 | .8920 | .9415 | .9706 | .9874 | .9915 | 784 |
+| 768 | int4 (3) | .7505 | .7505 | .7505 | .8256 | .8930 | .9422 | .9702 | .9872 | .9918 | 400 |
+| 768 | sign-bit | .3014 | .4739 | .5640 | .6702 | .7945 | .8888 | .9441 | .9742 | .9840 | 96 |
+
+(A quantized row at a width below its oversample times 10 shows the oversample's width: int8 at `ef` 10 is width 20, int4 width 30.)
+
+The sign-bit codec by oversample, with the default `ef` of 100 and with `ef` = k (so the oversample alone sets the width):
+
+| Set | Oversample | Width at ef=10 | Recall at ef=10 | Recall at default ef=100 | Indicative qps at ef=10 / ef=100 |
+|---|---|---|---|---|---|
+| 384 | 1 | 10 | .2165 | .6649 | 10789 / 5682 |
+| 384 | 2 | 20 | .3500 | .6649 | 6733 / 4457 |
+| 384 | 3 | 30 | .4336 | .6649 | 6096 / 3414 |
+| 384 | 5 (default) | 50 | .5355 | .6649 | 5378 / 3822 |
+| 384 | 10 | 100 | .6649 | .6649 | 3725 / 3845 |
+| 768 | 1 | 10 | .3014 | .7945 | 8096 / 4953 |
+| 768 | 2 | 20 | .4739 | .7945 | 7540 / 5877 |
+| 768 | 3 | 30 | .5640 | .7945 | 5679 / 7201 |
+| 768 | 5 (default) | 50 | .6702 | .7945 | 14323 / 4611 |
+| 768 | 10 | 100 | .7945 | .7945 | 4836 / 6347 |
+
+What it costs, in words:
+
+* **Memory.** The graph and the full-precision vectors are in every row; the copy is extra and is read while walking. Per 150,000 x 384 vectors: float
+  vectors 225,014 KB, graph 19,752 KB, int8 copy 58,597 KB, int4 copy 30,470 KB, sign-bit copy 7,031 KB. For 75,000 x 768: int8 57,425 KB, int4
+  29,298 KB, sign-bit 7,031 KB. Total index bytes: 384: 250.6 MB float, 310.6 MB int8, 281.8 MB int4, 257.8 MB sign-bit; 768: 240.5, 299.3, 270.5, 247.7 MB.
+  Peak process memory while building was 844 to 918 MB for every codec (the build holds the float vectors). The compressed copy buys speed and a smaller
+  working set for the walk, not a smaller index: the float file stays for the rerank.
+* **Recall.** int8 and int4 follow the float curve within 0.01 from a width of 100. The sign bit does not: at width 100 it reaches 0.665 (384) and 0.795 (768),
+  and 0.95 needs a width of about 450 on 768 dimensions (0.944) to 640 (0.962 at `ef` 640 in the earlier run), while on 384 dimensions it reaches
+  0.926 at 900 and 0.948 at 1300 and not 0.95. The cause is not established (the sign of an uncentred component carries little
+  when the vectors share a large common offset is a guess; centring on a corpus mean would test it, and this codec deliberately does not centre). Because the oversample only matters while `10 x oversample` exceeds `ef`, the default of 5
+  binds only at `ef` below 50; callers who want the high-recall region of this table raise `ef` (or the oversample, to 45 for width 450).
+* **Speed.** Hamming over 384 bits is 4.5 ns and over 768 bits 8.6 ns per pair against 42 and 74 ns for the float dot product, so a walk is much cheaper per
+  visited node; at equal recall the extra width eats most of it (the sign bit needs a width of 900 for 0.926 on 384 dimensions where the float graph needs 220, so the
+  saving per node is spent on visiting more nodes). int4 at a width of 100 to 450 is about 1.5x to 2.2x the float throughput in the same run.
+
+### Kernels
+
+BenchmarkDotNet, in-process short job, mean per call over one pair of vectors, 0 bytes allocated. Width 0 is the scalar path, 1 Vector128, 2 Vector256, 3 Vector512.
+
+| Machine | Dims | Kernel | Scalar | Vector128 | Vector256 | Vector512 |
 |---|---|---|---|---|---|---|
-| 384 | OneIndex (in memory) | 61 s | 507 MB | 270, 877 | 640, 413 | not reached (0.976 at ef 1300) |
-| 384 | OneIndex (segment files) | 77 s | 915 MB | 270, 642 | 640, 347 | not reached |
-| 384 | Hnsw.Net 0.1.4 | 123 s | 591 MB | 180, 1166 | 540, 449 | not reached (0.981) |
-| 384 | curiosity-ai HNSW 26.9.5494 | 68 s | 626 MB | 760, 179 | not reached | not reached |
-| 384 | hnswlib 0.8.0 (information) | 60 s | 506 MB | 270, 1098 | 640, 386 | not reached |
-| 384 | faiss-cpu 1.15.1 (information) | 61 s | 506 MB | 270, 924 | 540, 536 | not reached |
-| 768 | OneIndex (in memory) | 43 s | 502 MB | 180, 1078 | 450, 422 | 1800, 137 |
-| 768 | OneIndex (segment files) | 53 s | 844 MB | 180, 667 | 450, 306 | 1800, 102 |
-| 768 | Hnsw.Net 0.1.4 | 91 s | 573 MB | 140, 1094 | 320, 516 | 1300, 156 |
-| 768 | curiosity-ai HNSW | 53 s | 677 MB | 450, 267 | 1300, 78 | not reached |
-| 768 | hnswlib 0.8.0 (information) | 44 s | 490 MB | 180, 895 | 450, 370 | 1800, 134 |
-| 768 | faiss-cpu 1.15.1 (information) | 33 s | 497 MB | 180, 1203 | 380, 593 | 1800, 158 |
+| Ryzen 9 7950X3D | 384 | float dot | 177 ns | 42.5 ns | 24.4 ns | 34.2 ns |
+| Ryzen 9 7950X3D | 384 | int8 dot | 230 ns | 31.9 ns | 16.6 ns | 16.7 ns |
+| Ryzen 9 7950X3D | 384 | int4 dot | 138 ns | 25.8 ns | 14.4 ns | 16.2 ns |
+| Ryzen 9 7950X3D | 384 | Hamming | 5.5 ns | 4.5 ns | 4.5 ns | 4.9 ns |
+| Ryzen 9 7950X3D | 768 | float dot | 340 ns | 74.4 ns | 63.5 ns | 61.5 ns |
+| Ryzen 9 7950X3D | 768 | int8 dot | 390 ns | 62.7 ns | 31.9 ns | 31.9 ns |
+| Ryzen 9 7950X3D | 768 | int4 dot | 273 ns | 50.1 ns | 26.6 ns | 26.6 ns |
+| Ryzen 9 7950X3D | 768 | Hamming | 7.9 ns | 8.6 ns | 8.2 ns | 8.2 ns |
+| Apple M2 | 384 | float dot | 224 ns | 36.3 ns | n/a | n/a |
+| Apple M2 | 384 | int8 dot | 133 ns | 26.2 ns | n/a | n/a |
+| Apple M2 | 384 | int4 dot | 126 ns | 23.0 ns | n/a | n/a |
+| Apple M2 | 384 | Hamming | 11.8 ns | 12.0 ns | n/a | n/a |
+| Apple M2 | 768 | float dot | 419 ns | 69.6 ns | n/a | n/a |
+| Apple M2 | 768 | int8 dot | 310 ns | 59.2 ns | n/a | n/a |
+| Apple M2 | 768 | int4 dot | 281 ns | 49.8 ns | n/a | n/a |
+| Apple M2 | 768 | Hamming | 25.8 ns | 26.2 ns | n/a | n/a |
 
-Index files: 250.6 MB (384 d) and 240.5 MB (768 d) for the vectors file plus the graph; Hnsw.Net's saved index is 253.4 MB and 241.9 MB.
-Against the faster managed comparator (Hnsw.Net) our in-memory search reaches 0.75x, 0.92x (384 d) and 0.99x, 0.82x, 0.88x (768 d) of its
-throughput at 0.90, 0.95, 0.99, and builds 2.0x faster. At equal `ef` OneIndex and hnswlib reach the same recall (the same algorithm and
-parameters), Hnsw.Net reaches a given recall at a smaller `ef`. Tuning the search is left for the stage's benchmark rows.
-On a 50,000-vector prefix, topping connections up with pruned candidates (`HnswBuilder.KeepPruned`) raised recall at a fixed small `ef`
-(0.681 against 0.657 at ef 20) but lowered throughput at matched recall (0.90: 1540 against 1756 qps; 0.95: 853 against 1048), so it stays off.
+The Hamming kernel is population counts over 64-bit words, which the runtime compiles to the hardware instruction on both machines; it has no vector path.
+All widths give bit-identical results; `VectorKernelTests` and `QuantizedVectorTests` pass on both machines.
 
-Kernels (BenchmarkDotNet, in-process short job, mean per call, one pair of vectors, 0 bytes allocated):
-
-| Machine | Dimensions | Dot scalar | Vector128 | Vector256 | Vector512 | Int8 dot scalar | Vector128 | Vector256 | Vector512 |
-|---|---|---|---|---|---|---|---|---|---|
-| Ryzen 9 7950X3D | 384 | 231 ns | 43 ns | 28 ns | 28 ns | 198 ns | 32 ns | 18 ns | 17 ns |
-| Ryzen 9 7950X3D | 768 | 371 ns | 78 ns | 51 ns | 58 ns | 405 ns | 65 ns | 34 ns | 35 ns |
-| Apple M2 (AdvSimd) | 384 | 228 ns | 36 ns | n/a | n/a | 125 ns | 25 ns | n/a | n/a |
-| Apple M2 (AdvSimd) | 768 | 399 ns | 65 ns | n/a | n/a | 244 ns | 49 ns | n/a | n/a |
-
-All widths give bit-identical results; `VectorKernelTests` passes on both machines.
-
-Code that uses `unsafe`-class APIs (`Unsafe.`, `MemoryMarshal`, `stackalloc`) is limited to `Kernels/VectorKernels.cs` (the SIMD kernels),
-`Codecs/VectorPartReader.cs` and `Codecs/VectorFiles.cs` (bulk conversion of file blocks to floats and integers) and
-`Codecs/VectorSegmentCodec.cs` (the same conversions at merge time); each states its bounds where it is used.
+Code that uses `unsafe`-class APIs (`Unsafe.`, `MemoryMarshal`, `stackalloc`) is limited to `Kernels/VectorKernels.cs` and `Kernels/QuantizedKernels.cs` (the SIMD
+kernels; the 4-bit dot product at 768 dimensions goes from 273 ns scalar to 26.6 ns with Vector256 on x64 and from 281 ns to 49.8 ns with Vector128 on the M2), `Codecs/VectorPartReader.cs` and
+`Codecs/VectorFiles.cs` (bulk conversion of file blocks to floats and integers) and `Codecs/VectorSegmentCodec.cs` (the same conversions at merge time); each
+states its bounds where it is used.
 
 ## Schema record and evolution
 
