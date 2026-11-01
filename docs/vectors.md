@@ -59,9 +59,9 @@ extended candidates; connections dropped by pruning are not refilled, which is t
   (default 1,000). Search breadth `ef` is a query parameter (`KnnQuery.Ef`); 0 uses `max(k, 100)`.
 * **Layer 0 keeps up to `2M` links chosen at insertion** (the paper chooses `M` and lets reverse links grow a list to `Mmax0`). Measured on the
   384-dimension set (150,000 vectors) at the same build time, recall 0.90 is reached at `ef` 220 instead of 270. The upper layers choose `M`.
-* **Neighbours are checked before they are scored.** A search first collects the unvisited neighbours of the node it expands and asks the
-  scorer to touch each one's data (one cache line) before scoring the first, so the memory reads of the different neighbours overlap. The
-  graph, the visited order and the results are the same as without it.
+* **Software prefetch was tried and dropped.** Collecting a node's unvisited neighbours and reading the first cache line of each before scoring
+  (which overlaps the memory reads without any intrinsic) changed the throughput at `ef` 220 by -3 to +7 percent across five settings, which is
+  inside the noise of repeated runs on a shared host (medians 1035 to 1141 queries per second, minima 812 to 969), so the plain loop stays.
 * **Layer assignment** draws the number of times in a row a 64-bit hash of (field seed, node number) is divisible by `M`: the same
   distribution as the paper's `floor(-ln(uniform) * 1/ln M)` (`P(level >= l) = M^-l`) without a logarithm, whose last bit could differ
   between platforms. The field seed is a fixed constant xor the CRC-32C of the field name. Levels stop at 24.

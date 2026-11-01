@@ -43,7 +43,6 @@ internal static class Program
         Engines.Quantization = Option("quant", "none") switch { "8" => OneIndex.Vectors.VectorQuantization.Scalar8, "4" => OneIndex.Vectors.VectorQuantization.Scalar4, "1" => OneIndex.Vectors.VectorQuantization.OneBit, _ => OneIndex.Vectors.VectorQuantization.None };
         OneIndex.Vectors.HnswBuilder.KeepPruned = Option("keep-pruned", "0") == "1";
         OneIndex.Vectors.HnswBuilder.Layer0Select = int.Parse(Option("select0", "0"), CultureInfo.InvariantCulture);
-        OneIndex.Vectors.FloatNodeScorer.TouchLines = int.Parse(Option("touch", "1"), CultureInfo.InvariantCulture);
         OneIndex.Vectors.HnswBuilder.SimpleSelection = Option("simple", "0") == "1";
 
         JsonElement manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, "manifest.json"))).RootElement;
@@ -74,46 +73,11 @@ internal static class Program
         long peakRss = Process.GetCurrentProcess().PeakWorkingSet64;
         Console.WriteLine($"# engine {engine.Name} n={count} d={dims} M={m} efConstruction={efc} build {buildSeconds:F1}s managed-after-build {managed >> 20} MB peak-RSS {peakRss >> 20} MB index-bytes {engine.IndexBytes} (data {(long)count * dims * 4 >> 20} MB)");
 
-        if (Option("mode", "search") == "ab")
-        {
-            // Interleaved repeats of the same search under several touch settings, to separate a setting's effect from host noise.
-            int abEf = int.Parse(Option("ef", "270"), CultureInfo.InvariantCulture);
-            int[] settings = Option("touches", "0,1").Split(',').Select(int.Parse).ToArray();
-            var samples = settings.ToDictionary(t => t, _ => new List<double>());
-            var abIds = new int[K];
-            for (int round = 0; round < int.Parse(Option("rounds", "7"), CultureInfo.InvariantCulture); round++)
-            {
-                foreach (int t in settings)
-                {
-                    OneIndex.Vectors.FloatNodeScorer.TouchLines = t;
-                    long t0 = Stopwatch.GetTimestamp();
-                    for (int q = 0; q < queryCount; q++)
-                    {
-                        engine.Search(queries[q], K, abEf, abIds);
-                    }
-
-                    samples[t].Add(queryCount / Stopwatch.GetElapsedTime(t0).TotalSeconds);
-                }
-            }
-
-            foreach (int t in settings)
-            {
-                samples[t].Sort();
-                Console.WriteLine($"@ab touch={t} ef={abEf} median qps={samples[t][samples[t].Count / 2]:F0} min={samples[t][0]:F0} max={samples[t][^1]:F0}");
-            }
-
-            return 0;
-        }
-
         if (Option("grid", "") is { Length: > 0 } grid)
         {
             _efGrid = grid.Split(',').Select(int.Parse).ToArray();
         }
 
-        foreach (int touch in Option("touches", Option("touch", "1")).Split(',').Select(int.Parse))
-        {
-        OneIndex.Vectors.FloatNodeScorer.TouchLines = touch;
-        Console.WriteLine($"# touch {touch}");
         var ids = new int[K];
         var results = new List<(int Ef, double Recall, double Qps)>();
         foreach (int ef in _efGrid)
@@ -168,8 +132,6 @@ internal static class Program
         {
             (int ef, double recall, double qps) = results.FirstOrDefault(r => r.Recall >= target);
             Console.WriteLine(ef == 0 ? $"@{target:F2}: not reached" : $"@{target:F2}: ef={ef} recall={recall:F4} qps={qps:F0}");
-        }
-
         }
 
         return 0;

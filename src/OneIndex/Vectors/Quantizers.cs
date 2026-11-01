@@ -297,7 +297,6 @@ internal sealed class QuantizedNodeScorer : NodeScorer
     private double _queryStep;
     private double _querySum;
     private double _queryNorm;
-    private float _sink;
 
     /// <summary>Points the scorer at a set of records and compresses the query for the codec.</summary>
     /// <param name="values">The compressed records.</param>
@@ -385,7 +384,4 @@ internal sealed class QuantizedNodeScorer : NodeScorer
 
     /// <inheritdoc/>
     public override float Between(int a, int b) => throw new NotSupportedException("Compressed vectors are searched, never built from.");
-
-    /// <inheritdoc/>
-    public override void Touch(int ordinal) => _sink = _values.Get(ordinal)[0];
 }
