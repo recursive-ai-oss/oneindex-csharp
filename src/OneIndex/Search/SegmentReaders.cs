@@ -127,6 +127,21 @@ public interface ITextFieldReader
     /// <returns>An enumeration positioned before the first document: <paramref name="reuse"/> reset, or a new one.</returns>
     PostingsIterator GetPostings(in TermInfo term, PostingsFeatures features, PostingsIterator? reuse) => GetPostings(term, features);
 
+    /// <summary>Sets the bit of every document that contains the term (a union over many terms), without iterating one document at a time where the implementation can avoid it.</summary>
+    /// <param name="term">The term as returned by <see cref="TryGetTerm"/> or an enumerator.</param>
+    /// <param name="bits">One bit per segment-local document, at least <c>(maxDoc + 63) / 64</c> words; bits already set stay set.</param>
+    /// <param name="scratch">State the caller keeps between calls on this reader so that a union allocates once; start with <see langword="null"/>.</param>
+    void AddDocuments(in TermInfo term, ulong[] bits, ref PostingsIterator? scratch)
+    {
+        PostingsIterator it = GetPostings(term, PostingsFeatures.None, scratch);
+        scratch = it;
+        int doc;
+        while ((doc = it.NextDoc()) != DocIdSetIterator.NoMoreDocs)
+        {
+            bits[doc >> 6] |= 1UL << (doc & 63);
+        }
+    }
+
     /// <summary>The number of terms the field has in a document (its length for scoring).</summary>
     /// <param name="docId">The segment-local document id.</param>
     /// <returns>The length; 0 when the document has no value.</returns>

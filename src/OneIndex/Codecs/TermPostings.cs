@@ -167,6 +167,31 @@ public sealed class TermPostings : PostingsIterator
         _fresh = false;
     }
 
+    /// <summary>
+    /// Sets the bit of every document of the term the instance was reset to, without iterating: the blocks are decoded one after the
+    /// other straight into the bit set. A term in one document needs only the header read by <see cref="Reset"/>.
+    /// </summary>
+    /// <param name="bits">One bit per segment-local document; at least <c>(maxDoc + 63) / 64</c> words.</param>
+    /// <exception cref="CorruptIndexException">The postings are invalid.</exception>
+    internal void AddDocumentsTo(ulong[] bits)
+    {
+        if (_docFreq == 1 && _blockCount == 1)
+        {
+            bits[_singleLastDoc >> 6] |= 1UL << (_singleLastDoc & 63);
+            return;
+        }
+
+        for (int block = 0; block < _blockCount; block++)
+        {
+            LoadBlock(block);
+            for (int i = 0; i < _blockN; i++)
+            {
+                int doc = _docs[i];
+                bits[doc >> 6] |= 1UL << (doc & 63);
+            }
+        }
+    }
+
     /// <inheritdoc/>
     public override int NextDoc()
     {

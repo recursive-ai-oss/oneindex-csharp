@@ -40,12 +40,7 @@ internal static class TermUnion
                 }
 
                 small ??= new ulong[(leaf.Reader.MaxDoc + 63) >> 6];
-                reused = reader.GetPostings(info, PostingsFeatures.None, reused);
-                int doc;
-                while ((doc = reused.NextDoc()) != DocIdSetIterator.NoMoreDocs)
-                {
-                    small[doc >> 6] |= 1UL << (doc & 63);
-                }
+                reader.AddDocuments(info, small, ref reused);
             }
         }
 
