@@ -10,6 +10,9 @@ internal static class Engines
     /// <summary>The compressed copy of the segment engine's vector field (--quant none|8|4|1).</summary>
     public static VectorQuantization Quantization { get; set; }
 
+    /// <summary>The field's oversample (--oversample; 0 is the codec's default). With 1, the search breadth is the query's ef alone.</summary>
+    public static float Oversample { get; set; }
+
     public static IEngine Create(string name, int m, int efConstruction, string scratch) => name switch
     {
         "oneindex" => new OneIndexGraph(m, efConstruction),
@@ -78,7 +81,7 @@ internal sealed class OneIndexSegment(int m, int efConstruction, string scratch)
     {
         _dir = Path.Combine(scratch, "oneindex-vectorbench-" + Guid.NewGuid().ToString("N"));
         Schema schema = new SchemaBuilder().Id("id")
-            .Add(new FieldDefinition("v", FieldType.Vector) { Dimensions = dimensions, HnswM = m, EfConstruction = efConstruction, Stored = false, Quantization = Engines.Quantization })
+            .Add(new FieldDefinition("v", FieldType.Vector) { Dimensions = dimensions, HnswM = m, EfConstruction = efConstruction, Stored = false, Quantization = Engines.Quantization, Oversample = Engines.Quantization == VectorQuantization.None ? 0 : Engines.Oversample })
             .Build();
         _writer = IndexWriter.Open(new FileSystemStorage(_dir), schema, new IndexWriterOptions { MaxBufferedDocuments = count + 1, AutoMerge = false });
         for (int i = 0; i < count; i++)

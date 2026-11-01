@@ -40,6 +40,7 @@ internal static class Program
         int passes = int.Parse(Option("passes", "3"), CultureInfo.InvariantCulture);
         string scratch = Option("scratch", Path.GetTempPath());
         const int K = 10;
+        Engines.Oversample = float.Parse(Option("oversample", "0"), CultureInfo.InvariantCulture);
         Engines.Quantization = Option("quant", "none") switch { "8" => OneIndex.Vectors.VectorQuantization.Scalar8, "4" => OneIndex.Vectors.VectorQuantization.Scalar4, "1" => OneIndex.Vectors.VectorQuantization.OneBit, _ => OneIndex.Vectors.VectorQuantization.None };
         OneIndex.Vectors.HnswBuilder.KeepPruned = Option("keep-pruned", "0") == "1";
         OneIndex.Vectors.HnswBuilder.Layer0Select = int.Parse(Option("select0", "0"), CultureInfo.InvariantCulture);
