@@ -580,16 +580,37 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         }
         else
         {
-            search = SearchBy(request.ToQuery()).Take(request.Limit).Skip(request.Offset);
+            // Ranking rules rank by the words of the text, so a request that is only text and a filter is searched as text.
+            bool wordRules = request.Text is not null && (request.RankingRules is { Count: > 0 } || (request.RankingRules is null && Schema.Settings.RankingRules is { Count: > 0 }));
+            if (wordRules)
+            {
+                search = Search(request.Text);
+                if (request.Filter is { } textFilter)
+                {
+                    search = search.WhereQuery(textFilter);
+                }
+
+                search = search.Take(request.Limit).Skip(request.Offset);
+            }
+            else
+            {
+                search = SearchBy(request.ToQuery()).Take(request.Limit).Skip(request.Offset);
+            }
+        }
+
+        if (request.RankingRules is { } requestRules)
+        {
+            search = requestRules.Count == 0 ? search.RankByRelevance() : search.RankingRules([.. requestRules]);
         }
 
         if (request.Sort is { } sort)
         {
             search = search.WithKeys([.. sort.Keys]);
-            if (request.SearchAfter is { } token)
-            {
-                search = search.SearchAfter(token);
-            }
+        }
+
+        if (request.SearchAfter is { } token)
+        {
+            search = search.SearchAfter(token);
         }
 
         if (request.CountExactly)
@@ -914,7 +935,7 @@ public sealed partial class SearchQuery<T> : IEnumerable<SearchHit<T>>
 
     /// <summary>Compiles the search to query objects: the text query that scores, and the filters that only select.</summary>
     /// <returns>The query the engine runs.</returns>
-    public Search.Query ToQuery() => Build(out _);
+    public Search.Query ToQuery() => Build(out _, out _, out _);
 
     /// <summary>Runs the search.</summary>
     /// <param name="cancellationToken">Cancels the search.</param>
@@ -923,13 +944,13 @@ public sealed partial class SearchQuery<T> : IEnumerable<SearchHit<T>>
     /// <exception cref="InvalidOperationException">The stored source of a hit is missing (an index reopened before stored source is available).</exception>
     public SearchResults<T> Execute(CancellationToken cancellationToken = default)
     {
-        Search.Query query = Build(out Search.Query textQuery);
+        Search.Query query = Build(out Search.Query textQuery, out IReadOnlyList<RankingRule>? rules, out IReadOnlyList<Search.Query> groups);
         SearchIndex<T>.Generation? generation = _index.Acquire();
-        if (_stages is not null)
+        if (_stages is not null || rules is not null)
         {
             try
             {
-                return ExecuteStages(query, textQuery, generation, cancellationToken);
+                return ExecuteStages(query, textQuery, generation, cancellationToken, rules, groups);
             }
             finally
             {
@@ -1018,10 +1039,30 @@ public sealed partial class SearchQuery<T> : IEnumerable<SearchHit<T>>
         return context.Leaves[lo];
     }
 
-    private Search.Query Build(out Search.Query textQuery)
+    private Search.Query Build(out Search.Query textQuery, out IReadOnlyList<RankingRule>? rules, out IReadOnlyList<Search.Query> groups)
     {
-        textQuery = _query ?? new UserTextCompiler(_index.Mapping.Schema).Compile(_text);
-        if (EffectiveHybrid() is { } hybrid)
+        HybridSpec? fused = EffectiveHybrid();
+        rules = fused is null ? ActiveRules() : null; // a fusion ranks by fused position: ranking rules do not apply
+        groups = [];
+        if (_query is not null)
+        {
+            textQuery = _query;
+        }
+        else
+        {
+            var compiler = new UserTextCompiler(_index.Mapping.Schema);
+            if (rules is not null)
+            {
+                // Ranking rules replace the proximity bonus (the proximity rule) and, with the words rule, relax "all words" to "any word".
+                textQuery = rules.Any(static r => r.Kind == RankingRuleKind.Words) ? compiler.CompileRanked(_text, out groups) : compiler.CompileConjunctive(_text, out groups);
+            }
+            else
+            {
+                textQuery = compiler.Compile(_text);
+            }
+        }
+
+        if (fused is { } hybrid)
         {
             return BuildHybrid(textQuery, hybrid);
         }

@@ -100,6 +100,13 @@ public sealed partial class SearchQuery<T>
     public SearchQuery<T> SearchAfter(SortCursor cursor)
     {
         ArgumentNullException.ThrowIfNull(cursor);
+        if (ActiveRules() is not null)
+        {
+            // With ranking rules the cursor belongs to the rules' keys, which exist only once the search runs; the collector checks it then.
+            QueryStages ruled = _stages ?? QueryStages.None;
+            return With(ruled with { Sort = (ruled.Sort ?? new SortPlan([], null)) with { After = cursor } });
+        }
+
         SortPlan plan = _stages?.Sort ?? throw new InvalidOperationException("SearchAfter needs an ordering: call OrderBy first.");
         if (cursor.Fingerprint != SortSpec.Fingerprint(plan.Keys) || cursor.Values.Count != plan.Keys.Length)
         {

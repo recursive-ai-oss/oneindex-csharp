@@ -37,8 +37,17 @@ public sealed record QueryRequest
     /// <summary>The ordering of the hits, or <see langword="null"/> for relevance order.</summary>
     public QuerySort? Sort { get; init; }
 
-    /// <summary>A <see cref="SortCursor.ToToken"/> token to continue after (search-after); needs <see cref="Sort"/>. <see langword="null"/> for the first page.</summary>
+    /// <summary>A <see cref="SortCursor.ToToken"/> token to continue after (search-after); needs <see cref="Sort"/> or <see cref="RankingRules"/>. <see langword="null"/> for the first page.</summary>
     public string? SearchAfter { get; init; }
+
+    /// <summary>
+    /// Ranking rules for the request, in order (docs/ranking-rules.md), or <see langword="null"/> to use the rules the type declares. An empty list
+    /// ranks by relevance whatever the type declares.
+    /// </summary>
+    public IReadOnlyList<string>? RankingRules { get; init; }
+
+    /// <summary>The text of <c>q</c> when the request has one and no <c>query</c> node, so that ranking rules can rank by its words; otherwise <see langword="null"/>.</summary>
+    public string? Text { get; init; }
 
     /// <summary>
     /// Fuses a text search of the request's <c>q</c> with a vector search over its embedding, or <see langword="null"/> for plain search. With it,
@@ -327,6 +336,17 @@ public static partial class QueryJson
                 w.WriteString("searchAfter", after);
             }
 
+            if (request.RankingRules is { } rules)
+            {
+                w.WriteStartArray("rankingRules");
+                foreach (string rule in rules)
+                {
+                    w.WriteStringValue(rule);
+                }
+
+                w.WriteEndArray();
+            }
+
             w.WriteEndObject();
         }
 
@@ -538,6 +558,9 @@ public static partial class QueryJson
             case FunctionScoreQuery fs:
                 WriteFunctionScore(w, fs);
                 break;
+            case ProximityQuery px:
+                WriteProximity(w, px);
+                break;
             case HybridQuery hq:
                 w.WriteString("type", "hybrid");
                 w.WritePropertyName("text");
@@ -680,13 +703,13 @@ public static partial class QueryJson
 /// <summary>Reads query JSON into query objects. One instance reads one document.</summary>
 internal sealed partial class QueryJsonReader
 {
-    private static readonly string[] RequestProperties = ["v", "q", "query", "filter", "limit", "offset", "countExactly", "highlight", "sort", "searchAfter", "hybrid"];
+    private static readonly string[] RequestProperties = ["v", "q", "query", "filter", "limit", "offset", "countExactly", "highlight", "sort", "searchAfter", "hybrid", "rankingRules"];
 
     // Names of features the format keeps room for. They are rejected with a message of their own, not as typos.
     private static readonly string[] Reserved = ["facets", "aggregations", "distinct", "vector"];
 
     private static readonly string[] NodeTypes =
-        ["matchAll", "text", "strict", "filter", "term", "phrase", "prefix", "fuzzy", "regex", "range", "exists", "multiFieldTerm", "typoTerm", "geoRadius", "geoBoundingBox", "bool", "functionScore", "knn", "sparse", "hybrid"];
+        ["matchAll", "text", "strict", "filter", "term", "phrase", "prefix", "fuzzy", "regex", "range", "exists", "multiFieldTerm", "typoTerm", "geoRadius", "geoBoundingBox", "bool", "functionScore", "proximity", "knn", "sparse", "hybrid"];
 
     private readonly Schema _schema;
     private readonly UserTextCompiler _userText;
@@ -770,16 +793,24 @@ internal sealed partial class QueryJsonReader
         }
 
         QuerySort? sort = root.TryGetProperty("sort", out JsonElement sortElement) ? ReadSort(sortElement) : null;
+        List<string>? rankingRules = null;
+        if (root.TryGetProperty("rankingRules", out JsonElement rulesElement))
+        {
+            rankingRules = ReadRankingRules(rulesElement);
+        }
+
         string? after = null;
         if (root.TryGetProperty("searchAfter", out JsonElement afterElement))
         {
             after = ReadString(afterElement, "$.searchAfter");
-            if (sort is null)
+            bool ruled = rankingRules is { Count: > 0 };
+            if (sort is null && !ruled)
             {
-                throw Err("$.searchAfter", "searchAfter continues a sorted search; add a \"sort\".");
+                throw Err("$.searchAfter", "searchAfter continues a sorted search; add a \"sort\" or \"rankingRules\".");
             }
 
-            if (!SortCursor.TryParse(after, out SortCursor? cursor) || cursor!.Fingerprint != SortSpec.Fingerprint(sort.Keys) || cursor.Values.Count != sort.Keys.Count)
+            // With ranking rules the cursor belongs to the rules' keys, which are only known when the search runs.
+            if (!SortCursor.TryParse(after, out SortCursor? cursor) || (!ruled && (cursor!.Fingerprint != SortSpec.Fingerprint(sort!.Keys) || cursor.Values.Count != sort.Keys.Count)))
             {
                 throw Err("$.searchAfter", "This is not a cursor made by the same sort. Use the cursor token of the last hit of the previous page.");
             }
@@ -796,7 +827,42 @@ internal sealed partial class QueryJsonReader
             1 => scored[0],
             _ => new BooleanQuery(scored.ConvertAll(static x => new BooleanClause(x, Occur.Must))),
         };
-        return new QueryRequest { Query = main, Filter = filter, Limit = limit, Offset = offset, CountExactly = exact, Highlight = highlight, Sort = sort, SearchAfter = after, Hybrid = hybrid };
+        string? plainText = root.TryGetProperty("q", out JsonElement qAgain) && !root.TryGetProperty("query", out _) && hybrid is null ? ReadString(qAgain, "$.q") : null;
+        return new QueryRequest { Query = main, Filter = filter, Limit = limit, Offset = offset, CountExactly = exact, Highlight = highlight, Sort = sort, SearchAfter = after, Hybrid = hybrid, RankingRules = rankingRules, Text = plainText };
+    }
+
+    private static List<string> ReadRankingRules(JsonElement e)
+    {
+        const string path = "$.rankingRules";
+        if (e.ValueKind != JsonValueKind.Array || e.GetArrayLength() > RankingRule.MaxRules)
+        {
+            throw Err(path, $"rankingRules is an array of at most {RankingRule.MaxRules.ToString(CultureInfo.InvariantCulture)} rules, such as [\"words\",\"typo\",\"proximity\",\"attribute\",\"sort\",\"exactness\"].");
+        }
+
+        var rules = new List<string>();
+        int i = 0;
+        foreach (JsonElement item in e.EnumerateArray())
+        {
+            string ip = Index(path, i++);
+            string text = ReadString(item, ip);
+            if (!RankingRule.TryParse(text, out _, out string? error))
+            {
+                throw Err(ip, error!);
+            }
+
+            rules.Add(text);
+        }
+
+        try
+        {
+            _ = RankingRule.ParseList(rules);
+        }
+        catch (ArgumentException ex)
+        {
+            throw Err(path, ex.Message.Split('\n')[0]);
+        }
+
+        return rules;
     }
 
     private static QueryParseException Err(string path, string detail, string? suggestion = null)
@@ -1036,6 +1102,8 @@ internal sealed partial class QueryJsonReader
                 return ReadBoolQuery(e, path, depth);
             case "functionScore":
                 return ReadFunctionScore(e, path, depth);
+            case "proximity":
+                return ReadProximity(e, path, depth);
             case "knn":
                 return ReadKnn(e, path, depth);
             case "sparse":

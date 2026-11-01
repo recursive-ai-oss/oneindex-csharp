@@ -8,7 +8,7 @@ using OneIndex.Search;
 namespace OneIndex;
 
 /// <summary>What a search carries beyond its text, filters and paging: filter strings, a function score, explain.</summary>
-internal sealed record QueryExtras(Search.Query[] FilterQueries, FunctionSpec? Function, bool Explain, HybridSpec? Hybrid = null, SparseSpec? Sparse = null)
+internal sealed record QueryExtras(Search.Query[] FilterQueries, FunctionSpec? Function, bool Explain, HybridSpec? Hybrid = null, SparseSpec? Sparse = null, IReadOnlyList<RankingRule>? Rules = null)
 {
     public static readonly QueryExtras None = new([], null, false);
 }

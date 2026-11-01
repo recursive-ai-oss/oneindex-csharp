@@ -253,8 +253,22 @@ public sealed class UserTextCompiler
     /// A query that scores the text with BM25F. It matches nothing when the text has words but none survives analysis (only stop words
     /// or punctuation) and nothing is excluded, and when the schema has no searchable field. It never throws.
     /// </returns>
-    public Search.Query Compile(string? input)
+    public Search.Query Compile(string? input) => CompileCore(input, proximity: true, ranked: false, out _);
+
+    /// <summary>
+    /// Compiles user text for ranking rules: a document matches when it has any of the words (the <c>words</c> rule then ranks by how many),
+    /// and the groups come back one per word or quoted phrase, in text order.
+    /// </summary>
+    /// <param name="input">The text.</param>
+    /// <param name="groups">The query of each required word or phrase (with its alternatives); empty for blank text.</param>
+    /// <returns>The query.</returns>
+    internal Search.Query CompileRanked(string? input, out IReadOnlyList<Search.Query> groups) => CompileCore(input, proximity: false, ranked: true, out groups);
+
+    internal Search.Query CompileConjunctive(string? input, out IReadOnlyList<Search.Query> groups) => CompileCore(input, proximity: false, ranked: false, out groups);
+
+    private Search.Query CompileCore(string? input, bool proximity, bool ranked, out IReadOnlyList<Search.Query> groups)
     {
+        groups = [];
         UserText parsed = UserText.Parse(input);
         if (parsed.IsBlank)
         {
@@ -288,11 +302,12 @@ public sealed class UserTextCompiler
 
             if (alternatives.Count > 0)
             {
-                clauses.Add(new BooleanClause(AnyOf(alternatives), Occur.Must));
+                clauses.Add(new BooleanClause(AnyOf(alternatives), ranked ? Occur.Should : Occur.Must));
             }
         }
 
         int required = clauses.Count;
+        groups = clauses.ConvertAll(static c => c.Query);
         foreach (UserTextOperand operand in parsed.Excluded)
         {
             if (CompileOperand(operand, false, exact: true) is { } q)
@@ -312,7 +327,26 @@ public sealed class UserTextCompiler
             clauses.Insert(0, new BooleanClause(new MatchAllQuery(), Occur.Must));
         }
 
-        return clauses.Count == 1 ? clauses[0].Query : new BooleanQuery(clauses);
+        Search.Query result = clauses.Count == 1 ? clauses[0].Query : new BooleanQuery(clauses) { MinimumShouldMatch = ranked && required > 1 ? 1 : 0 };
+        if (proximity && required >= 2 && _settings.ProximityWeight > 0f)
+        {
+            // Term proximity (docs/scoring.md): the single words among the required groups are compared where they occur together.
+            var words = new List<Search.Query>(required);
+            foreach (Search.Query group in groups)
+            {
+                if (WordResolver.PrimaryWord(group) is { } word)
+                {
+                    words.Add(word);
+                }
+            }
+
+            if (words.Count >= 2)
+            {
+                result = new ProximityQuery(result, words) { Weight = _settings.ProximityWeight };
+            }
+        }
+
+        return result;
     }
 
     private static Search.Query AnyOf(List<Search.Query> alternatives)

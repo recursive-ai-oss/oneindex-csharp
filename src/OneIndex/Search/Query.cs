@@ -88,6 +88,11 @@ public abstract class QueryVisitor<TResult>
     /// <returns>The result.</returns>
     public virtual TResult VisitTypoTerm(TypoTermQuery query) => VisitUnknown(query);
 
+    /// <summary>Visits a <see cref="ProximityQuery"/>.</summary>
+    /// <param name="query">The query.</param>
+    /// <returns>The result.</returns>
+    public virtual TResult VisitProximity(ProximityQuery query) => VisitUnknown(query);
+
     /// <summary>Visits a <see cref="KnnQuery"/>.</summary>
     /// <param name="query">The query.</param>
     /// <returns>The result.</returns>

@@ -191,3 +191,35 @@ public sealed class StopWordsAttribute : Attribute
     /// <summary>The words to ignore.</summary>
     public string[] Words { get; }
 }
+
+/// <summary>
+/// Ranks user-text searches by bucket sort over ranking rules, with the names of Meilisearch's ranking rules (docs/ranking-rules.md), instead of by
+/// BM25F score: <c>words</c>, <c>typo</c>, <c>proximity</c>, <c>attribute</c>, <c>sort</c>, <c>exactness</c>, and <c>property:asc</c> or <c>property:desc</c> for a
+/// sortable property. Meilisearch's default order is words, typo, proximity, attribute, sort, exactness. Without this attribute the score ranks. The rules
+/// are recorded in the index and apply to the next query; a search can replace them with <c>RankingRules(...)</c>.
+/// </summary>
+[AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+public sealed class RankingRulesAttribute : Attribute
+{
+    /// <summary>Creates the attribute.</summary>
+    /// <param name="rules">The rules in order. A property rule names the index field (the property's name).</param>
+    public RankingRulesAttribute(params string[] rules) => Rules = rules;
+
+    /// <summary>The rules in order.</summary>
+    public string[] Rules { get; }
+}
+
+/// <summary>
+/// Sets the weight of the term-proximity bonus that user text with two or more words adds to its BM25F score (docs/scoring.md). The default is 0.5; 0
+/// turns the bonus off. It is recorded in the index and applies to the next query.
+/// </summary>
+[AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+public sealed class ProximityAttribute : Attribute
+{
+    /// <summary>Creates the attribute.</summary>
+    /// <param name="weight">0 to 4.</param>
+    public ProximityAttribute(float weight) => Weight = weight;
+
+    /// <summary>The weight, 0 to 4.</summary>
+    public float Weight { get; }
+}
