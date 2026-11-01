@@ -431,15 +431,23 @@ public sealed class RankingTests
     public void QueryJsonCarriesTheProximityNodeAndTheRankingRules()
     {
         using SearchIndex<ProximityDoc> index = SearchIndex.InMemory<ProximityDoc>();
+        // Rules keep the text, so that the words can be ranked after a round trip.
         QueryRequest request = QueryJson.Read("""{"v":1,"q":"red apple","rankingRules":["words","Body:asc"]}""", index.Schema);
         Assert.Equal(["words", "Body:asc"], request.RankingRules);
+        Assert.Equal("red apple", request.Text);
         Assert.IsType<ProximityQuery>(request.Query);
         string written = QueryJson.Write(request);
+        Assert.Equal("""{"v":1,"q":"red apple","rankingRules":["words","Body:asc"]}""", written);
         QueryRequest again = QueryJson.Read(written, index.Schema);
-        Assert.Equal(request.Query, again.Query);
+        Assert.Equal(request, again);
         Assert.Equal(written, QueryJson.Write(again));
-        Assert.Contains("\"type\":\"proximity\"", written);
-        using JsonDocument parsed = JsonDocument.Parse(written);
+        // Without rules a text request is written as its compiled tree, with the proximity node.
+        QueryRequest plain = QueryJson.Read("""{"v":1,"q":"red apple"}""", index.Schema);
+        string tree = QueryJson.Write(plain);
+        Assert.Contains("\"type\":\"proximity\"", tree);
+        Assert.Equal(plain, QueryJson.Read(tree, index.Schema));
+        Assert.Equal(tree, QueryJson.Write(QueryJson.Read(tree, index.Schema)));
+        using JsonDocument parsed = JsonDocument.Parse(tree);
         Assert.Equal(JsonValueKind.Object, parsed.RootElement.ValueKind);
         QueryParseException e = Assert.Throws<QueryParseException>(() => QueryJson.Read("""{"v":1,"rankingRules":["words","bogus"]}""", index.Schema));
         Assert.Contains("$.rankingRules[1]", e.Message);

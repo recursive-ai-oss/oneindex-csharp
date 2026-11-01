@@ -306,7 +306,7 @@ internal sealed class LeafWordMatcher
             _count[w] = new int[fields.Count];
             for (int f = 0; f < fields.Count; f++)
             {
-                _pos[w][f] = [];
+                _pos[w][f] = new int[16]; // grows to the largest frequency seen, then never again
             }
         }
 

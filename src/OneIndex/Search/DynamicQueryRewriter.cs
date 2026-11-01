@@ -42,6 +42,8 @@ internal static class DynamicQueryRewriter
                     return b with { Clauses = clauses };
                 }
 
+            case ProximityQuery px:
+                return px with { Inner = Visit(px.Inner, schema, depth + 1) };
             case HybridQuery h:
                 return h with
                 {

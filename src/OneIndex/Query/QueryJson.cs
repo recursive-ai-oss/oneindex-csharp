@@ -46,7 +46,7 @@ public sealed record QueryRequest
     /// </summary>
     public IReadOnlyList<string>? RankingRules { get; init; }
 
-    /// <summary>The text of <c>q</c> when the request has one and no <c>query</c> node, so that ranking rules can rank by its words; otherwise <see langword="null"/>.</summary>
+    /// <summary>The text of <c>q</c> when the request has one and no <c>query</c> node, so that ranking rules can rank by its words; otherwise <see langword="null"/>. Not part of equality (it only repeats what <see cref="Query"/> was compiled from); written back as <c>q</c> only when the request has ranking rules.</summary>
     public string? Text { get; init; }
 
     /// <summary>
@@ -55,6 +55,32 @@ public sealed record QueryRequest
     /// (<see cref="ToQuery"/> does not, because embedding is not the data form's job, and leaves the text out).
     /// </summary>
     public HybridRequest? Hybrid { get; init; }
+
+    /// <summary>Compares requests by value (the ranking rules one by one, as the generated record equality would compare the list by reference).</summary>
+    /// <param name="other">The other request.</param>
+    /// <returns><see langword="true"/> when every property is equal.</returns>
+    public bool Equals(QueryRequest? other)
+        => other is not null && Equals(Query, other.Query) && Equals(Filter, other.Filter) && Limit == other.Limit && Offset == other.Offset && CountExactly == other.CountExactly
+            && Equals(Highlight, other.Highlight) && Equals(Sort, other.Sort) && SearchAfter == other.SearchAfter && Equals(Hybrid, other.Hybrid)
+            && (RankingRules is null ? other.RankingRules is null : other.RankingRules is not null && RankingRules.SequenceEqual(other.RankingRules));
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        // In-process hash tables only; never persisted.
+        var hash = default(HashCode);
+        hash.Add(Query);
+        hash.Add(Filter);
+        hash.Add(Limit);
+        hash.Add(Offset);
+        hash.Add(CountExactly);
+        hash.Add(Highlight);
+        hash.Add(Sort);
+        hash.Add(SearchAfter);
+        hash.Add(Hybrid);
+        hash.Add(RankingRules?.Count ?? -1);
+        return hash.ToHashCode();
+    }
 
     /// <summary>The query the engine runs: <see cref="Query"/> (every document when absent) with <see cref="Filter"/> as a non-scoring restriction.</summary>
     /// <returns>The combined query.</returns>
@@ -262,7 +288,12 @@ public static partial class QueryJson
         {
             w.WriteStartObject();
             w.WriteNumber("v", Version);
-            if (request.Query is not null)
+            if (request.Text is not null && request.RankingRules is { Count: > 0 })
+            {
+                // Ranking rules rank by the words of the text, which the compiled tree no longer shows: keep the text.
+                w.WriteString("q", request.Text);
+            }
+            else if (request.Query is not null)
             {
                 w.WritePropertyName("query");
                 WriteNode(w, request.Query);

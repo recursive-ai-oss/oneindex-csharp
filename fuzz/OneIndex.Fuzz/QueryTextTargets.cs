@@ -160,6 +160,27 @@ internal static class QueryTextTargets
         Require(request.Equals(again), "json round trip");
         Require(QueryJson.Write(again) == json, "json canonical");
         Run(request.ToQuery());
+        if (request.RankingRules is { Count: > 0 })
+        {
+            // The ranking-rules path end to end, and a second page from the cursor of the first.
+            try
+            {
+                SearchResults<FuzzDocument> first = Index.Parse(json).Execute();
+                if (request.SearchAfter is null && first.NextCursor is { } cursor)
+                {
+                    SearchResults<FuzzDocument> second = Index.Parse(QueryJson.Write(request with { SearchAfter = cursor.ToToken(), Offset = 0 })).Execute();
+                    Require(second.Count <= Math.Max(request.Limit, 0), "second page size");
+                }
+            }
+            catch (TooManyTermsException)
+            {
+            }
+            catch (ArgumentException)
+            {
+                // A property rule names a field that cannot be sorted by: rejected when the search runs, with a message naming it.
+            }
+        }
+
         if (request.Sort is not null)
         {
             // The sorted path end to end, and a second page from the cursor of the first.
@@ -227,6 +248,9 @@ internal static class QueryTextTargets
             "{\"v\":1,\"filter\":{\"type\":\"geoRadius\",\"field\":\"Place\",\"lat\":10,\"lng\":-170,\"meters\":3000000},\"sort\":[\"Number:desc:first\",\"_geoPoint(Place, 1, 2):asc\"],\"limit\":3}",
             "{\"v\":1,\"query\":{\"type\":\"geoBoundingBox\",\"field\":\"Place\",\"north\":50,\"south\":-50,\"west\":150,\"east\":-150},\"sort\":[\"_score\",\"Id\"],\"limit\":2}",
             "{\"v\":1,\"sort\":[\"Number\"],\"searchAfter\":\"AQAAAAAB\"}",
+            "{\"v\":1,\"q\":\"red apple tree\",\"rankingRules\":[\"words\",\"typo\",\"proximity\",\"attribute\",\"sort\",\"exactness\"],\"sort\":[\"Number:desc\"],\"limit\":3}",
+            "{\"v\":1,\"q\":\"golf hotel\",\"rankingRules\":[\"Number:asc\",\"words\"],\"limit\":2}",
+            "{\"v\":1,\"query\":{\"type\":\"proximity\",\"query\":{\"type\":\"bool\",\"should\":[{\"type\":\"term\",\"field\":\"Title\",\"value\":\"a\"},{\"type\":\"term\",\"field\":\"Title\",\"value\":\"b\"}]},\"words\":[{\"type\":\"term\",\"field\":\"Title\",\"value\":\"a\"},{\"type\":\"term\",\"field\":\"Title\",\"value\":\"b\"}],\"weight\":1.5}}",
             "{\"v\":1,\"query\":{\"type\":\"functionScore\",\"query\":{\"type\":\"text\",\"text\":\"cat\"},\"functions\":[{\"type\":\"fieldValueFactor\",\"field\":\"Number\",\"factor\":2,\"modifier\":\"log1p\",\"missing\":1},{\"type\":\"gauss\",\"field\":\"Number\",\"origin\":5,\"scale\":3,\"offset\":1,\"decay\":0.3,\"weight\":2}],\"scoreMode\":\"avg\",\"boostMode\":\"sum\",\"maxBoost\":8,\"minScore\":0.2,\"boost\":1.5},\"limit\":3}",
             "{\"v\":1,\"query\":{\"type\":\"functionScore\",\"functions\":[{\"type\":\"exp\",\"field\":\"Place\",\"origin\":{\"lat\":10,\"lng\":-170},\"scale\":2000000,\"filter\":\"Number > 2\"},{\"type\":\"linear\",\"field\":\"Number\",\"origin\":0,\"scale\":100},{\"type\":\"weight\",\"weight\":0.5,\"filter\":{\"type\":\"exists\",\"field\":\"Number\"}}],\"scoreMode\":\"first\",\"boostMode\":\"max\"}}",
             "{\"v\":1,\"query\":{\"type\":\"functionScore\",\"query\":{\"type\":\"functionScore\",\"functions\":[{\"type\":\"weight\",\"weight\":2}]},\"functions\":[{\"type\":\"fieldValueFactor\",\"field\":\"Number\",\"modifier\":\"reciprocal\"}],\"boostMode\":\"replace\"}}",

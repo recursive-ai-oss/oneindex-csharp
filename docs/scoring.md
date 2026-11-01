@@ -65,7 +65,38 @@ A document's score is the sum over the expansions it contains, as for any disjun
     query word 'planet' matched 'plnaet' (whole word with typos, 1 typos): typo factor 0.5 = 1 / (1 + typos), exactness factor 1, boost 0.5
 
 with the term's own explanation below it. With typos and prefix matching off the query is a plain term query: no factor, same scores
-as before. Proximity and the other Meilisearch-style rules are not part of this; they belong to the optional ranking rules.
+as before. The other Meilisearch-style rules are optional ranking rules ([ranking-rules.md](ranking-rules.md)).
+
+## Term proximity
+
+User text with two or more words (not quoted phrases) adds a proximity bonus to the BM25F score: documents whose query words occur close
+together, in any order, score higher. It uses the positions already in the postings; no index format changes.
+
+Büttcher, Clarke and Lushman, "Term proximity scoring for ad-hoc retrieval on very large text collections", SIGIR 2006, define it. In a field of
+the document, take the occurrences of the query words in position order. Every two neighbours in that order that are occurrences of
+*different* words (no other query word occurrence between them) at distance *d* add `idf(other) / d²` to the accumulator of each word:
+
+    acc_t   = sum over adjacent pairs (t, u) at distance d of  idf(u) / d²        (d >= 1; two words at one position count as 1)
+    bonus_f = sum over query words t of  idf(t) * acc_t / (k1 + acc_t)            for field f
+    score   = bm25f(d) + weight * max over fields f of bonus_f
+
+- `idf(t)` is the word's own idf, as in the BM25F term; `k1` is the BM25F `k1`. A word with typo or prefix expansions uses the positions of
+  all its matched terms (up to the 32 best terms per word) and the idf of the closest one.
+- **Deviations from the paper**, each deliberate: the paper adds the bonus per word with `min(1, idf)` and BM25's `(k1 + 1)` numerator; here the
+  bonus has the shape of this engine's term score (`idf * x / (k1 + x)`, so it is below `idf`), which makes its bound simple. The bonus of a
+  document is its best field, because a query word pair split across title and body is not close. Positions are compared inside a field only.
+- **The bound.** `acc / (k1 + acc) < 1`, so the bonus is below `weight * sum of the words' idf` (at most 32 words). A scorer reports its
+  inner bound plus that, and the inner scorer is told the threshold minus that, so block-max WAND skips only what cannot reach the top k; the
+  returned top k and scores equal exhaustive scoring (a test checks 120 random queries, pruned against exhaustive, bit for bit).
+- A document in which fewer than two query words occur gets no bonus and its positions are not read.
+- At most 32 words are compared (the rarest), and a repeated word counts once.
+- `weight` is `TextSettings.ProximityWeight` / `[Proximity(w)]`, default {WEIGHT}, 0 to 4; 0 removes the bonus. In query objects it is
+  `ProximityQuery`; query JSON `{"type":"proximity",...}` (a user-text query compiles to it, so it appears in written query JSON).
+- Not applied: with ranking rules (they have a `proximity` rule), to one-word queries, to phrases, to typed query objects unless wrapped.
+
+The default weight was chosen on the four BEIR gate sets; see below.
+
+{PROXRESULTS}
 
 ## Relevance results
 
