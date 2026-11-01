@@ -53,7 +53,7 @@ vectors, a tile of 128 vectors at a time against all queries, which is the shape
 
 Implemented from Malkov and Yashunin, "Efficient and robust approximate nearest neighbor search using Hierarchical Navigable Small
 World graphs", IEEE TPAMI 42(4), 2020 (arXiv:1603.09320): algorithm 1 (INSERT), 2 (SEARCH-LAYER), 4 (SELECT-NEIGHBORS-HEURISTIC, no
-extended candidates, with kept pruned connections) and 5 (K-NN-SEARCH).
+extended candidates; connections dropped by pruning are not refilled, which is the default of an internal switch) and 5 (K-NN-SEARCH).
 
 * Parameters per field: `M` (default 16; layer 0 allows `2M`, the paper's `Mmax0`), `efConstruction` (default 100), flat threshold
   (default 1,000). Search breadth `ef` is a query parameter (`KnnQuery.Ef`); 0 uses `max(k, 100)`.
