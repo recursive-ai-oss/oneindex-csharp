@@ -95,6 +95,8 @@ All Wikipedia abstracts of the corpus above, one run per machine of the corpus d
 `Terms1,Terms2,Terms5,Phrase,Filtered,Facets,Stats`, 200 queries per row, warm-up plus three timed passes, median), run alone on the
 machine as exclusive benchmark jobs; OneIndex first, then Lucene.NET 4.8.0-beta00018, same corpus file (sha256 1759e651...4893) and seed 1.
 The multi-term rows (Prefix, AsYouType, Fuzzy1, Fuzzy2) are measured with the typo-tolerance work and are not in this table.
+
+`bench/OneIndex.Bench` also has `TermDictionaryRows`: term expansion over a dictionary alone (set `ONEINDEX_BENCH_TERMS` to a file of `term<TAB>document frequency` lines in byte order; `ONEINDEX_TERMS_QUICK=1` prints a stopwatch pass with a checksum of what matched, `ONEINDEX_TERMS_VERSION=1` builds the older node layout for comparison). It isolates the dictionary walk from postings and scoring.
 The write buffer is 256 MiB for Lucene.NET and 20,000 documents for OneIndex; both add documents from one thread with the default merge
 policy. OneIndex adds with the bulk `AddUnique` path (identifiers are unique), as Lucene.NET's `AddDocument` does not look for a
 previous version either. The harness runs OneIndex's merges on a background thread (`ThreadedMergeScheduler`), as Lucene.NET's default

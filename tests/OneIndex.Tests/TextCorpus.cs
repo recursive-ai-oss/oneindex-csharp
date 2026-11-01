@@ -310,9 +310,9 @@ internal sealed class TextCorpus
 
     public static readonly string[] TermsFiles = ["seg.terms", "seg.postings", "seg.lengths"];
 
-    public TextSegmentFiles Write(IStorage storage, string prefix = "seg")
+    public TextSegmentFiles Write(IStorage storage, string prefix = "seg", int termsVersion = 2)
     {
-        using var writer = new TextSegmentWriter(storage, prefix + ".terms", prefix + ".postings", prefix + ".lengths", MaxDoc);
+        using var writer = new TextSegmentWriter(storage, prefix + ".terms", prefix + ".postings", prefix + ".lengths", MaxDoc, termsVersion: termsVersion);
         ToBuffer().WriteTo(writer);
         return writer.Finish();
     }

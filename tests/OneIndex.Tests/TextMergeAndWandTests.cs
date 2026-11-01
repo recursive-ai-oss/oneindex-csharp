@@ -10,10 +10,11 @@ namespace OneIndex.Tests;
 public sealed class TextMergeAndWandTests
 {
     [Theory]
-    [InlineData(1, 0.0)]
-    [InlineData(2, 0.3)]
-    [InlineData(3, 0.8)]
-    public void MergedSegmentEqualsOneBuiltFromTheSurvivingDocuments(int seed, double deleteFraction)
+    [InlineData(1, 0.0, 2)]
+    [InlineData(2, 0.3, 2)]
+    [InlineData(3, 0.8, 2)]
+    [InlineData(2, 0.3, 1)]
+    public void MergedSegmentEqualsOneBuiltFromTheSurvivingDocuments(int seed, double deleteFraction, int sourceTermsVersion)
     {
         var rng = new Random(seed);
         var corpora = new List<TextCorpus> { TextCorpus.Generate(seed * 10 + 1, 600, 500), TextCorpus.Generate(seed * 10 + 2, 1, 40), TextCorpus.Generate(seed * 10 + 3, 400, 900), TextCorpus.Generate(seed * 10 + 4, 300, 300) };
@@ -24,7 +25,7 @@ public sealed class TextMergeAndWandTests
         int newDoc = 0;
         for (int i = 0; i < corpora.Count; i++)
         {
-            corpora[i].Write(storage, "src" + i);
+            corpora[i].Write(storage, "src" + i, sourceTermsVersion);
             TextSegmentReader reader = TextCorpus.Open(storage, "src" + i);
             readers.Add(reader);
             var deleted = new HashSet<int>();

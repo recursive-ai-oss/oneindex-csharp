@@ -182,7 +182,7 @@ public sealed class TextSegmentReader : ITextFieldSource, IDisposable
 
     private static TextSegmentReader Create(string termsFile, string postingsFile, string lengthsFile, byte[] terms, byte[] lengths, IRangeReader postings, ReadOnlySpan<byte> postingsHeader, IndexLimits limits)
     {
-        IndexFile.Validate(termsFile, terms, TextSegmentWriter.TermsMagic, CodecRegistry.NewestVersion(SegmentParts.Terms));
+        int termsVersion = IndexFile.Validate(termsFile, terms, TextSegmentWriter.TermsMagic, CodecRegistry.NewestVersion(SegmentParts.Terms));
         IndexFile.Validate(lengthsFile, lengths, TextSegmentWriter.LengthsMagic, CodecRegistry.NewestVersion(SegmentParts.Lengths));
         if (System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(postingsHeader) != TextSegmentWriter.PostingsMagic)
         {
@@ -258,7 +258,7 @@ public sealed class TextSegmentReader : ITextFieldSource, IDisposable
                 throw new CorruptIndexException(lengthsFile, $"no field lengths for field '{name}'");
             }
 
-            var dictionary = new FieldTermDictionary(termsFile, terms, fstStart, fstLength, root, tableStart, tableLength, samplesStart, sampleCount, termCount, totalTermBytes, maxTermBytes);
+            var dictionary = new FieldTermDictionary(termsFile, termsVersion, terms, fstStart, fstLength, root, tableStart, tableLength, samplesStart, sampleCount, termCount, totalTermBytes, maxTermBytes);
             var stats = new FieldStatistics((int)docCount, sumTtf, sumDf);
             PostingsFeatures features = (flags & 2) != 0 ? PostingsFeatures.Offsets : (flags & 1) != 0 ? PostingsFeatures.Positions : PostingsFeatures.Frequencies;
             reader._fields.Add(name, new TextFieldReader(dictionary, postings, maxDoc, features, stats, lengths, lv.Start, lv.Width, lengthsFile));

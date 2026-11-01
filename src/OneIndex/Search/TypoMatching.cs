@@ -278,6 +278,9 @@ internal sealed class PrefixLevenshteinAutomaton : TermAutomaton
     }
 
     public override bool IsAccepting(ReadOnlySpan<int> state) => (state.Length == 1 && state[0] == Matched) || _inner.IsAccepting(state);
+
+    internal override int TryGetViableBytes(ReadOnlySpan<int> state, Span<byte> bytes)
+        => state.Length == 1 && state[0] == Matched ? -1 : _inner.TryGetViableBytes(state, bytes);
 }
 
 /// <summary>Finds the indexed words that can match a query word, with the automata of the term dictionary.</summary>

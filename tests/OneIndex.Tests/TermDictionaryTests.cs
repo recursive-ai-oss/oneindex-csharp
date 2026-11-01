@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using OneIndex.Codecs;
+using OneIndex.Index;
 using OneIndex.Search;
 using OneIndex.Storage;
 
@@ -197,7 +198,7 @@ public sealed class TermDictionaryTests
         Assert.True(cases > 30_000);
     }
 
-    private static (TextSegmentReader Reader, List<byte[]> Terms) BuildDictionary(int seed, int vocabulary, bool includeEmpty)
+    private static (TextSegmentReader Reader, List<byte[]> Terms) BuildDictionary(int seed, int vocabulary, bool includeEmpty, int termsVersion = 2)
     {
         var rng = new Random(seed);
         string[] words = TextCorpus.MakeVocabulary(rng, vocabulary);
@@ -218,21 +219,23 @@ public sealed class TermDictionaryTests
         }
 
         var storage = new MemoryStorage();
-        using (var writer = new TextSegmentWriter(storage, "d.terms", "d.postings", "d.lengths", 4))
-        {
-            writer.BeginField("f", PostingsFeatures.Frequencies, [1, 1, 1, 1]);
-            foreach (byte[] t in sorted)
-            {
-                writer.BeginTerm(t);
-                writer.AddDocument(rng.Next(4), 1);
-                writer.EndTerm();
-            }
+        WriteTerms(storage, sorted, rng, termsVersion);
+        return (TextSegmentReader.Open(storage, "d.terms", "d.postings", "d.lengths"), [.. sorted]);
+    }
 
-            writer.EndField();
-            writer.Finish();
+    private static void WriteTerms(MemoryStorage storage, IEnumerable<byte[]> sorted, Random rng, int termsVersion)
+    {
+        using var writer = new TextSegmentWriter(storage, "d.terms", "d.postings", "d.lengths", 4, termsVersion: termsVersion);
+        writer.BeginField("f", PostingsFeatures.Frequencies, [1, 1, 1, 1]);
+        foreach (byte[] t in sorted)
+        {
+            writer.BeginTerm(t);
+            writer.AddDocument(rng.Next(4), 1);
+            writer.EndTerm();
         }
 
-        return (TextSegmentReader.Open(storage, "d.terms", "d.postings", "d.lengths"), [.. sorted]);
+        writer.EndField();
+        writer.Finish();
     }
 
     private static List<byte[]> Collect(ITermEnumerator e)
@@ -250,12 +253,15 @@ public sealed class TermDictionaryTests
     }
 
     [Theory]
-    [InlineData(1, 60, false)]
-    [InlineData(2, 1500, true)]
-    [InlineData(3, 4000, false)]
-    public void PrefixFuzzyAndRegexEqualABruteForceScan(int seed, int vocabulary, bool includeEmpty)
+    [InlineData(1, 60, false, 1)]
+    [InlineData(2, 1500, true, 1)]
+    [InlineData(3, 4000, false, 1)]
+    [InlineData(1, 60, false, 2)]
+    [InlineData(2, 1500, true, 2)]
+    [InlineData(3, 4000, false, 2)]
+    public void PrefixFuzzyAndRegexEqualABruteForceScan(int seed, int vocabulary, bool includeEmpty, int termsVersion)
     {
-        (TextSegmentReader reader, List<byte[]> terms) = BuildDictionary(seed, vocabulary, includeEmpty);
+        (TextSegmentReader reader, List<byte[]> terms) = BuildDictionary(seed, vocabulary, includeEmpty, termsVersion);
         using (reader)
         {
             ITextFieldReader f = reader.GetTextField("f")!;
@@ -317,6 +323,163 @@ public sealed class TermDictionaryTests
 
             Assert.True(cases > 500);
         }
+    }
+
+    // The same terms written in both layouts give the same terms, statistics and expansions, and every term is found by exact lookup.
+    [Theory]
+    [InlineData(11, 3000)]
+    [InlineData(12, 200)]
+    public void BothLayoutsAnswerAlike(int seed, int vocabulary)
+    {
+        var one = BuildDictionary(seed, vocabulary, true, 1);
+        var two = BuildDictionary(seed, vocabulary, true, 2);
+        using (one.Reader)
+        using (two.Reader)
+        {
+            ITextFieldReader a = one.Reader.GetTextField("f")!;
+            ITextFieldReader b = two.Reader.GetTextField("f")!;
+            Assert.Equal(one.Terms.Count, two.Terms.Count);
+            var rng = new Random(seed);
+            foreach (byte[] t in one.Terms)
+            {
+                Assert.True(a.TryGetTerm(t, out TermInfo x));
+                Assert.True(b.TryGetTerm(t, out TermInfo y));
+                Assert.Equal(x.DocFreq, y.DocFreq);
+                Assert.False(b.TryGetTerm([.. t, (byte)'~', (byte)'~'], out _));
+            }
+
+            for (int i = 0; i < 200; i++)
+            {
+                string word = Encoding.UTF8.GetString(one.Terms[rng.Next(one.Terms.Count)]);
+                if (word.Length > 100)
+                {
+                    continue;
+                }
+
+                string query = Mutate(rng, word, rng.Next(0, 3));
+                foreach (int k in new[] { 1, 2, 3 })
+                {
+                    Assert.True(SameTerms(a.Intersect(new LevenshteinAutomaton(query, k)), b.Intersect(new LevenshteinAutomaton(query, k))), $"{query} {k}");
+                }
+
+                byte[] prefix = one.Terms[rng.Next(one.Terms.Count)].Take(rng.Next(0, 4)).ToArray();
+                Assert.True(SameTerms(a.GetTerms(prefix), b.GetTerms(prefix)));
+            }
+        }
+    }
+
+    private static bool SameTerms(ITermEnumerator x, ITermEnumerator y)
+    {
+        using (x)
+        using (y)
+        {
+            while (true)
+            {
+                bool mx = x.MoveNext();
+                bool my = y.MoveNext();
+                if (mx != my)
+                {
+                    return false;
+                }
+
+                if (!mx)
+                {
+                    return true;
+                }
+
+                if (!x.Term.SequenceEqual(y.Term) || x.Info.DocFreq != y.Info.DocFreq || x.Info.TotalTermFreq != y.Info.TotalTermFreq)
+                {
+                    return false;
+                }
+            }
+        }
+    }
+
+    // Nodes of every size class: a root with all 256 first bytes, and counts and distances that need three bytes.
+    [Fact]
+    public void WideNodesAndLargeDictionariesRoundTrip()
+    {
+        var all = new List<byte[]>();
+        for (int b = 0; b < 256; b++)
+        {
+            all.Add([(byte)b]);
+        }
+
+        for (int i = 0; i < 90_000; i++)
+        {
+            all.Add(Encoding.UTF8.GetBytes("t" + (i * 7919 % 90_000).ToString("D6", System.Globalization.CultureInfo.InvariantCulture)));
+        }
+
+        all.Sort(static (p, q) => p.AsSpan().SequenceCompareTo(q));
+        all = [.. all.Distinct(new ByteArrayEquality())];
+        foreach (int version in new[] { 1, 2 })
+        {
+            var storage = new MemoryStorage();
+            WriteTerms(storage, all, new Random(3), version);
+            using var reader = TextSegmentReader.Open(storage, "d.terms", "d.postings", "d.lengths");
+            ITextFieldReader f = reader.GetTextField("f")!;
+            Assert.True(Collect(f.GetTerms(default)).SequenceEqual(all, new ByteArrayEquality()));
+            var rng = new Random(version);
+            for (int i = 0; i < 3000; i++)
+            {
+                Assert.True(f.TryGetTerm(all[rng.Next(all.Count)], out _));
+            }
+
+            Assert.True(Collect(f.GetTerms("t0123"u8)).SequenceEqual(all.Where(t => t.AsSpan().StartsWith("t0123"u8)), new ByteArrayEquality()));
+            Assert.Equal(all.Count(t => t.Length == 7 && Distance("t012345", Encoding.UTF8.GetString(t), true) <= 1), Collect(f.Intersect(new LevenshteinAutomaton("t012345", 1))).Count(static t => t.Length == 7));
+        }
+    }
+
+    // Damaged automata with a valid checksum must end in CorruptIndexException (or still be a readable dictionary), never another
+    // exception, a hang or a huge allocation: node pointers past the end, counts past the term count, arc tables past the file.
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void DamagedAutomataRaiseOnlyCorruptIndexException(int termsVersion)
+    {
+        var storage = new MemoryStorage();
+        var rng = new Random(77);
+        WriteTerms(storage, new SortedSet<byte[]>(TextCorpus.MakeVocabulary(rng, 400).Select(static w => Encoding.UTF8.GetBytes(w)), TextCorpus.ByteOrder), rng, termsVersion);
+        byte[] good = TestHelpers.ReadAll(storage, "d.terms");
+        int survived = 0;
+        for (int i = 0; i < 3000; i++)
+        {
+            byte[] bad = (byte[])good.Clone();
+            for (int k = 0; k <= rng.Next(3); k++)
+            {
+                bad[rng.Next(IndexFile.HeaderLength, bad.Length - IndexFile.FooterLength)] = (byte)rng.Next(256);
+            }
+
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(bad.AsSpan(bad.Length - 4), Crc32C.Compute(bad.AsSpan(0, bad.Length - 4)));
+            var damaged = new MemoryStorage();
+            foreach (string name in new[] { "d.postings", "d.lengths" })
+            {
+                using IStorageWriter w = damaged.Create(name);
+                w.Write(TestHelpers.ReadAll(storage, name));
+            }
+
+            using (IStorageWriter w = damaged.Create("d.terms"))
+            {
+                w.Write(bad);
+            }
+
+            try
+            {
+                using TextSegmentReader reader = TextSegmentReader.Open(damaged, "d.terms", "d.postings", "d.lengths");
+                ITextFieldReader f = reader.GetTextField("f")!;
+                Collect(f.GetTerms(default));
+                Collect(f.GetTerms("ab"u8));
+                Collect(f.Intersect(new LevenshteinAutomaton("abc", 2)));
+                Collect(f.Intersect(new RegexAutomaton("[a-c]+.*"), "a"u8));
+                _ = f.TryGetTerm("abc"u8, out _);
+                survived++;
+            }
+            catch (CorruptIndexException)
+            {
+            }
+        }
+
+        Assert.True(survived < 3000);
     }
 
     [Fact]

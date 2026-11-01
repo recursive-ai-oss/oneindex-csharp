@@ -87,6 +87,7 @@ public sealed class TextSegmentWriter : IDisposable, IAsyncDisposable
     private int[] _fieldLengths = [];
     private bool _hasPositions;
     private bool _hasOffsets;
+    private readonly int _termsVersion;
     private FstBuilder _fst;
     private TermInfoBuilder _info = new();
     private long _sumTotalTermFreq;
@@ -104,8 +105,9 @@ public sealed class TextSegmentWriter : IDisposable, IAsyncDisposable
     /// <param name="lengthsFile">The name of the lengths file.</param>
     /// <param name="maxDoc">One more than the largest document id of the segment.</param>
     /// <param name="limits">Limits; <see cref="IndexLimits.Default"/> when <see langword="null"/>.</param>
-    public TextSegmentWriter(IStorage storage, string termsFile, string postingsFile, string lengthsFile, int maxDoc, IndexLimits? limits = null)
-        : this(Targets(storage, termsFile, postingsFile, lengthsFile), maxDoc, limits)
+    /// <param name="termsVersion">The format version of the terms file to write: 2 (the default, the newest) or 1, which older readers understand.</param>
+    public TextSegmentWriter(IStorage storage, string termsFile, string postingsFile, string lengthsFile, int maxDoc, IndexLimits? limits = null, int termsVersion = 2)
+        : this(Targets(storage, termsFile, postingsFile, lengthsFile, termsVersion), maxDoc, limits, termsVersion)
     {
     }
 
@@ -115,20 +117,27 @@ public sealed class TextSegmentWriter : IDisposable, IAsyncDisposable
     /// <param name="lengths">Target of the lengths file (magic <c>OIXL</c>, version 1).</param>
     /// <param name="maxDoc">One more than the largest document id of the segment.</param>
     /// <param name="limits">Limits; <see cref="IndexLimits.Default"/> when <see langword="null"/>.</param>
-    public TextSegmentWriter(ITextFileTarget terms, ITextFileTarget postings, ITextFileTarget lengths, int maxDoc, IndexLimits? limits = null)
-        : this((terms, postings, lengths), maxDoc, limits)
+    /// <param name="termsVersion">The version in the header the caller wrote to <paramref name="terms"/>: 2 (the default) or 1.</param>
+    public TextSegmentWriter(ITextFileTarget terms, ITextFileTarget postings, ITextFileTarget lengths, int maxDoc, IndexLimits? limits = null, int termsVersion = 2)
+        : this((terms, postings, lengths), maxDoc, limits, termsVersion)
     {
     }
 
-    private TextSegmentWriter((ITextFileTarget Terms, ITextFileTarget Postings, ITextFileTarget Lengths) targets, int maxDoc, IndexLimits? limits)
+    private TextSegmentWriter((ITextFileTarget Terms, ITextFileTarget Postings, ITextFileTarget Lengths) targets, int maxDoc, IndexLimits? limits, int termsVersion)
     {
+        if (termsVersion is < 1 or > 2)
+        {
+            throw new ArgumentOutOfRangeException(nameof(termsVersion), "The terms file version is 1 or 2.");
+        }
+
+        _termsVersion = termsVersion;
         ArgumentNullException.ThrowIfNull(targets.Terms);
         ArgumentNullException.ThrowIfNull(targets.Postings);
         ArgumentNullException.ThrowIfNull(targets.Lengths);
         ArgumentOutOfRangeException.ThrowIfNegative(maxDoc);
         _limits = limits ?? IndexLimits.Default;
         MaxDoc = maxDoc;
-        _fst = new FstBuilder(_limits.MaxTermBytes);
+        _fst = new FstBuilder(_limits.MaxTermBytes, termsVersion);
         _terms = targets.Terms;
         _postings = targets.Postings;
         _lengthsFile = targets.Lengths;
@@ -136,10 +145,10 @@ public sealed class TextSegmentWriter : IDisposable, IAsyncDisposable
         _terms.Write(_scratch.Span);
     }
 
-    private static (ITextFileTarget, ITextFileTarget, ITextFileTarget) Targets(IStorage storage, string termsFile, string postingsFile, string lengthsFile)
+    private static (ITextFileTarget, ITextFileTarget, ITextFileTarget) Targets(IStorage storage, string termsFile, string postingsFile, string lengthsFile, int termsVersion)
     {
         ArgumentNullException.ThrowIfNull(storage);
-        var terms = new StorageFileTarget(new IndexFileWriter(storage.Create(termsFile), TermsMagic, CodecRegistry.NewestVersion(SegmentParts.Terms)));
+        var terms = new StorageFileTarget(new IndexFileWriter(storage.Create(termsFile), TermsMagic, termsVersion));
         try
         {
             var postings = new StorageFileTarget(new IndexFileWriter(storage.Create(postingsFile), PostingsMagic, CodecRegistry.NewestVersion(SegmentParts.Postings)));
@@ -192,7 +201,7 @@ public sealed class TextSegmentWriter : IDisposable, IAsyncDisposable
         _fieldLengths = fieldLengths;
         _hasOffsets = (features & PostingsFeatures.Offsets) == PostingsFeatures.Offsets;
         _hasPositions = _hasOffsets || (features & PostingsFeatures.Positions) == PostingsFeatures.Positions;
-        _fst = new FstBuilder(_limits.MaxTermBytes);
+        _fst = new FstBuilder(_limits.MaxTermBytes, _termsVersion);
         _info = new TermInfoBuilder();
         _sumTotalTermFreq = 0;
         _sumDocFreq = 0;
