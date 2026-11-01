@@ -525,7 +525,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
 
             try
             {
-                CommitProtocol.Commit(_storage, next, _limits, cancellationToken);
+                CommitProtocol.Commit(_storage, next, _limits, _current is null ? null : FilesOf(_current).ToHashSet(StringComparer.Ordinal), cancellationToken);
             }
             catch (Exception e)
             {
@@ -941,7 +941,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
         }
 
         string name = NewSegmentName();
-        var sink = new SegmentFileSink(_storage, name);
+        var sink = new SegmentFileSink(_storage, name) { DeferSync = true };
         try
         {
             var context = new SegmentFlushContext(_schema, name, docs, _limits);
@@ -961,9 +961,12 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
 
                 IdsFormat.Write(sink, entries, cancellationToken);
             }
+
+            sink.SyncPending(cancellationToken);
         }
         catch
         {
+            sink.AbortPending();
             foreach (string n in sink.CreatedNames)
             {
                 _refs.TryDelete(n);

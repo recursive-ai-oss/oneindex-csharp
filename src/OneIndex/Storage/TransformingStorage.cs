@@ -23,6 +23,9 @@ public sealed class TransformingStorage(IStorage inner, IBlockTransform? transfo
     public bool SupportsLocks => _inner.SupportsLocks;
 
     /// <inheritdoc/>
+    public bool SupportsConcurrentSync => _inner.SupportsConcurrentSync;
+
+    /// <inheritdoc/>
     public IStorageLock? TryLock(string name, CancellationToken cancellationToken = default) => _inner.TryLock(name, cancellationToken);
 
     /// <inheritdoc/>

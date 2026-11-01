@@ -138,6 +138,14 @@ averages (13 and 22) still carried the earlier jobs; arm64 Apple M2, 8 cores, 8 
 APFS, macOS, .NET SDK 10.0.403 / runtime 10.0.14, load 4.8 before, 4.2 after. Both indexes were warm in the page cache. Peak resident set
 was not captured on arm64 (the kernel high-water mark used on Linux does not exist there).
 
+### Counting differences in the Facets and Stats rows
+
+At 302,567 documents the match checksums of the Facets and Stats rows differ by 2 and 4 between the engines. The cause is tokenization, not
+a collection bug: six abstracts contain U+202F NARROW NO-BREAK SPACE, which the Unicode 17 word-break property file lists as ExtendNumLet
+(UAX #29 rule WB13b), so OneIndex keeps "they\u202fare" as one token, as the standard prescribes, while the comparator's older tables break there. Four
+of the six documents hold a query term next to such a space; the single-term counts (`oneindex-harness count-diff`) differ for exactly those
+terms, each by one document that only the comparator counts.
+
 ## Earlier indicative pass (not publishable)
 
 A first run of the driver on 50,000 abstracts, to prove the rows run end to end and to capture memory and size. It ran as a shared-queue

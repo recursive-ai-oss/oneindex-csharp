@@ -66,9 +66,9 @@ Fields keep declaration order; a field's position is its field id. The reader ru
 
 A commit makes a set of already-written segment files visible:
 
-1. The caller writes each new segment file with `IndexFileWriter`, which appends the footer and fsyncs the file, and records its length and checksum.
+1. The caller writes each new segment file with `IndexFileWriter`, which appends the footer and either fsyncs the file or leaves it open to be synced together with the rest of the segment, and records its length and checksum.
 2. `CommitProtocol.Commit` serializes the commit, then checks that the generation is above the newest commit in storage and that every file the commit lists exists with the recorded length and footer checksum.
-3. It calls `SyncDirectory` so the names of the new files are durable before any commit refers to them.
+3. It verifies the files that no earlier commit listed (segment files never change, so files an earlier commit verified are not opened again), then calls `SyncDirectory` so the names of the new files are durable before any commit refers to them.
 4. It deletes any leftover temporary commit file, writes the commit to `commit-<generation>.tmp`, and fsyncs it.
 5. It renames the temporary file to `commit-<generation>.oic`, atomically.
 6. It calls `SyncDirectory` again. Only now does `Commit` return: a commit that was acknowledged is durable.

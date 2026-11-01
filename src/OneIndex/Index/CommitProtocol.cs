@@ -23,9 +23,10 @@ public static class CommitProtocol
     /// <param name="commit">The commit; its generation must exceed the latest one in storage.</param>
     /// <param name="limits">The limits to enforce; default <see cref="IndexLimits.Default"/>.</param>
     /// <param name="cancellationToken">Cancels the commit. Cancelling before the rename leaves the previous commit latest.</param>
+    /// <param name="alreadyChecked">Names of files that an earlier commit already verified; segment files never change, so they are not opened again. Default none.</param>
     /// <exception cref="InvalidOperationException">The generation is not newer than the latest commit.</exception>
     /// <exception cref="CorruptIndexException">A listed file is missing, truncated or not the recorded one.</exception>
-    public static void Commit(IStorage storage, CommitInfo commit, IndexLimits? limits = null, CancellationToken cancellationToken = default)
+    public static void Commit(IStorage storage, CommitInfo commit, IndexLimits? limits = null, IReadOnlySet<string>? alreadyChecked = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(storage);
         ArgumentNullException.ThrowIfNull(commit);
@@ -40,6 +41,11 @@ public static class CommitProtocol
         {
             foreach (SegmentFile file in segment.Files)
             {
+                if (alreadyChecked is not null && alreadyChecked.Contains(file.FileName))
+                {
+                    continue;
+                }
+
                 using IRangeReader reader = storage.OpenRead(file.FileName, cancellationToken);
                 CheckFile(file, reader, IndexFile.ReadFooterChecksum(reader, cancellationToken));
             }

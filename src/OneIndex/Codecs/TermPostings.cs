@@ -30,6 +30,11 @@ public sealed class TermPostings : PostingsIterator
     private readonly byte[] _scratch = new byte[MaxHeaderBytes + 2 + (8 * BlockSize)];
     private readonly byte[] _posBuffer = new byte[PositionBufferBytes];
 
+    // Lists with many blocks that are skipped through (phrases, conjunctions) cache the last document of every block.
+    private const int LastDocCacheMinBlocks = 4;
+    private const int LastDocCacheAfterReads = 6;
+    private int[]? _lastDocs;
+    private int _lastDocReads;
     private int _preloadedBlockAt = -1;
     private int _preloadedEnd;
     private bool _wantFreq;
@@ -117,6 +122,8 @@ public sealed class TermPostings : PostingsIterator
         _file.ReadExactly(term.PostingsOffset, _scratch.AsSpan(0, want));
         Span<byte> head = _scratch.AsSpan(0, Math.Min(MaxHeaderBytes, want));
         _preloadedBlockAt = -1;
+        _lastDocs = null;
+        _lastDocReads = 0;
         int pos = 0;
         if (_blockCount == 1)
         {
@@ -370,9 +377,39 @@ public sealed class TermPostings : PostingsIterator
 
     private int ReadLastDoc(int block)
     {
+        if (_lastDocs is not null)
+        {
+            return _lastDocs[block];
+        }
+
+        if (_blockCount > LastDocCacheMinBlocks && ++_lastDocReads > LastDocCacheAfterReads)
+        {
+            // Skipping through a long list reads many entries of the skip table: read the table once instead of entry by entry.
+            LoadLastDocs();
+            return _lastDocs![block];
+        }
+
         Span<byte> four = _scratch.AsSpan(0, 4);
         _file.ReadExactly(_tableStart + ((long)block * EntryBytes), four);
         return CheckDoc(BinaryPrimitives.ReadUInt32LittleEndian(four));
+    }
+
+    private void LoadLastDocs()
+    {
+        var lastDocs = new int[_blockCount];
+        const int EntriesPerRead = 64; // 1,024 bytes, within the scratch buffer
+        for (int first = 0; first < _blockCount; first += EntriesPerRead)
+        {
+            int n = Math.Min(EntriesPerRead, _blockCount - first);
+            Span<byte> chunk = _scratch.AsSpan(0, n * EntryBytes);
+            _file.ReadExactly(_tableStart + ((long)first * EntryBytes), chunk);
+            for (int i = 0; i < n; i++)
+            {
+                lastDocs[first + i] = CheckDoc(BinaryPrimitives.ReadUInt32LittleEndian(chunk[(i * EntryBytes)..]));
+            }
+        }
+
+        _lastDocs = lastDocs;
     }
 
     // The first block at or after 'from' whose last document is at least 'target': gallop forward, then binary search.
