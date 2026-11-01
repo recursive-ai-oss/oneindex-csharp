@@ -7,10 +7,13 @@
     <PublishAot>true</PublishAot>
     <IsAotCompatible>true</IsAotCompatible>
     <TrimmerSingleWarn>false</TrimmerSingleWarn>
+    <!-- The model kernels pick AVX2 or AVX-512 at run time only when the compiler may emit them. -->
+    <IlcInstructionSet Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64'">x86-64-v3</IlcInstructionSet>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../src/OneIndex/OneIndex.csproj" />
+    <ProjectReference Include="../../src/OneIndex.Models/OneIndex.Models.csproj" />
     <!-- A packaged app gets the generator from the package; here it is referenced directly. -->
     <ProjectReference Include="../../src/OneIndex.Generators/OneIndex.Generators.csproj" ReferenceOutputAssembly="false" OutputItemType="Analyzer" />
   </ItemGroup>

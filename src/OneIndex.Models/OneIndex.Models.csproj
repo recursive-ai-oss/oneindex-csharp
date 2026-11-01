@@ -3,7 +3,7 @@
   <PropertyGroup>
     <RootNamespace>OneIndex.Models</RootNamespace>
     <PackageId>$(PackagePrefix).Models</PackageId>
-    <Description>Embedders, reranker and learned sparse encoders for OneIndex, running on OneModel. Part of the OneIndex embedded search engine; unaffiliated with other products named OneIndex, OneSearch or similar.</Description>
+    <Description>Embedders for the OneIndex embedded search engine: a WordPiece tokenizer and the default English dense embedder (bge-small-en-v1.5, MIT licence, weights included), running on OneModel. Unaffiliated with other products named OneIndex, OneSearch or similar.</Description>
   </PropertyGroup>
 
   <PropertyGroup Label="Packed weights">
