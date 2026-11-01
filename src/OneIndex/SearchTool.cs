@@ -264,6 +264,32 @@ public static class SearchTool
             }, required: ["field", "north", "south", "west", "east"]));
         }
 
+        int knnIndex = 0;
+        foreach (FieldDefinition vf in schema.Fields.Where(static f => f.Type == FieldType.Vector && f.Indexed))
+        {
+            FieldDefinition vector = vf;
+            Def("knn" + (knnIndex++).ToString(System.Globalization.CultureInfo.InvariantCulture), () => Node(w, "knn", () =>
+            {
+                Field(w, [vector.Name]);
+                w.WriteStartObject("vector");
+                w.WriteString("type", "array");
+                w.WriteStartObject("items");
+                w.WriteString("type", "number");
+                w.WriteEndObject();
+                w.WriteNumber("minItems", vector.Dimensions);
+                w.WriteNumber("maxItems", vector.Dimensions);
+                w.WriteString("description", "The query embedding: exactly " + vector.Dimensions.ToString(System.Globalization.CultureInfo.InvariantCulture) + " numbers.");
+                w.WriteEndObject();
+                Int(w, "k", 1, KnnQuery.MaxK, "How many nearest documents to find. Default 10.");
+                Int(w, "ef", 1, KnnQuery.MaxK, "Search breadth, at least k. Larger is more accurate and slower. Default 100.");
+                Typed(w, "exact", "boolean", "Compare with every vector instead of the approximate graph search. Default false.");
+                w.WriteStartObject("filter");
+                w.WriteString("$ref", "#/$defs/node");
+                w.WriteString("description", "Only documents matching this query may be neighbours.");
+                w.WriteEndObject();
+            }, required: ["field", "vector"]));
+        }
+
         Def("bool", () => Node(w, "bool", () =>
         {
             foreach (string clause in ClauseNames)
@@ -396,6 +422,29 @@ public static class SearchTool
         Int(w, "limit", 0, QueryJson.MaxWindow, "The most hits to return. Default 20; limit + offset is at most 10000.");
         Int(w, "offset", 0, QueryJson.MaxWindow, "How many of the best hits to skip. Default 0.");
         Typed(w, "countExactly", "boolean", "Count every match instead of giving a lower bound. Slower. Default false.");
+        List<string> vectorFields = [.. schema.Fields.Where(static f => f.Type == FieldType.Vector && f.Indexed).Select(static f => f.Name)];
+        if (vectorFields.Count > 0)
+        {
+            w.WriteStartObject("hybrid");
+            w.WriteString("type", "object");
+            w.WriteString("description", "Combine the text search of q with a vector search over the meaning of q, when the index can embed text. Without it, results are text matches only.");
+            w.WriteBoolean("additionalProperties", false);
+            w.WriteStartObject("properties");
+            w.WriteStartObject("field");
+            EnumOf(w, vectorFields);
+            w.WriteString("description", "The vector field to search. Default: the only automatically embedded one.");
+            w.WriteEndObject();
+            Num(w, "semanticRatio", 0, 1, "How much meaning counts against words: 0 words only, 1 meaning only. Default 0.75.");
+            w.WriteStartObject("fusion");
+            EnumOf(w, ["rrf", "linear"]);
+            w.WriteString("description", "How the two result lists combine. Default rrf (reciprocal rank fusion).");
+            w.WriteEndObject();
+            Int(w, "rankConstant", 1, 1000, "The constant of reciprocal rank fusion. Default 10.");
+            Int(w, "window", 1, HybridQuery.MaxWindow, "How many results each list contributes. Default 100.");
+            w.WriteEndObject();
+            w.WriteEndObject();
+        }
+
         List<string> sortable = [.. schema.Fields.Where(static f => f.Column && f.Type is FieldType.Keyword or FieldType.Integral or FieldType.Fractional or FieldType.Date or FieldType.Bool).Select(static f => f.Name)];
         w.WriteStartObject("sort");
         w.WriteString("type", "array");

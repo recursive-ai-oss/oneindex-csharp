@@ -1,0 +1,9 @@
+# Reference runtimes for the model tools. They are only executed (black box); their files are never read.
+tokenizers==0.23.3
+onnxruntime==1.31.1
+onnx==1.23.2
+huggingface-hub==2.4.0
+numpy==2.5.4
+pyyaml==6.0.3
+ir-measures==0.4.3
+pytrec-eval-terrier==0.5.11

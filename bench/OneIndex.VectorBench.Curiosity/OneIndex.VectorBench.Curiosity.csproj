@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The two managed comparators ship assemblies named HNSW.Net and Hnsw.Net, which cannot be referenced together,
+       so each gets its own copy of the runner. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>OneIndex.VectorBench</RootNamespace>
+    <AssemblyName>OneIndex.VectorBench.Curiosity</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <DefineConstants>$(DefineConstants);CURIOSITY</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../OneIndex.VectorBench/Program.cs" />
+    <Compile Include="../OneIndex.VectorBench/Engines.cs" />
+    <Compile Include="../OneIndex.VectorBench/CuriosityEngine.cs" />
+    <Compile Include="../OneIndex.VectorBench/MergeRun.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="HNSW" />
+    <!-- The HNSW package pulls in an older MessagePack; take the patched release. -->
+    <PackageReference Include="MessagePack" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/OneIndex/OneIndex.csproj" />
+  </ItemGroup>
+
+</Project>

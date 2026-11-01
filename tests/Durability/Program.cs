@@ -47,6 +47,24 @@ static int Run(string[] args)
             return result.Failures == 0 ? 0 : 1;
         }
 
+        case "embed-child":
+            return EmbedKill.RunChild(Option("dir", "."), Number("seed", 1));
+
+        case "embed-kill":
+        {
+            string root = Option("dir", Path.Combine(Path.GetTempPath(), "oneindex-embed-kill"));
+            string[] childCommand = [Environment.ProcessPath!, .. Environment.GetCommandLineArgs().Take(1).Where(a => a.EndsWith(".dll", StringComparison.Ordinal))];
+            var clock = Stopwatch.StartNew();
+            EmbedKill.Result r = EmbedKill.Run(root, Number("kills", 100), Number("seed", 1), Number("max-delay-ms", 600), childCommand);
+            Console.WriteLine($"embed-kill: {r.Kills} kills (seed {Number("seed", 1)}), {r.Commits} commits acknowledged, {r.KilledDuringCommit} kills inside a commit call, {r.Documents} documents checked, {r.Failures} failures, {clock.Elapsed.TotalSeconds:F0} s");
+            foreach (string m in r.Messages.Take(20))
+            {
+                Console.WriteLine("  " + m);
+            }
+
+            return r.Failures == 0 ? 0 : 1;
+        }
+
         case "child":
             return KillHarness.RunChild(Option("dir", "."), Number("seed", 1), Number("ops", 200_000), Option("expect", "") is { Length: > 0 } e ? e : null, Number("pace-ms", 0), Number("evolve", 0));
 

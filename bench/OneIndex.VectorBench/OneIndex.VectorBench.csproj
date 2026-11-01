@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>OneIndex.VectorBench</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <DefineConstants>$(DefineConstants);HNSWNET</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="CuriosityEngine.cs" />
+    <!-- A managed vector-index comparator: black-box, through its public API, never shipped. -->
+    <PackageReference Include="Hnsw.Net" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/OneIndex/OneIndex.csproj" />
+  </ItemGroup>
+
+</Project>

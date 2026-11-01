@@ -305,4 +305,9 @@ public interface ISegmentReader : IDisposable
     /// <param name="field">The field name.</param>
     /// <returns>The reader, or <see langword="null"/> if the segment has no points for the field.</returns>
     IPointIndexReader? GetPoints(string field);
+
+    /// <summary>The vectors of a field.</summary>
+    /// <param name="field">The field name.</param>
+    /// <returns>The reader, or <see langword="null"/> if the segment has no vectors for the field.</returns>
+    IVectorFieldReader? GetVectors(string field) => null;
 }

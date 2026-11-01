@@ -20,6 +20,10 @@
     <PackageVersion Include="SharpFuzz" Version="2.2.0" />
   </ItemGroup>
   <ItemGroup Label="Comparators (tools, tests and benchmarks only; black-box, pinned releases)">
+    <PackageVersion Include="Hnsw.Net" Version="0.1.4" />
+    <PackageVersion Include="HNSW" Version="26.9.5494" />
+    <!-- The HNSW package pulls in MessagePack 3.1.0, which has published advisories; the benchmark project takes the patched release instead. -->
+    <PackageVersion Include="MessagePack" Version="3.1.12" />
     <PackageVersion Include="Lucene.Net" Version="4.8.0-beta00018" />
     <PackageVersion Include="Lucene.Net.Analysis.Common" Version="4.8.0-beta00018" />
     <PackageVersion Include="Lucene.Net.Facet" Version="4.8.0-beta00018" />

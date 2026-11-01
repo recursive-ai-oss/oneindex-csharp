@@ -66,6 +66,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
         DateTimeOffset,
         Json,
         Geo,
+        Vector,
     }
 
     private sealed class Result
@@ -92,6 +93,13 @@ public sealed class MappingGenerator : IIncrementalGenerator
         public double Boost = 1;
         public string? Language;
         public string? Analyzer;
+        public bool VectorAttr;
+        public int Dimensions;
+        public string? From;
+        public int Metric;
+        public int HnswM = 16;
+        public int EfConstruction = 100;
+        public int FlatThreshold = 1000;
 
         public bool Multi => Shape is Shape.TextArray or Shape.TextList or Shape.TextInterface;
     }
@@ -337,8 +345,39 @@ public sealed class MappingGenerator : IIncrementalGenerator
                     m.Dynamic = true;
                     break;
                 case "VectorAttribute":
-                    diagnostics.Add(Diagnostic.Create(NotYetSupported, location, property.Name, "Vector"));
-                    return null;
+                    m.VectorAttr = true;
+                    foreach (KeyValuePair<string, TypedConstant> arg in attribute.NamedArguments)
+                    {
+                        if (arg.Key == "From" && arg.Value.Value is string fromName)
+                        {
+                            m.From = fromName;
+                        }
+
+                        if (arg.Value.Value is not null and not string and IConvertible convertible)
+                        {
+                            int number = convertible.ToInt32(CultureInfo.InvariantCulture);
+                            switch (arg.Key)
+                            {
+                                case "Dimensions":
+                                    m.Dimensions = number;
+                                    break;
+                                case "Metric":
+                                    m.Metric = number;
+                                    break;
+                                case "M":
+                                    m.HnswM = number;
+                                    break;
+                                case "EfConstruction":
+                                    m.EfConstruction = number;
+                                    break;
+                                case "FlatThreshold":
+                                    m.FlatThreshold = number;
+                                    break;
+                            }
+                        }
+                    }
+
+                    break;
             }
         }
 
@@ -347,7 +386,19 @@ public sealed class MappingGenerator : IIncrementalGenerator
             return null;
         }
 
-        if (!TryClassify(property.Type, m))
+        if (m.VectorAttr)
+        {
+            if (property.Type is IArrayTypeSymbol { Rank: 1 } floats && floats.ElementType.SpecialType == SpecialType.System_Single)
+            {
+                m.Shape = Shape.Vector;
+            }
+            else
+            {
+                diagnostics.Add(Diagnostic.Create(UnsupportedType, location, property.Name, property.Type.ToDisplayString(), "[Vector]"));
+                return null;
+            }
+        }
+        else if (!TryClassify(property.Type, m))
         {
             if (declared)
             {
@@ -368,6 +419,19 @@ public sealed class MappingGenerator : IIncrementalGenerator
             }
 
             return null;
+        }
+
+        if (m.VectorAttr)
+        {
+            if (m.FullText || m.Keyword || m.Filterable || m.Sortable || m.Facet || m.GeoAttr || m.IsId)
+            {
+                diagnostics.Add(Diagnostic.Create(Conflict, location, property.Name, "a [Vector] member cannot also be [FullText], [Keyword], [Filterable], [Sortable], [Facet], [Geo] or [SearchId]"));
+            }
+
+            if (m.Dimensions < 1 || m.Dimensions > 65536 || m.Metric < 0 || m.Metric > 2 || m.HnswM < 2 || m.HnswM > 256 || m.EfConstruction < m.HnswM || m.EfConstruction > 4096 || m.FlatThreshold < 0 || m.FlatThreshold > 100000000)
+            {
+                diagnostics.Add(Diagnostic.Create(BadAttributeValue, location, property.Name, "[Vector] needs Dimensions from 1 to 65536, a known Metric, M from 2 to 256, EfConstruction from M to 4096 and FlatThreshold from 0 to 100 million"));
+            }
         }
 
         if (m.Dynamic && m.Shape != Shape.Json)
@@ -638,6 +702,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
             Shape.Bool => "Bool",
             Shape.Json => "Json",
             Shape.Geo => "GeoPoint",
+            Shape.Vector => "Vector",
             _ => "Date",
         };
         // Text fields are searched when [FullText]; everything else is searched by value only when marked for filtering.
@@ -647,8 +712,15 @@ public sealed class MappingGenerator : IIncrementalGenerator
         string? analyzerName = m.FullText ? (m.Analyzer ?? m.Language) : null;
         string analyzer = analyzerName is null ? "null" : Lit(analyzerName);
 
+        string vector = m.Shape == Shape.Vector
+            ? ", dimensions: " + m.Dimensions.ToString(CultureInfo.InvariantCulture) + ", metric: (global::OneIndex.Vectors.VectorMetric)" + m.Metric.ToString(CultureInfo.InvariantCulture)
+              + ", hnswM: " + m.HnswM.ToString(CultureInfo.InvariantCulture) + ", efConstruction: " + m.EfConstruction.ToString(CultureInfo.InvariantCulture) + ", flatThreshold: " + m.FlatThreshold.ToString(CultureInfo.InvariantCulture)
+              + (m.From is null ? string.Empty : ", from: " + Lit(m.From))
+            : string.Empty;
+        indexed |= m.Shape == Shape.Vector;
+
         return "new global::OneIndex.MappedMember(" + Lit(m.Name) + ", global::OneIndex.Index.FieldType." + kind + ", multi: " + Bool(m.Multi) + ", indexed: " + Bool(indexed) + ", column: " + Bool(column)
-            + ", facet: " + Bool(m.Facet) + ", fullText: " + Bool(m.FullText) + ", isId: " + Bool(m.IsId) + ", boost: " + boost + ", analyzer: " + analyzer + ")";
+            + ", facet: " + Bool(m.Facet) + ", fullText: " + Bool(m.FullText) + ", isId: " + Bool(m.IsId) + ", boost: " + boost + ", analyzer: " + analyzer + vector + ")";
     }
 
     private static string Bool(bool b) => b ? "true" : "false";
@@ -661,6 +733,9 @@ public sealed class MappingGenerator : IIncrementalGenerator
         {
             case Shape.Text:
                 sb.AppendLine("            if (" + p + " is { } s_" + m.Name + ") { document.Add(" + n + ", s_" + m.Name + "); }");
+                break;
+            case Shape.Vector:
+                sb.AppendLine("            if (" + p + " is { } v_" + m.Name + ") { document.Add(" + n + ", v_" + m.Name + "); }");
                 break;
             case Shape.TextArray:
             case Shape.TextList:
@@ -700,6 +775,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
             Shape.Bool => "result." + name + " = field.Value.AsBool();",
             Shape.Json => "result." + name + " = field.Value.AsJson();",
             Shape.DateTime => "result." + name + " = global::OneIndex.SearchMapping.FromDate(field.Value);",
+            Shape.Vector => "result." + name + " = field.Value.AsVector().ToArray();",
             Shape.Geo => "{ (double la, double lo) = field.Value.AsGeoPoint(); result." + name + " = new global::OneIndex.GeoPoint(la, lo); }",
             _ => "result." + name + " = global::System.DateTimeOffset.FromUnixTimeMilliseconds(field.Value.AsInt64());",
         };

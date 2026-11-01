@@ -230,6 +230,10 @@ internal static class QueryTextTargets
             "{\"v\":1,\"query\":{\"type\":\"functionScore\",\"functions\":[{\"type\":\"exp\",\"field\":\"Place\",\"origin\":{\"lat\":10,\"lng\":-170},\"scale\":2000000,\"filter\":\"Number > 2\"},{\"type\":\"linear\",\"field\":\"Number\",\"origin\":0,\"scale\":100},{\"type\":\"weight\",\"weight\":0.5,\"filter\":{\"type\":\"exists\",\"field\":\"Number\"}}],\"scoreMode\":\"first\",\"boostMode\":\"max\"}}",
             "{\"v\":1,\"query\":{\"type\":\"functionScore\",\"query\":{\"type\":\"functionScore\",\"functions\":[{\"type\":\"weight\",\"weight\":2}]},\"functions\":[{\"type\":\"fieldValueFactor\",\"field\":\"Number\",\"modifier\":\"reciprocal\"}],\"boostMode\":\"replace\"}}",
             "{\"v\":1,\"query\":{\"type\":\"functionScore\",\"functions\":[{\"type\":\"gauss\",\"field\":\"Number\",\"origin\":0,\"scale\":0}]}}",
+            "{\"v\":1,\"q\":\"cat dog\",\"hybrid\":{\"semanticRatio\":0.4,\"fusion\":\"linear\",\"window\":20,\"field\":\"Vec\"},\"filter\":\"Number > 1\",\"limit\":4}",
+            "{\"v\":1,\"q\":\"cat\",\"hybrid\":{\"rankConstant\":30}}",
+            "{\"v\":1,\"query\":{\"type\":\"hybrid\",\"text\":{\"type\":\"text\",\"text\":\"cat\"},\"vector\":{\"type\":\"knn\",\"field\":\"Vec\",\"vector\":[1,0,0.5],\"k\":5,\"filter\":{\"type\":\"exists\",\"field\":\"Number\"}},\"semanticRatio\":0.9,\"window\":50,\"boost\":2}}",
+            "{\"v\":1,\"hybrid\":{}}",
             "{\"v\":2}",
         ];
         string[] seeds = kind == 0 ? strict : kind == 1 ? filter : json;

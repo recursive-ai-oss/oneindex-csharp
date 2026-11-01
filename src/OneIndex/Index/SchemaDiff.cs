@@ -85,6 +85,8 @@ internal static class SchemaDiff
                 || (d.Indexed && !c.Indexed)
                 || (d.Column && !c.Column)
                 || (d.Facet && !c.Facet)
+                // A changed metric, M, efConstruction or flat threshold changes the graph (and the scores), so the vectors are re-indexed from source like an analyzer change.
+                || (d.Type == FieldType.Vector && c.Type == FieldType.Vector && (d.Metric != c.Metric || d.HnswM != c.HnswM || d.EfConstruction != c.EfConstruction || d.FlatThreshold != c.FlatThreshold))
                 || (d.Type == FieldType.Text && d.Indexed && (!string.Equals(d.Analyzer, c.Analyzer, StringComparison.Ordinal) || d.IndexOptions != c.IndexOptions));
             if (changed && !rebuild)
             {

@@ -39,6 +39,7 @@ public sealed class SegmentSearchReader : ISegmentReader
     private readonly ITextFieldSource? _text;
     private readonly IColumnSource? _columns;
     private readonly IPointSource? _points;
+    private readonly IVectorSource? _vectors;
 
     /// <summary>Wraps a segment reader.</summary>
     /// <param name="segment">The reader; it must outlive this adapter.</param>
@@ -48,6 +49,7 @@ public sealed class SegmentSearchReader : ISegmentReader
         _text = segment.GetPart<ITextFieldSource>();
         _columns = segment.GetPart<IColumnSource>();
         _points = segment.GetPart<IPointSource>();
+        _vectors = segment.GetPart<IVectorSource>();
         StoredFields = segment.GetPart<IStoredFieldsSource>()?.StoredFields;
     }
 
@@ -71,6 +73,9 @@ public sealed class SegmentSearchReader : ISegmentReader
 
     /// <inheritdoc/>
     public IPointIndexReader? GetPoints(string field) => _points?.GetPoints(field);
+
+    /// <inheritdoc/>
+    public IVectorFieldReader? GetVectors(string field) => _vectors?.GetVectors(field);
 
     /// <inheritdoc/>
     public void Dispose()

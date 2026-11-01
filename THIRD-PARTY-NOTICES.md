@@ -92,7 +92,18 @@ None yet. Datasets are fetched by scripts into a local cache and are never commi
 
 ## Model weights
 
-None yet.
+### BAAI/bge-small-en-v1.5 (package `RecursiveAI.OneIndex.Models`)
+
+The default English embedder packs the weights and vocabulary of BAAI/bge-small-en-v1.5 (Beijing Academy of Artificial Intelligence),
+converted to the OneModel file format with the matrix-multiply weights and the word-embedding table stored as 8-bit integers.
+
+- Source: https://huggingface.co/BAAI/bge-small-en-v1.5, revision 5c38ec7c405ec4b44b94cc5a9bb96e735b38267a
+- Licence: MIT (the model card's metadata states `license: mit`, and its License section: "The released models can be used for commercial
+  purposes free of charge.")
+- The licence text packed with the weights is `models/bge-small-en-v1.5/LICENSE-bge-small-en-v1.5.txt` in the package.
+
+The tests and tools also run the Hugging Face `tokenizers` and ONNX Runtime packages as reference implementations (fetched into a cache,
+not part of the repository or any package).
 
 ## Build-time tooling
 

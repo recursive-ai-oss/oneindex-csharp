@@ -21,8 +21,21 @@ public sealed class MappedMember
     /// <param name="isId">Whether the field identifies the document.</param>
     /// <param name="boost">The BM25F weight of a full-text field.</param>
     /// <param name="analyzer">The registered analyzer name of a full-text field, or <see langword="null"/> for the default.</param>
-    public MappedMember(string name, FieldType type, bool multi, bool indexed, bool column, bool facet, bool fullText, bool isId, float boost, string? analyzer)
+    /// <param name="dimensions">The length of a vector field; 0 for other fields.</param>
+    /// <param name="metric">The metric of a vector field.</param>
+    /// <param name="hnswM">HNSW's M for a vector field.</param>
+    /// <param name="efConstruction">HNSW's efConstruction for a vector field.</param>
+    /// <param name="flatThreshold">The segment size below which a vector field is searched exactly.</param>
+    /// <param name="from">The text member a vector field is embedded from automatically, or <see langword="null"/>.</param>
+    public MappedMember(string name, FieldType type, bool multi, bool indexed, bool column, bool facet, bool fullText, bool isId, float boost, string? analyzer,
+        int dimensions = 0, Vectors.VectorMetric metric = Vectors.VectorMetric.Cosine, int hnswM = FieldDefinition.DefaultHnswM, int efConstruction = FieldDefinition.DefaultEfConstruction, int flatThreshold = FieldDefinition.DefaultFlatThreshold, string? from = null)
     {
+        From = from;
+        Dimensions = dimensions;
+        Metric = metric;
+        HnswM = hnswM;
+        EfConstruction = efConstruction;
+        FlatThreshold = flatThreshold;
         Name = name;
         Type = type;
         Multi = multi;
@@ -65,6 +78,24 @@ public sealed class MappedMember
     /// <summary>The analyzer name of a full-text field, or <see langword="null"/>.</summary>
     public string? Analyzer { get; }
 
+    /// <summary>The text member a vector member is embedded from automatically, or null when the application supplies the vector.</summary>
+    public string? From { get; }
+
+    /// <summary>The length of a vector field; 0 otherwise.</summary>
+    public int Dimensions { get; }
+
+    /// <summary>The metric of a vector field.</summary>
+    public Vectors.VectorMetric Metric { get; }
+
+    /// <summary>HNSW's M for a vector field.</summary>
+    public int HnswM { get; }
+
+    /// <summary>HNSW's efConstruction for a vector field.</summary>
+    public int EfConstruction { get; }
+
+    /// <summary>The segment size below which a vector field is searched exactly.</summary>
+    public int FlatThreshold { get; }
+
     internal FieldDefinition ToDefinition()
     {
         if (Type == FieldType.Text)
@@ -76,6 +107,11 @@ public sealed class MappedMember
             }
 
             return new FieldDefinition(Name, FieldType.Text) { Boost = Boost, Analyzer = analyzer, Multi = Multi, Indexed = Indexed, Column = Column };
+        }
+
+        if (Type == FieldType.Vector)
+        {
+            return new FieldDefinition(Name, FieldType.Vector) { Dimensions = Dimensions, Metric = Metric, HnswM = HnswM, EfConstruction = EfConstruction, FlatThreshold = FlatThreshold };
         }
 
         return new FieldDefinition(Name, Type) { Multi = Multi, Indexed = Indexed, Column = Column, Facet = Facet };
@@ -163,6 +199,16 @@ public abstract class SearchMapping<T>
             else
             {
                 builder.Add(m.ToDefinition());
+                if (m.From is not null)
+                {
+                    if (m.Type != FieldType.Vector || !_byName.TryGetValue(m.From, out MappedMember? source) || source.Type is not (FieldType.Text or FieldType.Keyword))
+                    {
+                        throw new InvalidOperationException($"Member '{m.Name}': [Vector(From = \"{m.From}\")] must name a text or keyword member of {typeof(T).Name}.");
+                    }
+
+                    // The cache key of the embedded text, kept in stored source beside the vector (docs/auto-embedding.md).
+                    builder.Add(new FieldDefinition(AutoEmbedding.KeyFieldName(m.Name), FieldType.Bytes));
+                }
             }
         }
 

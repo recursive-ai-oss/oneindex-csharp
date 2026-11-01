@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using OneIndex.Storage;
+using OneIndex.Vectors;
 
 namespace OneIndex.Index;
 
@@ -109,6 +110,29 @@ public sealed class FieldDefinition
     /// <summary>The dimension of a vector field, 1 to <see cref="IndexLimits.MaxVectorDimensions"/>; 0 for other types.</summary>
     public int Dimensions { get; init; }
 
+    /// <summary>How a vector field measures closeness. Default <see cref="VectorMetric.Cosine"/>. Vector fields only.</summary>
+    public VectorMetric Metric { get; init; }
+
+    /// <summary>HNSW's M: links per node above layer 0 (layer 0 allows twice as many), 2 to 256. Default 16. Vector fields only.</summary>
+    public int HnswM { get; init; } = DefaultHnswM;
+
+    /// <summary>HNSW's efConstruction: the candidate list size while building, M to 4096. Default 100. Vector fields only.</summary>
+    public int EfConstruction { get; init; } = DefaultEfConstruction;
+
+    /// <summary>A segment with fewer vectors than this is searched exactly and gets no graph. Default 1000, 0 to 100 million. Vector fields only.</summary>
+    public int FlatThreshold { get; init; } = DefaultFlatThreshold;
+
+    internal bool HasCustomVectorSettings => Type == FieldType.Vector && (Metric != VectorMetric.Cosine || HnswM != DefaultHnswM || EfConstruction != DefaultEfConstruction || FlatThreshold != DefaultFlatThreshold);
+
+    /// <summary>The default for <see cref="HnswM"/>.</summary>
+    public const int DefaultHnswM = 16;
+
+    /// <summary>The default for <see cref="EfConstruction"/>.</summary>
+    public const int DefaultEfConstruction = 100;
+
+    /// <summary>The default for <see cref="FlatThreshold"/>.</summary>
+    public const int DefaultFlatThreshold = 1000;
+
     /// <summary>
     /// For a field the engine derived from the leaf paths of a JSON field (docs/dynamic.md): the name of that JSON field; otherwise
     /// <see langword="null"/>. Derived fields are never declared by hand and are never stored, since the JSON value is.
@@ -127,6 +151,7 @@ public sealed class Schema : IEquatable<Schema>
 
     /// <summary>The section that lists derived (dynamic) fields: pairs of field index and parent field index.</summary>
     private const int SectionDynamicFields = 1;
+    private const int SectionVectorSettings = 3;
 
     private const int TextSettingsSection = 2;
     private static readonly byte[] MagicBytes = "OIXS"u8.ToArray();
@@ -287,9 +312,21 @@ public sealed class Schema : IEquatable<Schema>
                 DynamicFields.EnsureReadable(f.Value.AsJson(), f.Name);
             }
 
-            if (def.Type == FieldType.Vector && f.Value.AsVector().Length != def.Dimensions)
+            if (def.Type == FieldType.Vector)
             {
-                throw new ArgumentException($"Field '{f.Name}' has {f.Value.AsVector().Length} dimensions but the schema declares {def.Dimensions}.", nameof(document));
+                ReadOnlySpan<float> vector = f.Value.AsVector().Span;
+                if (vector.Length != def.Dimensions)
+                {
+                    throw new ArgumentException($"Field '{f.Name}' has {vector.Length} dimensions but the schema declares {def.Dimensions}.", nameof(document));
+                }
+
+                foreach (float x in vector)
+                {
+                    if (!float.IsFinite(x))
+                    {
+                        throw new ArgumentException($"Field '{f.Name}' holds a NaN or infinite value; vectors must be finite.", nameof(document));
+                    }
+                }
             }
 
             if (!def.Multi)
@@ -404,7 +441,8 @@ public sealed class Schema : IEquatable<Schema>
         }
 
         bool hasDerived = schema.Fields.Any(static f => f.DynamicParent is not null);
-        sink.WriteUInt32(hasDerived || settings ? 2u : 1u);
+        bool hasVectorSettings = schema.Fields.Any(static f => f.HasCustomVectorSettings);
+        sink.WriteUInt32(hasDerived || settings || hasVectorSettings ? 2u : 1u);
         sink.WriteVarUInt((ulong)schema.Fields.Count);
         foreach (FieldDefinition f in schema.Fields)
         {
@@ -418,11 +456,11 @@ public sealed class Schema : IEquatable<Schema>
         }
 
         sink.WriteString(schema.IdField ?? string.Empty);
-        if (hasDerived || settings)
+        if (hasDerived || settings || hasVectorSettings)
         {
             // Version 2 appends sections: a count, then for each an id (ascending) and its bytes. Section 1 lists the derived
-            // (dynamic) fields, section 2 holds the text settings.
-            sink.WriteVarUInt((ulong)((hasDerived ? 1 : 0) + (settings ? 1 : 0)));
+            // (dynamic) fields, section 2 holds the text settings, section 3 the vector field settings.
+            sink.WriteVarUInt((ulong)((hasDerived ? 1 : 0) + (settings ? 1 : 0) + (hasVectorSettings ? 1 : 0)));
             if (hasDerived)
             {
                 var section = new ByteSink();
@@ -452,6 +490,35 @@ public sealed class Schema : IEquatable<Schema>
                 schema.Settings.Write(section);
                 sink.WriteVarUInt(TextSettingsSection);
                 sink.WriteBytes(section.WrittenSpan);
+            }
+
+            if (hasVectorSettings)
+            {
+                // The index settings of the vector fields that differ from the defaults, by ascending field index. A reader that
+                // does not know the section skips it and sees the default settings.
+                var section = new ByteSink();
+                int n = 0;
+                foreach (FieldDefinition f in schema.Fields)
+                {
+                    n += f.HasCustomVectorSettings ? 1 : 0;
+                }
+
+                section.WriteVarUInt((ulong)n);
+                for (int i = 0; i < schema.Fields.Count; i++)
+                {
+                    FieldDefinition f = schema.Fields[i];
+                    if (f.HasCustomVectorSettings)
+                    {
+                        section.WriteVarUInt((ulong)i);
+                        section.WriteByte((byte)f.Metric);
+                        section.WriteVarUInt((ulong)f.HnswM);
+                        section.WriteVarUInt((ulong)f.EfConstruction);
+                        section.WriteVarUInt((ulong)f.FlatThreshold);
+                    }
+                }
+
+                sink.WriteVarUInt(SectionVectorSettings);
+                sink.WriteBytes(section.ToArray());
             }
         }
 
@@ -498,8 +565,10 @@ public sealed class Schema : IEquatable<Schema>
         int[] parents = new int[count];
         Array.Fill(parents, -1);
         bool skippedSection = false;
-        bool hasSettings = false;
+        bool knownSection = false;
         TextSettings settingsRead = TextSettings.Default;
+        var settings = new VectorSettings[count];
+        Array.Fill(settings, VectorSettings.Default);
         if (version >= 2)
         {
             int sections = src.ReadCount(16, "section count");
@@ -536,12 +605,50 @@ public sealed class Schema : IEquatable<Schema>
                     {
                         throw new MalformedInputException("the dynamic field section is empty or has trailing bytes");
                     }
+
+                    knownSection = true;
+                }
+                else if (sectionId == SectionVectorSettings)
+                {
+                    var inner = new ByteSource(payload);
+                    int entries = inner.ReadCount(count, "vector settings count");
+                    int last = -1;
+                    for (int p = 0; p < entries; p++)
+                    {
+                        int field = inner.ReadCount(count - 1, "vector settings field index");
+                        if (field <= last || (FieldType)defs[field].Type != FieldType.Vector)
+                        {
+                            throw new MalformedInputException("vector settings are not in order or name a field that is not a vector");
+                        }
+
+                        byte metricByte = inner.ReadByte();
+                        if (metricByte > (byte)VectorMetric.Euclidean)
+                        {
+                            throw new MalformedInputException($"vector field '{defs[field].Name}' has an unknown metric");
+                        }
+
+                        var entry = new VectorSettings((VectorMetric)metricByte, inner.ReadCount(256, "HNSW M"), inner.ReadCount(4096, "HNSW efConstruction"), inner.ReadCount(100_000_000, "flat threshold"));
+                        if (entry == VectorSettings.Default)
+                        {
+                            throw new MalformedInputException($"vector field '{defs[field].Name}' lists default settings, which are not written");
+                        }
+
+                        settings[field] = entry;
+                        last = field;
+                    }
+
+                    if (inner.Remaining != 0 || entries == 0)
+                    {
+                        throw new MalformedInputException("the vector settings section is empty or has trailing bytes");
+                    }
+
+                    knownSection = true;
                 }
                 else if (sectionId == TextSettingsSection)
                 {
                     var inner = new ByteSource(payload);
                     settingsRead = TextSettings.Read(ref inner, limits);
-                    hasSettings = true;
+                    knownSection = true;
                     if (inner.Remaining != 0)
                     {
                         throw new MalformedInputException("unexpected bytes after the text settings");
@@ -561,15 +668,16 @@ public sealed class Schema : IEquatable<Schema>
             throw new MalformedInputException($"{src.Remaining} unexpected bytes follow the schema");
         }
 
-        if (version >= 2 && !skippedSection && !hasSettings && Array.TrueForAll(parents, static p => p < 0))
+        if (version >= 2 && !skippedSection && !knownSection)
         {
-            throw new MalformedInputException("a version 2 schema lists no dynamic field");
+            throw new MalformedInputException("a version 2 schema has no section");
         }
 
         var builder = new SchemaBuilder(limits);
         for (int i = 0; i < defs.Count; i++)
         {
             (string name, byte type, byte flags, float boost, string analyzer, byte options, int dimensions) = defs[i];
+            VectorSettings vs = settings[i];
             builder.Add(new FieldDefinition(name, (FieldType)type)
             {
                 Indexed = (flags & 1) != 0,
@@ -581,6 +689,10 @@ public sealed class Schema : IEquatable<Schema>
                 Analyzer = analyzer.Length == 0 ? null : analyzer,
                 IndexOptions = (IndexOptions)options,
                 Dimensions = dimensions,
+                Metric = vs.Metric,
+                HnswM = vs.HnswM,
+                EfConstruction = vs.EfConstruction,
+                FlatThreshold = vs.FlatThreshold,
                 DynamicParent = parents[i] >= 0 ? defs[parents[i]].Name : null,
             });
         }
@@ -685,6 +797,14 @@ public sealed class SchemaBuilder
     /// <returns>This builder.</returns>
     public SchemaBuilder Vector(string name, int dimensions) => Add(new FieldDefinition(name, FieldType.Vector) { Dimensions = dimensions });
 
+    /// <summary>Adds a vector field with a chosen metric.</summary>
+    /// <param name="name">The field name.</param>
+    /// <param name="dimensions">The vector length.</param>
+    /// <param name="metric">How closeness is measured.</param>
+    /// <returns>This builder.</returns>
+    public SchemaBuilder Vector(string name, int dimensions, VectorMetric metric)
+        => Add(new FieldDefinition(name, FieldType.Vector) { Dimensions = dimensions, Metric = metric });
+
     /// <summary>Adds a dynamic JSON field.</summary>
     /// <param name="name">The field name.</param>
     /// <returns>This builder.</returns>
@@ -784,10 +904,25 @@ public sealed class SchemaBuilder
             {
                 throw new ArgumentException($"Vector field '{n}' needs 1 to {_limits.MaxVectorDimensions} dimensions, not {f.Dimensions}.");
             }
+
+            if (f.Multi)
+            {
+                throw new ArgumentException($"Vector field '{n}' holds one vector per document.");
+            }
+
+            if (!Enum.IsDefined(f.Metric) || f.HnswM < 2 || f.HnswM > 256 || f.EfConstruction < f.HnswM || f.EfConstruction > 4096 || f.FlatThreshold < 0 || f.FlatThreshold > 100_000_000)
+            {
+                throw new ArgumentException($"Vector field '{n}' needs a known metric, M from 2 to 256, efConstruction from M to 4096 and a flat threshold from 0 to 100 million.");
+            }
         }
         else if (f.Dimensions != 0)
         {
             throw new ArgumentException($"Field '{n}' is {f.Type}; dimensions apply to vector fields only.");
         }
     }
+}
+
+internal readonly record struct VectorSettings(VectorMetric Metric, int HnswM, int EfConstruction, int FlatThreshold)
+{
+    public static VectorSettings Default => new(VectorMetric.Cosine, FieldDefinition.DefaultHnswM, FieldDefinition.DefaultEfConstruction, FieldDefinition.DefaultFlatThreshold);
 }

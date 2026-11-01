@@ -3,6 +3,7 @@ using System.Text;
 using OneIndex.Index;
 using OneIndex.Search;
 using OneIndex.Storage;
+using OneIndex.Vectors;
 
 namespace OneIndex.Durability;
 
@@ -14,7 +15,24 @@ public static class Workload
         .Keyword("tag")
         .Text("body")
         .Integral("n")
+        .Add(new FieldDefinition("v", FieldType.Vector) { Dimensions = VectorDimensions, FlatThreshold = 3, HnswM = 4, EfConstruction = 16 })
         .Build();
+
+    /// <summary>The length of the vector every document carries; its content is a function of the document's number.</summary>
+    public const int VectorDimensions = 8;
+
+    /// <summary>The vector of a document: seeded by its number, so a recovered index can be checked without storing a model of it.</summary>
+    public static float[] VectorOf(long n)
+    {
+        var rng = new Random(unchecked((int)(n % int.MaxValue)));
+        var v = new float[VectorDimensions];
+        for (int i = 0; i < v.Length; i++)
+        {
+            v[i] = (float)(rng.NextDouble() - 0.5);
+        }
+
+        return v;
+    }
 
     /// <summary>
     /// The schema the evolution campaigns switch to: a stemming analyzer on the body, a column on the tag and a new field. Moving between
@@ -64,7 +82,7 @@ public static class Workload
 
     public readonly record struct Op(Kind Kind, string Id, string Tag, string Body, long N);
 
-    public static Document ToDocument(Op op) => new Document().Add("id", op.Id).Add("tag", op.Tag).Add("body", op.Body).Add("n", op.N);
+    public static Document ToDocument(Op op) => new Document().Add("id", op.Id).Add("tag", op.Tag).Add("body", op.Body).Add("n", op.N).Add("v", VectorOf(op.N));
 
     public static string Fingerprint(string tag, string body, long n) => $"{tag}|{body}|{n}";
 
@@ -196,7 +214,82 @@ public static class Workload
             throw new InvalidDataException($"{rows.Count} live documents read but the commit counts {snapshot.LiveDocCount}");
         }
 
+        CheckVectors(snapshot, rows);
         return rows;
+    }
+
+    private static float[] Unit(float[] v)
+    {
+        double norm = Math.Sqrt(v.Sum(x => (double)x * x));
+        return v.Select(x => (float)(x / norm)).ToArray();
+    }
+
+    private static double Score(float[] a, float[] b) => (1 + a.Zip(b, (x, y) => (double)x * y).Sum()) / 2;
+
+    /// <summary>
+    /// Every live document has its vector in the vector file, equal to the one its number determines, and exact nearest-neighbour
+    /// search over the snapshot returns the best scores brute force finds over the recovered documents. The graph search must at
+    /// least return live documents with true scores.
+    /// </summary>
+    private static void CheckVectors(IndexSnapshot snapshot, SortedDictionary<string, string> rows)
+    {
+        SearchContext context = SnapshotSearch.CreateContext(snapshot);
+        var searcher = new IndexSearcher(context, new QueryEngine());
+        var vectorOf = new Dictionary<string, float[]>(StringComparer.Ordinal);
+        foreach (KeyValuePair<string, string> row in rows)
+        {
+            vectorOf[row.Key] = Unit(VectorOf(long.Parse(row.Value[(row.Value.LastIndexOf('|') + 1)..], System.Globalization.CultureInfo.InvariantCulture)));
+        }
+
+        foreach (LeafContext leaf in context.Leaves)
+        {
+            IVectorFieldReader? reader = leaf.Reader.GetVectors("v");
+            var buffer = new float[VectorDimensions];
+            for (int d = 0; d < leaf.Reader.MaxDoc; d++)
+            {
+                if (leaf.Reader.LiveDocs is { } live && !live.IsLive(d))
+                {
+                    continue;
+                }
+
+                string id = leaf.Reader.StoredFields!.GetDocument(d).Get("id").AsText();
+                if (reader is null || !reader.TryGetVector(d, buffer) || buffer.Zip(vectorOf[id], (x, y) => Math.Abs(x - y)).Max() > 1e-6)
+                {
+                    throw new InvalidDataException($"the vector of {id} in segment {leaf.Reader.Info.Name} is missing or wrong");
+                }
+            }
+        }
+
+        var rng = new Random(rows.Count);
+        for (int q = 0; q < 3 && rows.Count > 0; q++)
+        {
+            float[] query = VectorOf(rng.Next(1_000_000));
+            float[] unit = Unit(query);
+            double[] expected = vectorOf.Values.Select(v => Score(v, unit)).OrderByDescending(x => x).Take(5).ToArray();
+            foreach (bool exact in new[] { true, false })
+            {
+                TopDocs top = searcher.Search(new KnnQuery("v", query, 5) { Exact = exact }, 5);
+                if (top.Hits.Count != expected.Length)
+                {
+                    throw new InvalidDataException($"nearest-neighbour search returned {top.Hits.Count} of {expected.Length} documents");
+                }
+
+                for (int i = 0; i < top.Hits.Count; i++)
+                {
+                    LeafContext leaf = context.Leaves.Last(l => l.DocBase <= top.Hits[i].DocId);
+                    string id = leaf.Reader.StoredFields!.GetDocument(top.Hits[i].DocId - leaf.DocBase).Get("id").AsText();
+                    if (!vectorOf.TryGetValue(id, out float[]? v) || Math.Abs(Score(v, unit) - top.Hits[i].Score) > 1e-4)
+                    {
+                        throw new InvalidDataException($"nearest-neighbour hit {id} is not a live document or has a wrong score");
+                    }
+
+                    if (exact && Math.Abs(expected[i] - top.Hits[i].Score) > 1e-4)
+                    {
+                        throw new InvalidDataException($"exact nearest-neighbour rank {i} scores {top.Hits[i].Score}, brute force finds {expected[i]}");
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>Every owned file in the storage must be listed by the newest commit (nothing leaked) once nothing else pins it.</summary>
