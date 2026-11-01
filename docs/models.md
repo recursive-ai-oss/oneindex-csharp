@@ -78,6 +78,38 @@ BAAI/bge-small-en-v1.5, MIT licence, revision `5c38ec7c405ec4b44b94cc5a9bb96e735
 `tools/OneIndex.Models.Tool convert` turns each into a OneModel file with `ModelFormat.Convert`; `tools/models/pack-weights.sh` places
 the result where `OneIndex.Models.csproj` embeds it. The weights are never committed.
 
-Measured effect of the quantization and the BEIR reproduction: see the tables below.
+## Measurements
 
-RESULTS_PLACEHOLDER
+All with the packed model files, query instruction on, exact dot-product retrieval over the whole corpus (document text is the title,
+a space, then the text), nDCG@10 under the BEIR convention (a document with the query's own id is skipped), cross-checked with
+`pytrec_eval` (`tools/models/crosscheck_run.py`; SciFact 0.7126 on both). Run on the x64 worker (AVX-512 kernels), 8 threads, loaded
+machine. The published figures are the `ndcg_at_10` values in the model card's metadata (MTEB results).
+
+| Set | Published | fp32 weights | int8 weights (shipped) | Difference to published |
+|---|---|---|---|---|
+| SciFact (5,183 passages, 300 queries) | 0.71275 | 0.7127 | 0.7126 | -0.0 |
+| ArguAna (8,674, 1,406) | 0.59550 | 0.6035 | 0.6046 | +0.8 / +0.9 points |
+| SCIDOCS (25,657, 1,000) | 0.20522 | not run | 0.2041 | -0.1 points |
+
+NQ (2.68 million passages) was not run: at the measured 15 to 25 passages per second it is far outside the chunk budget.
+
+Quantization effect on the vectors themselves, 800 texts (adversarial strings, queries and passages) against ONNX Runtime fp32 run one
+text at a time (cosine similarity of unit vectors; documents / queries with the instruction):
+
+| Weights | cosine min | cosine mean | max abs diff | Memory (peak RSS, 4 threads) |
+|---|---|---|---|---|
+| fp32 | 1.000000 / 1.000000 | 1.000000 / 1.000000 | < 1e-5 | 0.69 GB |
+| int8 weights (shipped) | 0.99394 / 0.99855 | 0.99978 / 0.99977 | 0.017 / 0.012 | 1.07 GB |
+| int8 dynamic (comparison) | 0.97204 / 0.96137 | 0.99690 / 0.99640 | 0.034 / 0.041 | |
+
+Why int8 weights are the default: retrieval quality is the same as fp32 within noise on both sets (SciFact -0.0001, ArguAna +0.001),
+the package is 31 MB (the fp32 model file alone is 133 MB), and a vector does not depend on its batch. Memory at run time is higher than fp32
+because OneModel expands the int8 weights to float32 when it plans each input shape; the shapes are few (see Batching) but each plan
+holds its own copy. Throughput is about the same as fp32 (the arithmetic is float32 either way). `BgeSmallEmbedder.Open` takes
+any other file of the same model, for example the fp32 one.
+
+Throughput, for information (worker, 8 threads, other jobs running, so not a benchmark): 15 to 17 passages per second on SciFact
+(about 300 tokens each), 22 to 25 on ArguAna.
+
+The tokenizer is fuzzed (`fuzz/run.sh wordpiece`): 600 s, 3,767,141 executions, 2,912 coverage features, corpus 503 inputs, no
+findings.
