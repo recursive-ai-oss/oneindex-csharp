@@ -161,6 +161,12 @@ public sealed class HighlightTerms
 
         public override int VisitKnn(KnnQuery query) => 0;
 
+        public override int VisitHybrid(HybridQuery query)
+        {
+            query.Text.Accept(this);
+            return 0;
+        }
+
         public override int VisitFunctionScore(FunctionScoreQuery query)
         {
             query.Inner.Accept(this);

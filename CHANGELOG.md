@@ -4,6 +4,9 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+- Automatic embedding: `[Vector(From = ...)]` embeds the source text at upsert through the index's embedder (`SearchIndex.Open<T>(path, embedder)` or `SearchEmbedders.Default`; `BgeSmallEmbedder.UseAsDefault()` in the models package), keeps the text and model identity digest beside the vector in stored source so reindexing, reopening, merges and schema rebuilds never embed unchanged text, and `ReembedStale` after a model change.
+- Hybrid search: `HybridQuery`, `SearchQuery<T>.Hybrid(...)` and the `hybrid` forms of query JSON fuse a text arm and a vector arm by reciprocal rank fusion (default) or weighted linear fusion; filters apply to both arms. `Search(text)` is hybrid automatically when the type has one auto-embedded vector member and the index has an embedder.
+
 - Repository foundation: solution, shared build properties, packaging metadata, CI and release workflows.
 - Storage layer: a range-read interface with synchronous and asynchronous members, memory and local-file backends, a fault-injecting wrapper (torn, lost and reordered writes), and a block-transform slot.
 - Commit file format with a checksummed frame, and a crash-safe commit protocol, verified under seeded fault schedules.

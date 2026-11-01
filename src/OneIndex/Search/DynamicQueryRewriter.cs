@@ -42,6 +42,12 @@ internal static class DynamicQueryRewriter
                     return b with { Clauses = clauses };
                 }
 
+            case HybridQuery h:
+                return h with
+                {
+                    Text = Visit(h.Text, schema, depth + 1),
+                    Vector = h.Vector with { Filter = h.Vector.Filter is { } vf ? Visit(vf, schema, depth + 1) : null },
+                };
             case TermQuery t when IsPath(schema, t.Field):
                 return Keyword(schema, t.Field) is { } tk ? t with { Field = tk } : None();
             case PrefixQuery p when IsPath(schema, p.Field):

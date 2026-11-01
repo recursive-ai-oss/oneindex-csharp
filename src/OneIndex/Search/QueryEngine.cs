@@ -76,6 +76,26 @@ public sealed class QueryEngine : IWeightFactory
             return TermWeight.Create(context, options.Bm25, [RequireTextField(query.Field)], query.Term, query.Boost);
         }
 
+        public override Weight VisitHybrid(HybridQuery query)
+        {
+            CheckBoost(query);
+            if (++_depth > options.MaxDepth)
+            {
+                throw new QueryException($"Queries are nested deeper than {options.MaxDepth} levels.");
+            }
+
+            try
+            {
+                // An arm that the ratio switches off is not built: a ratio of 1 never runs the text query.
+                Weight text = query.SemanticRatio < 1.0 ? query.Text.Accept(this) : EmptyWeight.Instance;
+                return HybridWeight.Create(context, query, text, knn => VisitKnn(knn));
+            }
+            finally
+            {
+                _depth--;
+            }
+        }
+
         public override Weight VisitKnn(KnnQuery query) => KnnWeight.Create(context, query, query.Filter?.Accept(this));
 
         public override Weight VisitMultiFieldTerm(MultiFieldTermQuery query)

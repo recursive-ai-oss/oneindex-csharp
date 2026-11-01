@@ -94,6 +94,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
         public string? Analyzer;
         public bool VectorAttr;
         public int Dimensions;
+        public string? From;
         public int Metric;
         public int HnswM = 16;
         public int EfConstruction = 100;
@@ -259,6 +260,11 @@ public sealed class MappingGenerator : IIncrementalGenerator
                     m.VectorAttr = true;
                     foreach (KeyValuePair<string, TypedConstant> arg in attribute.NamedArguments)
                     {
+                        if (arg.Key == "From" && arg.Value.Value is string fromName)
+                        {
+                            m.From = fromName;
+                        }
+
                         if (arg.Value.Value is not null and not string and IConvertible convertible)
                         {
                             int number = convertible.ToInt32(CultureInfo.InvariantCulture);
@@ -615,6 +621,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
         string vector = m.Shape == Shape.Vector
             ? ", dimensions: " + m.Dimensions.ToString(CultureInfo.InvariantCulture) + ", metric: (global::OneIndex.Vectors.VectorMetric)" + m.Metric.ToString(CultureInfo.InvariantCulture)
               + ", hnswM: " + m.HnswM.ToString(CultureInfo.InvariantCulture) + ", efConstruction: " + m.EfConstruction.ToString(CultureInfo.InvariantCulture) + ", flatThreshold: " + m.FlatThreshold.ToString(CultureInfo.InvariantCulture)
+              + (m.From is null ? string.Empty : ", from: " + Lit(m.From))
             : string.Empty;
         indexed |= m.Shape == Shape.Vector;
 
