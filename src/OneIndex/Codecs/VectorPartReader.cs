@@ -329,16 +329,16 @@ internal sealed class VectorFieldReader : IVectorFieldReader
         {
             int n;
             bool graph = _graph is not null && !exact && accepted > 0;
-            if (graph && acceptedDocs is not null && accepted <= (long)Math.Sqrt((double)ef * Count))
+            if (graph && acceptedDocs is not null && accepted <= FlatSwitchFactor * Math.Max(ef, k))
             {
-                // A selective filter: finding ef accepted nodes in the graph would visit about ef / selectivity nodes, more than
-                // scanning the few accepted vectors does.
+                // A selective filter: the filtered walk costs about the same at any selectivity, so once few enough documents pass,
+                // scanning the accepted vectors in order is as cheap and exact.
                 graph = false;
             }
 
             if (graph && _quantized is not null)
             {
-                n = QuantizedSearch(scratch, q.AsSpan(0, Dimensions), k, ef, filter, acceptedDocs is null ? 0 : accepted, buffer);
+                n = QuantizedSearch(scratch, q.AsSpan(0, Dimensions), k, ef, filter, accepted, buffer);
                 if (n < 0)
                 {
                     n = FlatSearch.Search(_values, _kind, q.AsSpan(0, Dimensions), k, filter, buffer);
@@ -346,9 +346,10 @@ internal sealed class VectorFieldReader : IVectorFieldReader
             }
             else if (graph)
             {
-                n = HnswSearch.Search(_graph!, scorer, k, ef, filter, acceptedDocs is null ? 0 : accepted, buffer, out bool complete);
-                if (!complete)
+                n = HnswSearch.Search(_graph!, scorer, k, ef, filter, 0, buffer, out _);
+                if (filter is not null && n < Math.Min(k, accepted))
                 {
+                    // The walk could not reach enough accepted nodes (a filter that cuts the graph apart): scan exactly.
                     n = FlatSearch.Search(_values, _kind, q.AsSpan(0, Dimensions), k, filter, buffer);
                 }
             }
@@ -376,7 +377,7 @@ internal sealed class VectorFieldReader : IVectorFieldReader
     /// true distance are returned, so the scores are exact whatever the codec.
     /// </summary>
     /// <returns>The number of results, or -1 when a visit limit stopped the walk (the caller scans exactly).</returns>
-    private int QuantizedSearch(HnswScratch scratch, ReadOnlySpan<float> q, int k, int ef, IOrdinalFilter? filter, long visitLimit, Candidate[] output)
+    private int QuantizedSearch(HnswScratch scratch, ReadOnlySpan<float> q, int k, int ef, IOrdinalFilter? filter, long acceptedCount, Candidate[] output)
     {
         int candidates = (int)Math.Min(Math.Ceiling(k * (double)_oversample), Count);
         candidates = Math.Max(candidates, k);
@@ -386,8 +387,8 @@ internal sealed class VectorFieldReader : IVectorFieldReader
         Candidate[] found = ArrayPool<Candidate>.Shared.Rent(width);
         try
         {
-            int n = HnswSearch.Search(_graph!, scorer, width, width, filter, visitLimit, found, out bool complete);
-            if (!complete)
+            int n = HnswSearch.Search(_graph!, scorer, width, width, filter, 0, found, out _);
+            if (filter is not null && n < Math.Min(k, acceptedCount))
             {
                 return -1;
             }
@@ -415,6 +416,14 @@ internal sealed class VectorFieldReader : IVectorFieldReader
 
         public int Compare(Candidate x, Candidate y) => x.Key < y.Key ? -1 : x.Key > y.Key ? 1 : x.Id.CompareTo(y.Id);
     }
+
+    /// <summary>
+    /// A filter admitting at most this many times the search breadth is answered by an exact scan instead of a filtered graph walk. The
+    /// walk's cost depends on the breadth and hardly on the selectivity, while a scan's depends on the number of accepted vectors; they
+    /// cost the same at about 15 times the breadth (measured, docs/vectors.md), and the scan is exact, so it is taken up to 20.
+    /// Settable for the measurements only.
+    /// </summary>
+    internal static double FlatSwitchFactor { get; set; } = 20;
 
     /// <summary>The search breadth used when the caller gives none: wide enough for about 0.95 recall at k = 10 on typical embeddings.</summary>
     internal static int DefaultEf(int k) => Math.Max(k, 100);

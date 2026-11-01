@@ -147,6 +147,8 @@ internal static class VectorTarget
                     _ = field.Search(query, 10, 30, null, null, exact: false, hits);
                     _ = field.Search(query, 10, 30, live, half, exact: false, hits);
                     _ = field.Search(query, 5, 0, live, null, exact: false, hits);
+                    // A narrow search breadth keeps the filter above the exact-scan switch, so the filtered graph walk runs.
+                    _ = field.Search(query, 1, 1, live, half, exact: false, hits);
                 }
             }
         }

@@ -108,6 +108,18 @@ internal sealed class OneIndexSegment(int m, int efConstruction, string scratch)
         return n;
     }
 
+    /// <summary>Filtered search: only documents whose bit is set in <paramref name="accepted"/> may be returned.</summary>
+    public int SearchFiltered(float[] query, int k, int ef, ulong[]? accepted, int[] ids)
+    {
+        int n = _reader!.Search(query, k, ef, null, accepted, false, _hits);
+        for (int i = 0; i < n; i++)
+        {
+            ids[i] = _hits[i].Doc;
+        }
+
+        return n;
+    }
+
     public void Dispose()
     {
         _snapshot?.Dispose();
