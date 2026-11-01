@@ -492,6 +492,17 @@ public static partial class QueryJson
                 WriteNode(w, hq.Vector);
                 WriteHybridSettings(w, hq.Fusion, hq.RankConstant, hq.SemanticRatio, hq.Window);
                 break;
+            case SparseQuery sparse:
+                w.WriteString("type", "sparse");
+                w.WriteString("field", sparse.Field);
+                w.WriteStartObject("weights");
+                for (int i = 0; i < sparse.Vector.Count; i++)
+                {
+                    w.WriteNumber(sparse.Vector.Tokens[i], sparse.Vector.Weights[i]);
+                }
+
+                w.WriteEndObject();
+                break;
             case KnnQuery knn:
                 w.WriteString("type", "knn");
                 w.WriteString("field", knn.Field);
@@ -606,7 +617,7 @@ internal sealed partial class QueryJsonReader
     private static readonly string[] Reserved = ["facets", "aggregations", "distinct", "vector"];
 
     private static readonly string[] NodeTypes =
-        ["matchAll", "text", "strict", "filter", "term", "phrase", "prefix", "fuzzy", "regex", "range", "exists", "multiFieldTerm", "geoRadius", "geoBoundingBox", "bool", "functionScore", "knn", "hybrid"];
+        ["matchAll", "text", "strict", "filter", "term", "phrase", "prefix", "fuzzy", "regex", "range", "exists", "multiFieldTerm", "geoRadius", "geoBoundingBox", "bool", "functionScore", "knn", "sparse", "hybrid"];
 
     private readonly Schema _schema;
     private readonly UserTextCompiler _userText;
@@ -955,6 +966,8 @@ internal sealed partial class QueryJsonReader
                 return ReadFunctionScore(e, path, depth);
             case "knn":
                 return ReadKnn(e, path, depth);
+            case "sparse":
+                return ReadSparse(e, path);
             case "hybrid":
                 return ReadHybrid(e, path, depth);
             default:
@@ -964,6 +977,44 @@ internal sealed partial class QueryJsonReader
                     throw Err(Child(path, "type"), $"Unknown query type \"{type}\".{hint} Types: {string.Join(", ", NodeTypes)}.", near);
                 }
         }
+    }
+
+    // A learned sparse node: {"type":"sparse","field":"Expansion","weights":{"token":1.5,...}} (docs/sparse.md).
+    private Query ReadSparse(JsonElement e, string path)
+    {
+        CheckProperties(e, path, ["type", "field", "weights", "boost"]);
+        string fp = Child(path, "field");
+        string name = ReadString(Require(e, path, "field"), fp);
+        if (!_schema.TryGetField(name, out FieldDefinition? def) || def.Type != FieldType.Sparse || !def.Indexed)
+        {
+            throw Err(fp, $"\"{name}\" is not an indexed sparse field.");
+        }
+
+        string wp = Child(path, "weights");
+        JsonElement obj = Require(e, path, "weights");
+        if (obj.ValueKind != JsonValueKind.Object)
+        {
+            throw Err(wp, "weights is an object from token to weight.");
+        }
+
+        var entries = new List<KeyValuePair<string, float>>();
+        foreach (JsonProperty p in obj.EnumerateObject())
+        {
+            if (entries.Count >= SparseVector.MaxEntries)
+            {
+                throw Err(wp, $"weights holds at most {SparseVector.MaxEntries.ToString(CultureInfo.InvariantCulture)} tokens.");
+            }
+
+            if (p.Name.Length == 0)
+            {
+                throw Err(wp, "A token must not be empty.");
+            }
+
+            double weight = ReadNumber(p.Value, Child(wp, p.Name), 0, float.MaxValue);
+            entries.Add(new(p.Name, (float)weight));
+        }
+
+        return Boosted(new SparseQuery(name, new SparseVector(entries)), e, path);
     }
 
     // A nearest-neighbour node: {"type":"knn","field":"Embedding","vector":[...],"k":10,"ef":100,"exact":false,"filter":{...}}.

@@ -1,4 +1,5 @@
 using OneIndex.Index;
+using OneIndex.Queries;
 using OneIndex.Search;
 using OneIndex.Storage;
 
@@ -116,5 +117,23 @@ public sealed class SparseIndexTests
         using IndexSnapshot snap = again.OpenSnapshot();
         IndexSearcher searcher = SnapshotSearch.CreateSearcher(snap);
         Assert.Equal(v, searcher.Context.Leaves[0].Reader.StoredFields!.GetDocument(0).Get("s").AsSparse());
+    }
+
+    [Fact]
+    public void QueryJsonRoundTripsSparseNodesAndNamesMistakes()
+    {
+        Schema schema = SparseSchema();
+        QueryRequest r = QueryJson.Read("""{"v":1,"query":{"type":"sparse","field":"s","weights":{"cat":1.5,"dog":0.25},"boost":2}}""", schema);
+        var q = Assert.IsType<SparseQuery>(r.Query);
+        Assert.Equal(2f, q.Boost);
+        Assert.Equal(["cat", "dog"], q.Vector.Tokens);
+        string written = QueryJson.Write(r);
+        Assert.Equal(r, QueryJson.Read(written, schema));
+        Assert.Equal(written, QueryJson.Write(QueryJson.Read(written, schema)));
+
+        QueryParseException e = Assert.Throws<QueryParseException>(() => QueryJson.Read("""{"v":1,"query":{"type":"sparse","field":"id","weights":{}}}""", schema));
+        Assert.Contains("sparse field", e.Message);
+        e = Assert.Throws<QueryParseException>(() => QueryJson.Read("""{"v":1,"query":{"type":"sparse","field":"s","weights":{"a":-1}}}""", schema));
+        Assert.Contains("weights.a", e.Path ?? e.Message);
     }
 }

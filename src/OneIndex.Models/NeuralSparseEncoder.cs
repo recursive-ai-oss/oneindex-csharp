@@ -110,14 +110,33 @@ public sealed class NeuralSparseEncoder : ISparseEncoder, IDisposable
         ArgumentNullException.ThrowIfNull(modelPath);
         ArgumentNullException.ThrowIfNull(vocabularyPath);
         ArgumentNullException.ThrowIfNull(queryWeightsPath);
+        using FileStream model = File.OpenRead(modelPath);
+        using FileStream vocabulary = File.OpenRead(vocabularyPath);
+        using FileStream weights = File.OpenRead(queryWeightsPath);
+        return Open(model, vocabulary, weights, options);
+    }
+
+    /// <summary>Opens an encoder from streams, each read to its end during the call.</summary>
+    /// <param name="model">The model bytes (OneModel or ONNX).</param>
+    /// <param name="vocabulary">The vocabulary text.</param>
+    /// <param name="queryWeights">The query weight table (JSON object from token to weight).</param>
+    /// <param name="options">Settings.</param>
+    /// <returns>The encoder.</returns>
+    /// <exception cref="FormatException">The vocabulary or the weight table is malformed.</exception>
+    /// <exception cref="InvalidOperationException">The model lacks the expected inputs or output.</exception>
+    public static NeuralSparseEncoder Open(Stream model, Stream vocabulary, Stream queryWeights, NeuralSparseEncoderOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(vocabulary);
+        ArgumentNullException.ThrowIfNull(queryWeights);
         ArgumentNullException.ThrowIfNull(options);
         ArgumentException.ThrowIfNullOrEmpty(options.ModelId);
         ArgumentOutOfRangeException.ThrowIfLessThan(options.MaxTokens, 3);
         ArgumentOutOfRangeException.ThrowIfLessThan(options.MaxBatchTokens, options.MaxTokens);
-        using FileStream vocabularyStream = File.OpenRead(vocabularyPath);
-        var tokenizer = new WordPieceTokenizer(WordPieceVocabulary.Load(vocabularyStream), null, UnicodeDecomposer.Instance);
-        float[] weights = LoadWeights(File.ReadAllBytes(queryWeightsPath), tokenizer.Vocabulary);
-        using FileStream model = File.OpenRead(modelPath);
+        var tokenizer = new WordPieceTokenizer(WordPieceVocabulary.Load(vocabulary), null, UnicodeDecomposer.Instance);
+        using var table = new MemoryStream();
+        queryWeights.CopyTo(table);
+        float[] weights = LoadWeights(table.ToArray(), tokenizer.Vocabulary);
         Session session = Session.Load(model, new ModelOptions
         {
             Mode = options.ExactArithmetic ? ArithmeticMode.Exact : ArithmeticMode.Fast,
