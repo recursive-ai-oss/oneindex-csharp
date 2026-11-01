@@ -136,6 +136,11 @@ internal abstract class NodeScorer
 
     /// <summary>The distance between two nodes.</summary>
     public abstract float Between(int a, int b);
+
+    /// <summary>Starts bringing a node's data into the cache; no result. Called for all of a node's neighbours before any is scored, so that the memory reads of different neighbours overlap instead of waiting one after another.</summary>
+    public virtual void Touch(int ordinal)
+    {
+    }
 }
 
 /// <summary>Full-precision scoring over a <see cref="VectorValues"/>.</summary>
@@ -168,6 +173,26 @@ internal sealed class FloatNodeScorer : NodeScorer
     public override float ToQuery(int ordinal) => Distance(_kind, _query.AsSpan(0, _length), _values.Get(ordinal));
 
     public override float Between(int a, int b) => Distance(_kind, _values.Get(a), _values.Get(b));
+
+    private float _sink;
+
+    public static int TouchLines { get; set; } = 1;
+
+    /// <inheritdoc/>
+    public override void Touch(int ordinal)
+    {
+        // Reading the first cache line (and optionally a few more) of the vector issues the loads for all neighbours back to back; the
+        // out-of-order core overlaps them. The sum is stored so the reads cannot be dropped.
+        ReadOnlySpan<float> v = _values.Get(ordinal);
+        float s = 0;
+        int lines = TouchLines;
+        for (int i = 0, at = 0; i < lines && at < v.Length; i++, at += 16)
+        {
+            s += v[at];
+        }
+
+        _sink = s;
+    }
 }
 
 /// <summary>Per-thread working memory for searches: the visited marks and the two heaps. Reused, so a warm search allocates nothing.</summary>
@@ -178,6 +203,18 @@ internal sealed class HnswScratch
 
     private int[] _visited = [];
     private int _stamp;
+    private int[] _batch = new int[64];
+
+    /// <summary>Room for at least <paramref name="length"/> node numbers.</summary>
+    public int[] Batch(int length)
+    {
+        if (_batch.Length < length)
+        {
+            _batch = new int[length * 2];
+        }
+
+        return _batch;
+    }
 
     public readonly CandidateHeap Candidates = new(farthestOnTop: false);
 
@@ -186,6 +223,7 @@ internal sealed class HnswScratch
     public static HnswScratch Current => s_current ??= new HnswScratch();
 
     private float[] _query = [];
+    private QuantizedNodeScorer? _quantized;
     private FloatNodeScorer? _dot;
     private FloatNodeScorer? _l2;
 
@@ -199,6 +237,9 @@ internal sealed class HnswScratch
 
         return _query;
     }
+
+    /// <summary>The thread's scorer over compressed vectors.</summary>
+    public QuantizedNodeScorer QuantizedScorer => _quantized ??= new QuantizedNodeScorer();
 
     /// <summary>The thread's scorer for a distance kind.</summary>
     public FloatNodeScorer Scorer(DistanceKind kind) => kind == DistanceKind.NegativeDot ? (_dot ??= new FloatNodeScorer(kind)) : (_l2 ??= new FloatNodeScorer(kind));
@@ -350,13 +391,28 @@ internal static class HnswSearch
                 break;
             }
 
-            foreach (int nb in graph.Neighbors(c.Id, level))
+            ReadOnlySpan<int> links = graph.Neighbors(c.Id, level);
+            int[] batch = scratch.Batch(links.Length);
+            int fresh = 0;
+            foreach (int nb in links)
             {
-                if (!scratch.Visit(nb))
+                if (scratch.Visit(nb))
                 {
-                    continue;
+                    batch[fresh++] = nb;
                 }
+            }
 
+            if (FloatNodeScorer.TouchLines > 0)
+            {
+                for (int i = 0; i < fresh; i++)
+                {
+                    scorer.Touch(batch[i]);
+                }
+            }
+
+            for (int j = 0; j < fresh; j++)
+            {
+                int nb = batch[j];
                 float d = scorer.ToQuery(nb);
                 visited++;
                 if (results.Count < ef || d < results.Peek.Key)

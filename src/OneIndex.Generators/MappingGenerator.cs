@@ -98,6 +98,8 @@ public sealed class MappingGenerator : IIncrementalGenerator
         public int HnswM = 16;
         public int EfConstruction = 100;
         public int FlatThreshold = 1000;
+        public int Quantization;
+        public double Oversample;
 
         public bool Multi => Shape is Shape.TextArray or Shape.TextList or Shape.TextInterface;
     }
@@ -279,6 +281,12 @@ public sealed class MappingGenerator : IIncrementalGenerator
                                 case "FlatThreshold":
                                     m.FlatThreshold = number;
                                     break;
+                                case "Quantization":
+                                    m.Quantization = number;
+                                    break;
+                                case "Oversample":
+                                    m.Oversample = convertible.ToDouble(CultureInfo.InvariantCulture);
+                                    break;
                             }
                         }
                     }
@@ -334,9 +342,9 @@ public sealed class MappingGenerator : IIncrementalGenerator
                 diagnostics.Add(Diagnostic.Create(Conflict, location, property.Name, "a [Vector] member cannot also be [FullText], [Keyword], [Filterable], [Sortable], [Facet], [Geo] or [SearchId]"));
             }
 
-            if (m.Dimensions < 1 || m.Dimensions > 65536 || m.Metric < 0 || m.Metric > 2 || m.HnswM < 2 || m.HnswM > 256 || m.EfConstruction < m.HnswM || m.EfConstruction > 4096 || m.FlatThreshold < 0 || m.FlatThreshold > 100000000)
+            if (m.Dimensions < 1 || m.Dimensions > 65536 || m.Metric < 0 || m.Metric > 2 || m.HnswM < 2 || m.HnswM > 256 || m.EfConstruction < m.HnswM || m.EfConstruction > 4096 || m.FlatThreshold < 0 || m.FlatThreshold > 100000000 || m.Quantization < 0 || m.Quantization > 3 || !(m.Oversample == 0 || (m.Oversample >= 1 && m.Oversample <= 100)))
             {
-                diagnostics.Add(Diagnostic.Create(BadAttributeValue, location, property.Name, "[Vector] needs Dimensions from 1 to 65536, a known Metric, M from 2 to 256, EfConstruction from M to 4096 and FlatThreshold from 0 to 100 million"));
+                diagnostics.Add(Diagnostic.Create(BadAttributeValue, location, property.Name, "[Vector] needs Dimensions from 1 to 65536, a known Metric, M from 2 to 256, EfConstruction from M to 4096, FlatThreshold from 0 to 100 million, a known Quantization and an Oversample of 0 or 1 to 100"));
             }
         }
 
@@ -615,6 +623,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
         string vector = m.Shape == Shape.Vector
             ? ", dimensions: " + m.Dimensions.ToString(CultureInfo.InvariantCulture) + ", metric: (global::OneIndex.Vectors.VectorMetric)" + m.Metric.ToString(CultureInfo.InvariantCulture)
               + ", hnswM: " + m.HnswM.ToString(CultureInfo.InvariantCulture) + ", efConstruction: " + m.EfConstruction.ToString(CultureInfo.InvariantCulture) + ", flatThreshold: " + m.FlatThreshold.ToString(CultureInfo.InvariantCulture)
+              + (m.Quantization == 0 && m.Oversample == 0 ? string.Empty : ", quantization: (global::OneIndex.Vectors.VectorQuantization)" + m.Quantization.ToString(CultureInfo.InvariantCulture) + ", oversample: " + m.Oversample.ToString("R", CultureInfo.InvariantCulture) + "f")
             : string.Empty;
         indexed |= m.Shape == Shape.Vector;
 

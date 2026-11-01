@@ -18,6 +18,12 @@ internal sealed class HnswBuilder : HnswGraph
     /// </summary>
     internal static bool KeepPruned { get; set; }
 
+    /// <summary>Links chosen for a new node on layer 0: 0 means 2 M (the layer-0 limit), a smaller value is the experiment switch.</summary>
+    internal static int Layer0Select { get; set; }
+
+    /// <summary>Experiment switch: choose the nearest candidates without the diversity heuristic.</summary>
+    internal static bool SimpleSelection { get; set; }
+
     private readonly VectorValues _values;
     private readonly DistanceKind _kind;
     private readonly int _m;
@@ -261,7 +267,7 @@ internal sealed class HnswBuilder : HnswGraph
             long visited = 0;
             HnswSearch.Layer(this, _scorer, l, _efConstruction, null, 0, scratch, ref visited);
             entryCount = HnswSearch.Drain(scratch.Results, _efConstruction, found);
-            int chosen = SelectNeighbors(found[..entryCount], _m, _chosen, node);
+            int chosen = SelectNeighbors(found[..entryCount], l == 0 ? (Layer0Select > 0 ? Math.Min(Layer0Select, _m0) : _m0) : _m, _chosen, node);
             SetLinks(node, l, _chosen.AsSpan(0, chosen));
             for (int i = 0; i < chosen; i++)
             {
@@ -341,7 +347,7 @@ internal sealed class HnswBuilder : HnswGraph
             }
 
             bool good = true;
-            for (int j = 0; j < kept; j++)
+            for (int j = 0; !SimpleSelection && j < kept; j++)
             {
                 if (Pair(c.Id, chosen[j]) < c.Key)
                 {
