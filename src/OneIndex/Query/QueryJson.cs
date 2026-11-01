@@ -47,6 +47,12 @@ public sealed record QueryRequest
     /// </summary>
     public HybridRequest? Hybrid { get; init; }
 
+    /// <summary>
+    /// Reranks the best hits with the index's reranker, or <see langword="null"/> for no rerank stage (docs/rerank.md). With it, <c>q</c> is held here and not in
+    /// <see cref="Query"/> (it is also the text the reranker reads); <c>SearchIndex.Parse</c> applies it and <see cref="ToQuery"/> leaves the text out.
+    /// </summary>
+    public RerankRequest? Rerank { get; init; }
+
     /// <summary>The query the engine runs: <see cref="Query"/> (every document when absent) with <see cref="Filter"/> as a non-scoring restriction.</summary>
     /// <returns>The combined query.</returns>
     public Query ToQuery()
@@ -64,6 +70,11 @@ public sealed record QueryRequest
 /// <param name="Window">How many documents each arm contributes. Default 100.</param>
 /// <param name="Field">The vector property to search, or <see langword="null"/> for the schema's only automatically embedded one.</param>
 public sealed record HybridRequest(string Text, double SemanticRatio = HybridQuery.DefaultSemanticRatio, FusionMethod Fusion = FusionMethod.ReciprocalRank, int RankConstant = HybridQuery.DefaultRankConstant, int Window = 100, string? Field = null);
+
+/// <summary>The <c>rerank</c> setting of a query JSON request (docs/rerank.md).</summary>
+/// <param name="Text">The request's <c>q</c>: searched by words and read by the reranker as the query.</param>
+/// <param name="Window">How many first-stage hits are reranked, 1 to 10,000. Default 100.</param>
+public sealed record RerankRequest(string Text, int Window = 100);
 
 /// <summary>The sort keys of a query JSON document. Equal when the keys are equal in order.</summary>
 /// <param name="Keys">The keys, 1 to 16.</param>
@@ -263,6 +274,11 @@ public static partial class QueryJson
                 WriteNode(w, request.Filter);
             }
 
+            if (request.Hybrid is null && request.Rerank is { } held)
+            {
+                w.WriteString("q", held.Text);
+            }
+
             if (request.Hybrid is { } hy)
             {
                 w.WriteString("q", hy.Text);
@@ -273,6 +289,17 @@ public static partial class QueryJson
                 }
 
                 WriteHybridSettings(w, hy.Fusion, hy.RankConstant, hy.SemanticRatio, hy.Window);
+                w.WriteEndObject();
+            }
+
+            if (request.Rerank is { } rr)
+            {
+                w.WriteStartObject("rerank");
+                if (rr.Window != 100)
+                {
+                    w.WriteNumber("window", rr.Window);
+                }
+
                 w.WriteEndObject();
             }
 
@@ -600,7 +627,7 @@ public static partial class QueryJson
 /// <summary>Reads query JSON into query objects. One instance reads one document.</summary>
 internal sealed partial class QueryJsonReader
 {
-    private static readonly string[] RequestProperties = ["v", "q", "query", "filter", "limit", "offset", "countExactly", "highlight", "sort", "searchAfter", "hybrid"];
+    private static readonly string[] RequestProperties = ["v", "q", "query", "filter", "limit", "offset", "countExactly", "highlight", "sort", "searchAfter", "hybrid", "rerank"];
 
     // Names of features the format keeps room for. They are rejected with a message of their own, not as typos.
     private static readonly string[] Reserved = ["facets", "aggregations", "distinct", "vector"];
@@ -647,9 +674,9 @@ internal sealed partial class QueryJsonReader
         if (root.TryGetProperty("q", out JsonElement q))
         {
             string qText = ReadString(q, "$.q");
-            if (root.TryGetProperty("hybrid", out _))
+            if (root.TryGetProperty("hybrid", out _) || root.TryGetProperty("rerank", out _))
             {
-                hybridQ = qText; // kept as text: it is searched by words and, embedded, by meaning
+                hybridQ = qText; // kept as text: it is searched by words and, embedded, by meaning, and read by the reranker
             }
             else
             {
@@ -689,6 +716,17 @@ internal sealed partial class QueryJsonReader
             hybrid = ReadHybridRequest(hybridElement, hybridQ);
         }
 
+        RerankRequest? rerank = null;
+        if (root.TryGetProperty("rerank", out JsonElement rerankElement))
+        {
+            if (hybridQ is null)
+            {
+                throw Err("$.rerank", "rerank reads the text of \"q\" as the query; add a \"q\".");
+            }
+
+            rerank = ReadRerankRequest(rerankElement, hybridQ);
+        }
+
         QuerySort? sort = root.TryGetProperty("sort", out JsonElement sortElement) ? ReadSort(sortElement) : null;
         string? after = null;
         if (root.TryGetProperty("searchAfter", out JsonElement afterElement))
@@ -716,7 +754,7 @@ internal sealed partial class QueryJsonReader
             1 => scored[0],
             _ => new BooleanQuery(scored.ConvertAll(static x => new BooleanClause(x, Occur.Must))),
         };
-        return new QueryRequest { Query = main, Filter = filter, Limit = limit, Offset = offset, CountExactly = exact, Highlight = highlight, Sort = sort, SearchAfter = after, Hybrid = hybrid };
+        return new QueryRequest { Query = main, Filter = filter, Limit = limit, Offset = offset, CountExactly = exact, Highlight = highlight, Sort = sort, SearchAfter = after, Hybrid = hybrid, Rerank = rerank };
     }
 
     private static QueryParseException Err(string path, string detail, string? suggestion = null)
@@ -1038,6 +1076,19 @@ internal sealed partial class QueryJsonReader
         double ratio = e.TryGetProperty("semanticRatio", out JsonElement sr) ? ReadNumber(sr, Child(path, "semanticRatio"), 0, 1) : HybridQuery.DefaultSemanticRatio;
         int window = e.TryGetProperty("window", out JsonElement wi) ? ReadInt(wi, Child(path, "window"), 1, HybridQuery.MaxWindow) : 100;
         return (fusion, rank, ratio, window);
+    }
+
+    private static RerankRequest ReadRerankRequest(JsonElement e, string text)
+    {
+        const string path = "$.rerank";
+        if (e.ValueKind != JsonValueKind.Object)
+        {
+            throw Err(path, "rerank is an object such as {\"window\":50}.");
+        }
+
+        CheckProperties(e, path, ["window"]);
+        int window = e.TryGetProperty("window", out JsonElement wi) ? ReadInt(wi, Child(path, "window"), 1, QueryJson.MaxWindow) : 100;
+        return new RerankRequest(text, window);
     }
 
     private HybridRequest ReadHybridRequest(JsonElement h, string text)

@@ -26,6 +26,9 @@ namespace OneIndex.Models.Tokenization;
 /// </remarks>
 public sealed class WordPieceTokenizer
 {
+    // How many tokens of each text EncodePair measures when both are cut, to tell which is longer.
+    private const int LongestFirstProbe = 8192;
+
     private readonly WordPieceVocabulary _vocabulary;
     private readonly WordPieceOptions _options;
     private readonly bool _stripAccents;
@@ -115,6 +118,95 @@ public sealed class WordPieceTokenizer
         finally
         {
             state.Release();
+        }
+    }
+
+    /// <summary>
+    /// Encodes a pair of texts the way BERT cross-encoders read them: <c>[CLS] first [SEP] second [SEP]</c>, with segment id 0 for the class token, the
+    /// first text and the first separator and 1 for the second text and the last separator (Devlin et al. 2019, section 3 on sentence pairs).
+    /// When the whole does not fit, tokens are removed from the end of the longer text until it does, but never below half of the room
+    /// (the longest-first truncation of the Hugging Face <c>tokenizers</c> package; the exact split, including which text is the longer when both are
+    /// equal, was settled by comparing ids with that package as a black box).
+    /// </summary>
+    /// <param name="first">The first text (the query of a cross-encoder).</param>
+    /// <param name="second">The second text (the passage).</param>
+    /// <param name="ids">Receives the ids; its length is the maximum sequence length, at least 3.</param>
+    /// <param name="segmentIds">Receives the segment id of each id written; at least as long as <paramref name="ids"/>.</param>
+    /// <returns>The number of ids written.</returns>
+    /// <exception cref="ArgumentException"><paramref name="ids"/> is shorter than 3 or <paramref name="segmentIds"/> is shorter than <paramref name="ids"/>.</exception>
+    public int EncodePair(ReadOnlySpan<char> first, ReadOnlySpan<char> second, Span<int> ids, Span<int> segmentIds)
+    {
+        if (ids.Length < 3)
+        {
+            throw new ArgumentException("The output needs room for the class token, two separators and the text.", nameof(ids));
+        }
+
+        if (segmentIds.Length < ids.Length)
+        {
+            throw new ArgumentException("The segment ids need as much room as the ids.", nameof(segmentIds));
+        }
+
+        int budget = ids.Length - 3;
+        int[] a = ArrayPool<int>.Shared.Rent(Math.Max(budget, 1));
+        int[] b = ArrayPool<int>.Shared.Rent(Math.Max(budget, 1));
+        try
+        {
+            // Neither text can keep more than the whole budget, so encoding stops there.
+            int lengthA = budget == 0 ? 0 : Encode(first, a.AsSpan(0, budget), addSpecialTokens: false);
+            int lengthB = budget == 0 ? 0 : Encode(second, b.AsSpan(0, budget), addSpecialTokens: false);
+            if (lengthA + lengthB > budget)
+            {
+                if (lengthA >= budget && lengthB >= budget && budget < LongestFirstProbe)
+                {
+                    // Both are cut at the budget, so which is longer is unknown, and it decides who keeps the odd token. Measure further, up to
+                    // a bound; texts beyond it count as equally long.
+                    int[] probe = ArrayPool<int>.Shared.Rent(LongestFirstProbe);
+                    try
+                    {
+                        lengthA = Encode(first, probe.AsSpan(0, LongestFirstProbe), addSpecialTokens: false);
+                        lengthB = Encode(second, probe.AsSpan(0, LongestFirstProbe), addSpecialTokens: false);
+                    }
+                    finally
+                    {
+                        ArrayPool<int>.Shared.Return(probe);
+                    }
+                }
+
+                // Longest first: the shorter text keeps up to half of the room and the longer one the rest. When the two are equally long the
+                // second counts as the longer (observed from the reference tokenizer).
+                bool firstIsLonger = lengthA > lengthB;
+                int shorter = firstIsLonger ? lengthB : lengthA;
+                int keptShorter = Math.Min(shorter, budget / 2);
+                int keptLonger = budget - keptShorter;
+                lengthA = firstIsLonger ? keptLonger : keptShorter;
+                lengthB = firstIsLonger ? keptShorter : keptLonger;
+            }
+
+            int n = 0;
+            ids[n] = ClassId;
+            segmentIds[n++] = 0;
+            for (int i = 0; i < lengthA; i++)
+            {
+                ids[n] = a[i];
+                segmentIds[n++] = 0;
+            }
+
+            ids[n] = SeparatorId;
+            segmentIds[n++] = 0;
+            for (int i = 0; i < lengthB; i++)
+            {
+                ids[n] = b[i];
+                segmentIds[n++] = 1;
+            }
+
+            ids[n] = SeparatorId;
+            segmentIds[n++] = 1;
+            return n;
+        }
+        finally
+        {
+            ArrayPool<int>.Shared.Return(a);
+            ArrayPool<int>.Shared.Return(b);
         }
     }
 

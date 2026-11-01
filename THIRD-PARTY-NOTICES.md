@@ -102,6 +102,16 @@ converted to the OneModel file format with the matrix-multiply weights and the w
   purposes free of charge.")
 - The licence text packed with the weights is `models/bge-small-en-v1.5/LICENSE-bge-small-en-v1.5.txt` in the package.
 
+### cross-encoder/ms-marco-MiniLM-L6-v2 (package `RecursiveAI.OneIndex.Models`)
+
+The default English reranker packs the weights and vocabulary of cross-encoder/ms-marco-MiniLM-L6-v2 (Nils Reimers and the Sentence-Transformers
+contributors; MiniLM architecture by Wang et al.), converted to the OneModel file format with the matrix-multiply weights and the word-embedding table
+stored as 8-bit integers. The model was trained on the MS MARCO passage ranking set; no part of that data is included.
+
+- Source: https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2, revision 233902d25c440f23af6f7d6e94d2946bac0bee0a
+- Licence: Apache License 2.0 (the model card's metadata states `license: apache-2.0`).
+- The notice packed with the weights is `models/ms-marco-MiniLM-L6-v2/LICENSE-ms-marco-MiniLM-L6-v2.txt` in the package.
+
 The tests and tools also run the Hugging Face `tokenizers` and ONNX Runtime packages as reference implementations (fetched into a cache,
 not part of the repository or any package).
 

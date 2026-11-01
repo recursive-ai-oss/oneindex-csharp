@@ -27,9 +27,11 @@ public sealed class MappedMember
     /// <param name="efConstruction">HNSW's efConstruction for a vector field.</param>
     /// <param name="flatThreshold">The segment size below which a vector field is searched exactly.</param>
     /// <param name="from">The text member a vector field is embedded from automatically, or <see langword="null"/>.</param>
+    /// <param name="rerank">Whether a full-text field is read by the reranker (<see cref="FullTextAttribute.Rerank"/>).</param>
     public MappedMember(string name, FieldType type, bool multi, bool indexed, bool column, bool facet, bool fullText, bool isId, float boost, string? analyzer,
-        int dimensions = 0, Vectors.VectorMetric metric = Vectors.VectorMetric.Cosine, int hnswM = FieldDefinition.DefaultHnswM, int efConstruction = FieldDefinition.DefaultEfConstruction, int flatThreshold = FieldDefinition.DefaultFlatThreshold, string? from = null)
+        int dimensions = 0, Vectors.VectorMetric metric = Vectors.VectorMetric.Cosine, int hnswM = FieldDefinition.DefaultHnswM, int efConstruction = FieldDefinition.DefaultEfConstruction, int flatThreshold = FieldDefinition.DefaultFlatThreshold, string? from = null, bool rerank = false)
     {
+        Rerank = rerank;
         From = from;
         Dimensions = dimensions;
         Metric = metric;
@@ -74,6 +76,9 @@ public sealed class MappedMember
 
     /// <summary>The BM25F weight of a full-text field.</summary>
     public float Boost { get; }
+
+    /// <summary>Whether the reranker reads this full-text field (<see cref="FullTextAttribute.Rerank"/>).</summary>
+    public bool Rerank { get; }
 
     /// <summary>The analyzer name of a full-text field, or <see langword="null"/>.</summary>
     public string? Analyzer { get; }

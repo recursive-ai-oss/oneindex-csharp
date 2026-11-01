@@ -92,6 +92,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
         public double Boost = 1;
         public string? Language;
         public string? Analyzer;
+        public bool Rerank;
         public bool VectorAttr;
         public int Dimensions;
         public string? From;
@@ -234,6 +235,10 @@ public sealed class MappingGenerator : IIncrementalGenerator
                         else if (arg.Key == "Analyzer")
                         {
                             m.Analyzer = arg.Value.Value as string;
+                        }
+                        else if (arg.Key == "Rerank" && arg.Value.Value is bool rerank)
+                        {
+                            m.Rerank = rerank;
                         }
                     }
 
@@ -626,7 +631,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
         indexed |= m.Shape == Shape.Vector;
 
         return "new global::OneIndex.MappedMember(" + Lit(m.Name) + ", global::OneIndex.Index.FieldType." + kind + ", multi: " + Bool(m.Multi) + ", indexed: " + Bool(indexed) + ", column: " + Bool(column)
-            + ", facet: " + Bool(m.Facet) + ", fullText: " + Bool(m.FullText) + ", isId: " + Bool(m.IsId) + ", boost: " + boost + ", analyzer: " + analyzer + vector + ")";
+            + ", facet: " + Bool(m.Facet) + ", fullText: " + Bool(m.FullText) + ", isId: " + Bool(m.IsId) + ", boost: " + boost + ", analyzer: " + analyzer + vector + (m.FullText && m.Rerank ? ", rerank: true" : string.Empty) + ")";
     }
 
     private static string Bool(bool b) => b ? "true" : "false";

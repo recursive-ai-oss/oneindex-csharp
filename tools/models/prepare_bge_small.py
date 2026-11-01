@@ -67,7 +67,10 @@ def write_weight_only_int8(source, target):
     from onnx import TensorProto, helper, numpy_helper
 
     from onnx import version_converter
-    model = version_converter.convert_version(onnx.load(source), 13)
+    model = onnx.load(source)
+    # Per-channel DequantizeLinear needs opset 13; a model that already has it (or a later one) is left as published.
+    if max(o.version for o in model.opset_import if o.domain in ("", "ai.onnx")) < 13:
+        model = version_converter.convert_version(model, 13)
     graph = model.graph
     initializers = {i.name: i for i in graph.initializer}
     # (initializer name, axis along which each slice gets its own scale): MatMul weights are [K, N] with a scale per column N;

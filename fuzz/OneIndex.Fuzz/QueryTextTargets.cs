@@ -234,6 +234,9 @@ internal static class QueryTextTargets
             "{\"v\":1,\"q\":\"cat\",\"hybrid\":{\"rankConstant\":30}}",
             "{\"v\":1,\"query\":{\"type\":\"hybrid\",\"text\":{\"type\":\"text\",\"text\":\"cat\"},\"vector\":{\"type\":\"knn\",\"field\":\"Vec\",\"vector\":[1,0,0.5],\"k\":5,\"filter\":{\"type\":\"exists\",\"field\":\"Number\"}},\"semanticRatio\":0.9,\"window\":50,\"boost\":2}}",
             "{\"v\":1,\"hybrid\":{}}",
+            "{\"v\":1,\"q\":\"cat dog\",\"rerank\":{\"window\":30},\"filter\":\"Number > 1\",\"limit\":4}",
+            "{\"v\":1,\"q\":\"cat\",\"rerank\":{},\"hybrid\":{\"semanticRatio\":0.4,\"field\":\"Vec\"}}",
+            "{\"v\":1,\"rerank\":{}}",
             "{\"v\":2}",
         ];
         string[] seeds = kind == 0 ? strict : kind == 1 ? filter : json;
