@@ -79,3 +79,69 @@ public sealed class TextCodecIntegrationTests
         snapshot.Verify();
     }
 }
+
+public sealed class PositionSkipTests
+{
+    // Long documents make the position stream cross the reader's refill window many times, and the vectorized skip must
+    // land on exactly the same number as the checked reader whatever the varint lengths and the read/skip pattern.
+    [Theory]
+    [InlineData(IndexOptions.Positions)]
+    [InlineData(IndexOptions.Offsets)]
+    public void SkippedPositionsLeaveTheReaderOnTheRightNumber(IndexOptions options)
+    {
+        var schema = new SchemaBuilder()
+            .Id("id")
+            .Add(new FieldDefinition("body", FieldType.Text) { Analyzer = "whitespace-lowercase", IndexOptions = options })
+            .Build();
+        var storage = new MemoryStorage();
+        var codecs = new ISegmentCodec[] { new TextSegmentCodec() };
+        var rng = new Random(11);
+        string[] words = ["aa", "bb", "cc", "dd"];
+        var expected = new List<List<int>>(); // per document: positions of "aa"
+        using (IndexWriter writer = IndexWriter.Open(storage, schema, new IndexWriterOptions { Codecs = codecs, AutoMerge = false }))
+        {
+            for (int d = 0; d < 60; d++)
+            {
+                int length = d % 5 == 0 ? 20_000 : 1 + rng.Next(3000);
+                var tokens = new string[length];
+                var positions = new List<int>();
+                for (int i = 0; i < length; i++)
+                {
+                    // Runs of other words make position deltas of one, two and three bytes.
+                    bool hit = rng.Next(d % 3 == 0 ? 2 : 40) == 0;
+                    tokens[i] = hit ? "aa" : (rng.Next(300) == 0 ? "zz" : words[1 + rng.Next(3)]);
+                    if (hit)
+                    {
+                        positions.Add(i);
+                    }
+                }
+
+                expected.Add(positions);
+                writer.Upsert(new Document().Add("id", "d" + d).Add("body", string.Join(' ', tokens)));
+            }
+
+            writer.Commit();
+        }
+
+        using IndexSnapshot snapshot = IndexSnapshot.Open(storage, codecs);
+        SegmentReader segment = snapshot.GetSegment(0);
+        ITextFieldReader body = segment.GetPart<ITextFieldSource>()!.GetTextField("body")!;
+        Assert.True(body.TryGetTerm("aa"u8, out TermInfo info));
+        PostingsFeatures features = options == IndexOptions.Offsets ? PostingsFeatures.Offsets : PostingsFeatures.Positions;
+        for (int round = 0; round < 20; round++)
+        {
+            PostingsIterator it = body.GetPostings(info, features);
+            for (int d = it.NextDoc(); d != DocIdSetIterator.NoMoreDocs; d = it.NextDoc())
+            {
+                List<int> want = expected[d];
+                Assert.Equal(want.Count, it.Frequency);
+                // Positions not read stay unread; the next read from a later document passes over them.
+                int read = rng.Next(3) == 0 ? 0 : rng.Next(want.Count + 1);
+                for (int k = 0; k < read; k++)
+                {
+                    Assert.Equal(want[k], it.NextPosition());
+                }
+            }
+        }
+    }
+}

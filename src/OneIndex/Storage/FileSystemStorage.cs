@@ -86,7 +86,7 @@ public sealed class FileSystemStorage : StorageBase, IStorage
             _unsyncedNames.Add(name);
         }
 
-        return new FileWriter(name, handle);
+        return new FileWriter(name, handle, Synced);
     }
 
     /// <inheritdoc/>
@@ -141,6 +141,9 @@ public sealed class FileSystemStorage : StorageBase, IStorage
 
     /// <inheritdoc/>
     public bool SupportsLocks => !_readOnly;
+
+    /// <inheritdoc/>
+    public bool SupportsConcurrentSync => !OperatingSystem.IsBrowser();
 
     /// <summary>
     /// Opens the file with <see cref="FileShare.None"/>. On Linux and macOS the runtime takes a non-blocking <c>flock</c> on the
@@ -216,6 +219,16 @@ public sealed class FileSystemStorage : StorageBase, IStorage
             {
                 // Renamed away or deleted since: nothing left to make durable under this name.
             }
+        }
+    }
+
+    // A file synced after it was created needs no second flush for its name: on the journalling file systems this storage relies on
+    // (see the class remarks) that flush already committed the directory entry. A later rename adds the new name again.
+    private void Synced(string name)
+    {
+        lock (_gate)
+        {
+            _unsyncedNames.Remove(name);
         }
     }
 
@@ -342,7 +355,7 @@ public sealed class FileSystemStorage : StorageBase, IStorage
         }
     }
 
-    private sealed class FileWriter(string name, SafeFileHandle handle) : IStorageWriter
+    private sealed class FileWriter(string name, SafeFileHandle handle, Action<string> synced) : IStorageWriter
     {
         private readonly byte[] _buffer = new byte[WriteBufferSize];
         private int _buffered;
@@ -407,6 +420,7 @@ public sealed class FileSystemStorage : StorageBase, IStorage
             cancellationToken.ThrowIfCancellationRequested();
             FlushBuffer();
             RandomAccess.FlushToDisk(handle);
+            synced(name);
         }
 
         public async ValueTask SyncAsync(CancellationToken cancellationToken = default)
@@ -417,6 +431,7 @@ public sealed class FileSystemStorage : StorageBase, IStorage
             // .NET has no asynchronous fsync, so the flush below blocks.
             cancellationToken.ThrowIfCancellationRequested();
             RandomAccess.FlushToDisk(handle);
+            synced(name);
         }
 
         public void Dispose()

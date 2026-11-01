@@ -16,6 +16,7 @@ public sealed class TermPostings : PostingsIterator
     private const int BlockSize = PostingsBlobBuilder.BlockSize;
     private const int EntryBytes = 16;
     private const int PositionBufferBytes = 512;
+    private const int MaxHeaderBytes = 15;
 
     private readonly IRangeReader _file;
     private readonly long _dataEnd;
@@ -26,9 +27,17 @@ public sealed class TermPostings : PostingsIterator
     // Allocated when a caller asks for frequencies or positions: a documents-only iterator (prefix unions open hundreds) skips them.
     private int[]? _freqs;
     private readonly uint[] _unpacked = new uint[BlockSize];
-    private readonly byte[] _scratch = new byte[2 + (8 * BlockSize)];
+    // Room for a one-block term's header (at most 15 bytes) and its whole block, read in one go by Reset.
+    private readonly byte[] _scratch = new byte[MaxHeaderBytes + 2 + (8 * BlockSize)];
     private byte[]? _posBuffer;
 
+    // Lists with many blocks that are skipped through (phrases, conjunctions) cache the last document of every block.
+    private const int LastDocCacheMinBlocks = 4;
+    private const int LastDocCacheAfterReads = 6;
+    private int[]? _lastDocs;
+    private int _lastDocReads;
+    private int _preloadedBlockAt = -1;
+    private int _preloadedEnd;
     private bool _wantFreq;
     private bool _wantPos;
     private bool _wantOffsets;
@@ -118,8 +127,14 @@ public sealed class TermPostings : PostingsIterator
 
         _docFreq = term.DocFreq;
         _blockCount = (_docFreq + BlockSize - 1) / BlockSize;
-        Span<byte> head = _scratch.AsSpan(0, (int)Math.Min(15, _dataEnd - term.PostingsOffset));
-        _file.ReadExactly(term.PostingsOffset, head);
+        // A term of one block (the common case for rare terms) is read with its header in a single call.
+        long available = _dataEnd - term.PostingsOffset;
+        int want = (int)Math.Min(_blockCount == 1 ? MaxHeaderBytes + 2 + (8L * _docFreq) : MaxHeaderBytes, available);
+        _file.ReadExactly(term.PostingsOffset, _scratch.AsSpan(0, want));
+        Span<byte> head = _scratch.AsSpan(0, Math.Min(MaxHeaderBytes, want));
+        _preloadedBlockAt = -1;
+        _lastDocs = null;
+        _lastDocReads = 0;
         int pos = 0;
         if (_blockCount == 1)
         {
@@ -135,6 +150,8 @@ public sealed class TermPostings : PostingsIterator
             _termImpact = new BlockImpact((int)last, (int)maxFreq, (int)minLen);
             _blocksStart = term.PostingsOffset + pos;
             _tableStart = 0;
+            _preloadedBlockAt = pos; // the block starts here in the scratch buffer, 'want' bytes in all
+            _preloadedEnd = want;
         }
         else
         {
@@ -396,9 +413,39 @@ public sealed class TermPostings : PostingsIterator
 
     private int ReadLastDoc(int block)
     {
+        if (_lastDocs is not null)
+        {
+            return _lastDocs[block];
+        }
+
+        if (_blockCount > LastDocCacheMinBlocks && ++_lastDocReads > LastDocCacheAfterReads)
+        {
+            // Skipping through a long list reads many entries of the skip table: read the table once instead of entry by entry.
+            LoadLastDocs();
+            return _lastDocs![block];
+        }
+
         Span<byte> four = _scratch.AsSpan(0, 4);
         _file.ReadExactly(_tableStart + ((long)block * EntryBytes), four);
         return CheckDoc(BinaryPrimitives.ReadUInt32LittleEndian(four));
+    }
+
+    private void LoadLastDocs()
+    {
+        var lastDocs = new int[_blockCount];
+        const int EntriesPerRead = 64; // 1,024 bytes, within the scratch buffer
+        for (int first = 0; first < _blockCount; first += EntriesPerRead)
+        {
+            int n = Math.Min(EntriesPerRead, _blockCount - first);
+            Span<byte> chunk = _scratch.AsSpan(0, n * EntryBytes);
+            _file.ReadExactly(_tableStart + ((long)first * EntryBytes), chunk);
+            for (int i = 0; i < n; i++)
+            {
+                lastDocs[first + i] = CheckDoc(BinaryPrimitives.ReadUInt32LittleEndian(chunk[(i * EntryBytes)..]));
+            }
+        }
+
+        _lastDocs = lastDocs;
     }
 
     // The first block at or after 'from' whose last document is at least 'target': gallop forward, then binary search.
@@ -503,8 +550,17 @@ public sealed class TermPostings : PostingsIterator
             throw Corrupt("block runs past the end of the file");
         }
 
-        Span<byte> data = _scratch.AsSpan(0, bound);
-        _file.ReadExactly(blockStart, data);
+        Span<byte> data;
+        if (_preloadedBlockAt >= 0 && _blockCount == 1 && _preloadedBlockAt + bound <= _preloadedEnd)
+        {
+            data = _scratch.AsSpan(_preloadedBlockAt, bound);
+        }
+        else
+        {
+            data = _scratch.AsSpan(0, bound);
+            _file.ReadExactly(blockStart, data);
+        }
+
         int dw = data[0];
         int fw = data[1];
         if (dw > 32 || fw > 32)

@@ -37,7 +37,7 @@ public sealed class OneIndexEngine : ITextEngine
     }
 
     /// <inheritdoc/>
-    public bool Supports(Type queryType) => queryType == typeof(MatchQuery) || queryType == typeof(PrefixQuery) || queryType == typeof(FuzzyQuery) || queryType == typeof(TypoQuery) || queryType == typeof(TermsQuery) || queryType == typeof(FacetQuery) || queryType == typeof(StatsQuery) || queryType == typeof(SortedQuery) || queryType == typeof(DecayedQuery) || queryType == typeof(FilteredQuery) || (queryType == typeof(GeoQuery) && WithGeo);
+    public bool Supports(Type queryType) => queryType == typeof(MatchQuery) || queryType == typeof(PhraseQuery) || queryType == typeof(PrefixQuery) || queryType == typeof(FuzzyQuery) || queryType == typeof(TypoQuery) || queryType == typeof(TermsQuery) || queryType == typeof(FacetQuery) || queryType == typeof(StatsQuery) || queryType == typeof(SortedQuery) || queryType == typeof(DecayedQuery) || queryType == typeof(FilteredQuery) || (queryType == typeof(GeoQuery) && WithGeo);
 
     // The geo row indexes synthesized coordinates in a second field; it is opt-in so the other rows keep the matched index.
     private static bool WithGeo => Environment.GetEnvironmentVariable("ONEINDEX_BENCH_GEO") == "1";
@@ -53,7 +53,7 @@ public sealed class OneIndexEngine : ITextEngine
         {
             // The benchmark profile: body text, a numeric column and a keyword facet column, standard analysis.
             SchemaBuilder builder = new SchemaBuilder().Id("id")
-                .Add(new FieldDefinition("text", FieldType.Text) { Analyzer = "standard", IndexOptions = IndexOptions.Freqs, Stored = false })
+                .Add(new FieldDefinition("text", FieldType.Text) { Analyzer = "standard", IndexOptions = IndexOptions.Positions, Stored = false })
                 .Add(new FieldDefinition("len", FieldType.Integral) { Column = true, Stored = false })
                 .Add(new FieldDefinition("cat", FieldType.Keyword) { Facet = true, Stored = false });
             schema = (WithGeo ? builder.Add(new FieldDefinition("loc", FieldType.GeoPoint) { Column = true, Stored = false }) : builder).Build();
@@ -71,7 +71,7 @@ public sealed class OneIndexEngine : ITextEngine
         }
 
         _settings = settings;
-        _writer = IndexWriter.Open(_storage, schema, new IndexWriterOptions { MaxBufferedDocuments = 20_000 });
+        _writer = IndexWriter.Open(_storage, schema, new IndexWriterOptions { MergeScheduler = new ThreadedMergeScheduler(), AutoMerge = Environment.GetEnvironmentVariable("ONEINDEX_AUTOMERGE") != "0", MaxBufferedDocuments = int.TryParse(Environment.GetEnvironmentVariable("ONEINDEX_BUFFERED_DOCS"), out int buffered) ? buffered : 20_000 });
     }
 
     /// <inheritdoc/>
@@ -86,7 +86,8 @@ public sealed class OneIndexEngine : ITextEngine
                 d.Add("loc", FieldValue.FromGeoPoint(lat, lng));
             }
 
-            _writer!.Upsert(d);
+            // Identifiers are unique and the comparator appends without looking for a previous version, so the bulk path is the matched call.
+            _writer!.AddUnique(d);
         }
         else
         {
@@ -98,15 +99,36 @@ public sealed class OneIndexEngine : ITextEngine
     /// <inheritdoc/>
     public void Commit()
     {
+        // Like the comparator, a commit does not wait for the merges it may start: they run in the background.
         _writer!.Commit();
-        _writer.WaitForMerges();
+    }
+
+    private int SegmentsNow()
+    {
+        using IndexSnapshot s = _writer!.OpenSnapshot();
+        return s.SegmentCount;
     }
 
     /// <inheritdoc/>
     public void OpenSearcher()
     {
+        // Query rows run on a settled index, so pending merges finish first.
+        // A finished merge is installed by the next commit, so settle by committing until a round installs nothing new. Lucene.NET
+        // installs merges as they finish; this is the same settled state.
+        for (int round = 0; round < 8; round++)
+        {
+            _writer!.WaitForMerges();
+            int before = SegmentsNow();
+            _writer.Commit();
+            if (SegmentsNow() == before)
+            {
+                break;
+            }
+        }
+
         _snapshot?.Dispose();
         _snapshot = _writer!.OpenSnapshot();
+        Console.Error.WriteLine("segments: " + string.Join(",", Enumerable.Range(0, _snapshot.SegmentCount).Select(i => _snapshot.GetSegment(i).MaxDoc)));
         _context = SnapshotSearch.CreateContext(_snapshot);
         // Hits carry document numbers; the identifier of each comes from the stored source, so a reopened index needs no side table.
         _idOf = new string[_context.MaxDoc];
@@ -142,6 +164,7 @@ public sealed class OneIndexEngine : ITextEngine
             TermsQuery t => TermsOf(t.Terms),
             FacetQuery f => TermsOf(f.Terms),
             StatsQuery st => TermsOf(st.Terms),
+            PhraseQuery p => new global::OneIndex.Search.PhraseQuery("text", p.Terms),
             SortedQuery so => TermsOf(so.Terms),
             DecayedQuery dq => new FunctionScoreQuery(TermsOf(dq.Terms), [new DecayFunction(DecayShape.Gauss, "len", dq.Origin, dq.Scale)]),
             FilteredQuery fq => Filtered(fq),
