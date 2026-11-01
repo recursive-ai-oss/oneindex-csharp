@@ -47,6 +47,7 @@ internal sealed class ConstantScorer : Scorer
 {
     private readonly DocIdSetIterator _it;
     private readonly float _score;
+    private bool _finished;
 
     public ConstantScorer(DocIdSetIterator it, float score)
     {
@@ -54,15 +55,24 @@ internal sealed class ConstantScorer : Scorer
         _score = score;
     }
 
-    public override int DocId => _it.DocId;
+    public override int DocId => _finished ? NoMoreDocs : _it.DocId;
 
     public override long Cost => _it.Cost;
 
     public override float MaxScore => _score;
 
-    public override int NextDoc() => _it.NextDoc();
+    public override int NextDoc() => _finished ? NoMoreDocs : _it.NextDoc();
 
-    public override int Advance(int target) => _it.Advance(target);
+    public override int Advance(int target) => _finished ? NoMoreDocs : _it.Advance(target);
+
+    // Every document scores the same, so once nothing at this score can compete the rest are all skipped.
+    public override void SetMinCompetitiveScore(float minScore)
+    {
+        if (minScore > _score)
+        {
+            _finished = true;
+        }
+    }
 
     public override float Score() => _score;
 

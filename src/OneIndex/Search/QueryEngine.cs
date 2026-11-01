@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 using OneIndex.Codecs;
 using OneIndex.Index;
@@ -263,6 +264,11 @@ public sealed class QueryEngine : IWeightFactory
             CheckBoost(query);
             FieldDefinition def = RequireTextField(query.Field);
             byte[] prefix = Encoding.UTF8.GetBytes(query.Prefix);
+            if (!query.ScoreTerms)
+            {
+                return new ConstantWeight($"prefix '{query.Prefix}' in field {def.Name}", query.Boost, leaf => TermUnion.Documents(leaf, def.Name, reader => reader.GetTerms(prefix)));
+            }
+
             return Expand(def, query.Boost, leaf => leaf.GetTerms(prefix));
         }
 
@@ -278,6 +284,16 @@ public sealed class QueryEngine : IWeightFactory
             if (query.PrefixLength < 0)
             {
                 throw new QueryException($"The prefix length of a fuzzy query must not be negative, got {query.PrefixLength}.");
+            }
+
+            if (query.MaxExpansions < 1)
+            {
+                throw new QueryException($"The expansions of a fuzzy query must be at least 1, got {query.MaxExpansions}.");
+            }
+
+            if (query.MaxExpansions < 1)
+            {
+                throw new QueryException($"The expansions of a fuzzy query must be at least 1, got {query.MaxExpansions}.");
             }
 
             if (query.MaxEdits == 0)
@@ -301,7 +317,7 @@ public sealed class QueryEngine : IWeightFactory
             }
 
             byte[] prefix = Encoding.UTF8.GetBytes(query.Term[..split]);
-            return Expand(def, query.Boost, leaf => leaf.Intersect(new LevenshteinAutomaton(query.Term, query.MaxEdits, query.Transpositions), prefix));
+            return ExpandClosest(def, query.Boost, query.Term, query.MaxEdits, query.MaxExpansions, leaf => leaf.Intersect(new LevenshteinAutomaton(query.Term, query.MaxEdits, query.Transpositions), prefix));
         }
 
         public override Weight VisitRegex(RegexQuery query)
@@ -431,6 +447,82 @@ public sealed class QueryEngine : IWeightFactory
             return new BooleanWeight(children, 0, boost);
         }
 
+        // Keeps the terms closest to the word: fewest edits, then most documents, then term bytes. Never throws, however many terms match.
+        private Weight ExpandClosest(FieldDefinition def, float boost, string word, int maxEdits, int maxExpansions, Func<ITextFieldReader, ITermEnumerator> open)
+        {
+            var found = new Dictionary<byte[], Closeness>(ByteArrayEquality.Instance);
+            var lookup = found.GetAlternateLookup<ReadOnlySpan<byte>>();
+            foreach (LeafContext leaf in context.Leaves)
+            {
+                if (leaf.Reader.GetTextField(def.Name) is not { } reader)
+                {
+                    continue;
+                }
+
+                using ITermEnumerator terms = open(reader);
+                while (terms.MoveNext())
+                {
+                    if (lookup.TryGetValue(terms.Term, out Closeness? seen))
+                    {
+                        seen.DocFreq += terms.Info.DocFreq;
+                        continue;
+                    }
+
+                    found.Add(terms.Term.ToArray(), new Closeness { DocFreq = terms.Info.DocFreq, Edits = Edits(word, terms.Term, maxEdits) });
+                }
+            }
+
+            if (found.Count == 0)
+            {
+                return EmptyWeight.Instance;
+            }
+
+            var ranked = new List<KeyValuePair<byte[], Closeness>>(found);
+            if (ranked.Count > maxExpansions)
+            {
+                ranked.Sort(static (x, y) =>
+                {
+                    int c = x.Value.Edits.CompareTo(y.Value.Edits);
+                    c = c != 0 ? c : y.Value.DocFreq.CompareTo(x.Value.DocFreq);
+                    return c != 0 ? c : ByteArrayOrder.Instance.Compare(x.Key, y.Key);
+                });
+                ranked.RemoveRange(maxExpansions, ranked.Count - maxExpansions);
+            }
+
+            ranked.Sort(static (x, y) => ByteArrayOrder.Instance.Compare(x.Key, y.Key));
+            var children = new List<(Weight, Occur)>(ranked.Count);
+            foreach (KeyValuePair<byte[], Closeness> kv in ranked)
+            {
+                children.Add((TermWeight.Create(context, options.Bm25, [def], kv.Key, 1f), Occur.Should));
+            }
+
+            return new BooleanWeight(children, 0, boost);
+        }
+
+        private sealed class Closeness
+        {
+            public long DocFreq;
+            public int Edits;
+        }
+
+        private static int Edits(string word, ReadOnlySpan<byte> term, int maxEdits)
+        {
+            char[]? rented = null;
+            Span<char> chars = term.Length <= 256 ? stackalloc char[256] : (rented = ArrayPool<char>.Shared.Rent(term.Length)); // bounded: one term of the dictionary
+            try
+            {
+                int n = Encoding.UTF8.GetChars(term, chars);
+                return OneIndex.Suggest.EditDistance.OptimalStringAlignment(word, chars[..n], maxEdits);
+            }
+            finally
+            {
+                if (rented is not null)
+                {
+                    ArrayPool<char>.Shared.Return(rented);
+                }
+            }
+        }
+
         private FieldDefinition RequireTextField(string name)
         {
             if (!context.Schema.TryGetField(name, out FieldDefinition? def))
@@ -455,6 +547,27 @@ public sealed class QueryEngine : IWeightFactory
             }
         }
     }
+}
+
+/// <summary>Equality of term byte arrays, also looked up by span. Hashes are for in-process tables only and never persisted or ordered by.</summary>
+internal sealed class ByteArrayEquality : IEqualityComparer<byte[]>, IAlternateEqualityComparer<ReadOnlySpan<byte>, byte[]>
+{
+    public static ByteArrayEquality Instance { get; } = new();
+
+    public bool Equals(byte[]? x, byte[]? y) => x.AsSpan().SequenceEqual(y);
+
+    public int GetHashCode(byte[] obj) => GetHashCode((ReadOnlySpan<byte>)obj);
+
+    public bool Equals(ReadOnlySpan<byte> alternate, byte[] other) => alternate.SequenceEqual(other);
+
+    public int GetHashCode(ReadOnlySpan<byte> alternate)
+    {
+        var hash = default(HashCode);
+        hash.AddBytes(alternate);
+        return hash.ToHashCode();
+    }
+
+    public byte[] Create(ReadOnlySpan<byte> alternate) => alternate.ToArray();
 }
 
 internal sealed class ByteArrayOrder : IComparer<byte[]>

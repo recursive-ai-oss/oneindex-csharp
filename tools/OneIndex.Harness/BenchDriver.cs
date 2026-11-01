@@ -143,8 +143,15 @@ public static class BenchDriver
         loads.Add(MachineRecord.LoadAverage());
 
         engine.OpenSearcher();
+        // ONEINDEX_ROWS=Prefix,Fuzzy1 limits the timed query rows (comma-separated row names).
+        var only = Environment.GetEnvironmentVariable("ONEINDEX_ROWS")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         foreach (var (kind, set) in queries)
         {
+            if (only is not null && !only.Contains(kind.ToString(), StringComparer.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             if (!engine.Supports(set[0].GetType()))
             {
                 rows.Add(new() { ["row"] = kind.ToString(), ["skipped"] = "unsupported by engine" });

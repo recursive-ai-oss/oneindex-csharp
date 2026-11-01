@@ -105,7 +105,7 @@ public interface ITextFieldReader
     /// <returns>An enumerator the caller disposes.</returns>
     ITermEnumerator GetTerms(ReadOnlySpan<byte> prefix);
 
-    /// <summary>What the field was indexed with: frequencies always, plus positions and offsets when the schema asked for them. <see cref="GetPostings"/> cannot return more than this.</summary>
+    /// <summary>What the field was indexed with: frequencies always, plus positions and offsets when the schema asked for them. <see cref="GetPostings(in TermInfo, PostingsFeatures)"/> cannot return more than this.</summary>
     PostingsFeatures IndexedFeatures { get; }
 
     /// <summary>Walks the terms that a code-point automaton (fuzzy or regular expression) accepts, in byte order, without visiting the dictionary branches it rules out.</summary>
@@ -119,6 +119,13 @@ public interface ITextFieldReader
     /// <param name="features">What the caller will read.</param>
     /// <returns>A new enumeration positioned before the first document.</returns>
     PostingsIterator GetPostings(in TermInfo term, PostingsFeatures features);
+
+    /// <summary>Opens a term's postings, reusing an iterator this reader returned earlier when the implementation can (a union over many terms walks them one after another).</summary>
+    /// <param name="term">The term as returned by <see cref="TryGetTerm"/> or an enumerator.</param>
+    /// <param name="features">What the caller will read.</param>
+    /// <param name="reuse">An iterator from this reader that the caller has finished with, or <see langword="null"/>. It must not be used again by the caller.</param>
+    /// <returns>An enumeration positioned before the first document: <paramref name="reuse"/> reset, or a new one.</returns>
+    PostingsIterator GetPostings(in TermInfo term, PostingsFeatures features, PostingsIterator? reuse) => GetPostings(term, features);
 
     /// <summary>The number of terms the field has in a document (its length for scoring).</summary>
     /// <param name="docId">The segment-local document id.</param>

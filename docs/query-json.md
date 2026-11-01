@@ -49,12 +49,13 @@ A node is an object with a `type`. Every node accepts `"boost"` (a non-negative 
 | `filter` | `filter` | a [filter string](filter-strings.md) used as a query |
 | `term` | `field`, `value` | the exact value. A keyword takes a string; a full-text field takes one *analyzed* term (not analyzed again); numbers, dates and booleans take a JSON number, an ISO date string or `true`/`false` |
 | `phrase` | `field`, `terms` (1 to 256 strings), `slop` (0 to 1000) | analyzed terms that must occur in order |
-| `prefix` | `field`, `prefix` | terms that start with the analyzed prefix |
-| `fuzzy` | `field`, `term`, `maxEdits` (0 to 2, default 2), `prefixLength` (default 0), `transpositions` (default true) | terms within the edit distance |
+| `prefix` | `field`, `prefix`, `scoreTerms` (default false) | terms that start with the analyzed prefix; every match scores the boost, or with `scoreTerms` the BM25F scores of the terms |
+| `fuzzy` | `field`, `term`, `maxEdits` (0 to 2, default 2), `prefixLength` (default 0), `transpositions` (default true), `maxExpansions` (1 to 1024, default 50) | the closest terms within the edit distance |
 | `regex` | `field`, `pattern` | terms that the expression matches in full (checked when read) |
 | `range` | `field`, at most one of `gt`/`gte`, at most one of `lt`/`lte`, at least one bound | numbers, dates (ISO strings) or keywords (strings); not booleans |
 | `exists` | `field` | documents that have a value |
 | `multiFieldTerm` | `fields`, `term` | one analyzed term in any of the full-text or keyword fields, scored as one BM25F term |
+| `typoTerm` | `fields`, `term`, `maxTypos` (0 to 2, default 2), `prefix` (default false), `exactFields` | one analyzed word matched with typos and optionally as the beginning of longer words; what user text expands to ([typo-tolerance.md](typo-tolerance.md)) |
 | `geoRadius` | `field` (a geo point field), `lat`, `lng`, `meters` | documents with a point within the distance ([geo.md](geo.md)) |
 | `geoBoundingBox` | `field`, `north`, `south`, `west`, `east` | documents with a point in the rectangle; `west` greater than `east` crosses the antimeridian |
 | `bool` | `must`, `filter`, `should`, `mustNot` (arrays of nodes), `minimumShouldMatch` | all `must` and `filter` clauses, no `mustNot` clause, and enough `should` clauses; `filter` clauses do not score |

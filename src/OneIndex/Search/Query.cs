@@ -196,16 +196,30 @@ public sealed record PhraseQuery(string Field, IReadOnlyList<string> Terms) : Qu
     public override TResult Accept<TResult>(QueryVisitor<TResult> visitor) => visitor.VisitPhrase(this);
 }
 
-/// <summary>Documents whose field contains a term that starts with the prefix.</summary>
+/// <summary>
+/// Documents whose field contains a term that starts with the prefix. By default every match scores the boost and nothing else (a constant
+/// score, which is also what makes a short prefix cheap: no term is weighed and there is no limit on the terms it matches). With
+/// <see cref="ScoreTerms"/> the matches are scored as a disjunction of the expanded terms' BM25F scores.
+/// </summary>
 /// <param name="Field">The field name.</param>
 /// <param name="Prefix">The prefix, already analyzed.</param>
 public sealed record PrefixQuery(string Field, string Prefix) : Query
 {
+    /// <summary>
+    /// Whether each matching term is scored with BM25F (default <see langword="false"/>: constant score). Scored prefixes expand to at
+    /// most <see cref="QueryEngineOptions.MaxExpandedTerms"/> terms, with the overflow behaviour of <see cref="QueryEngineOptions.Overflow"/>.
+    /// </summary>
+    public bool ScoreTerms { get; init; }
+
     /// <inheritdoc/>
     public override TResult Accept<TResult>(QueryVisitor<TResult> visitor) => visitor.VisitPrefix(this);
 }
 
-/// <summary>Documents whose field contains a term within <see cref="MaxEdits"/> edits of the given term.</summary>
+/// <summary>
+/// Documents whose field contains a term within <see cref="MaxEdits"/> edits of the given term. Only the <see cref="MaxExpansions"/>
+/// closest terms are kept (fewest edits first, then the most documents, then term bytes), so a loose query never fails and never weighs
+/// thousands of terms; each kept term is scored with BM25F.
+/// </summary>
 /// <param name="Field">The field name.</param>
 /// <param name="Term">The term, already analyzed.</param>
 public sealed record FuzzyQuery(string Field, string Term) : Query
@@ -215,6 +229,9 @@ public sealed record FuzzyQuery(string Field, string Term) : Query
 
     /// <summary>How many leading characters must match exactly. Default 0.</summary>
     public int PrefixLength { get; init; }
+
+    /// <summary>The most terms to keep, 1 or more. Default 50. Distances are counted as optimal string alignment (a swap of adjacent characters is one edit).</summary>
+    public int MaxExpansions { get; init; } = 50;
 
     /// <summary>Whether swapping two adjacent characters counts as one edit. Default true.</summary>
     public bool Transpositions { get; init; } = true;

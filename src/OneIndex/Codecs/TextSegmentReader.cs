@@ -451,6 +451,17 @@ internal sealed class TextFieldReader : ITextFieldReader
         return postings;
     }
 
+    public PostingsIterator GetPostings(in TermInfo term, PostingsFeatures features, PostingsIterator? reuse)
+    {
+        if (reuse is not TermPostings postings)
+        {
+            return GetPostings(term, features);
+        }
+
+        postings.Reset(term, features);
+        return postings;
+    }
+
     public int GetFieldLength(int docId)
     {
         if ((uint)docId >= (uint)_maxDoc)
