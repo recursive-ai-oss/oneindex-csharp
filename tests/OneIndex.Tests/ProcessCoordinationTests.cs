@@ -59,8 +59,8 @@ public class ProcessCoordinationTests
         }
 
         // A different schema is refused after the lock was taken; the lock must not stay behind.
-        Schema other = new SchemaBuilder().Id("id").Text("other").Build();
-        Assert.Throws<ArgumentException>(() => IndexWriter.Open(storage, other, Workload.Options()));
+        Schema other = new SchemaBuilder().Id("other").Build();
+        Assert.Throws<SchemaEvolutionException>(() => IndexWriter.Open(storage, other, Workload.Options()));
         using IndexWriter again = IndexWriter.Open(storage, Workload.Schema, Workload.Options());
     }
 
