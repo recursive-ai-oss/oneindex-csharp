@@ -158,5 +158,5 @@ was not run: 3,452 queries x 100 pairs at the measured rate is about four hours 
 
 Information, SciFact: the default hybrid list (docs/hybrid.md; 0.7257) reranked gives 0.6894. On this set the cross-encoder does not improve on the hybrid first stage.
 
-Throughput, for information: 22 to 25 (query, passage) pairs per second with 8 threads on the shared x64 worker (AVX-512 kernels), 100 passages of 150 to 400 tokens per query.
+Throughput, for information: 22 to 25 (query, passage) pairs per second with 8 threads on a shared x64 machine (AVX-512 kernels), 100 passages of 150 to 400 tokens per query.
 The model tool's rate on pairs is the limit of the BEIR runs above (about 45 minutes for SciFact, five hours for ArguAna).
