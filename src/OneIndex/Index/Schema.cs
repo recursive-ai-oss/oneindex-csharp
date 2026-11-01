@@ -601,7 +601,13 @@ public sealed class Schema : IEquatable<Schema>
                             throw new MalformedInputException($"vector field '{defs[field].Name}' has an unknown metric");
                         }
 
-                        settings[field] = new VectorSettings((VectorMetric)metricByte, inner.ReadCount(256, "HNSW M"), inner.ReadCount(4096, "HNSW efConstruction"), inner.ReadCount(100_000_000, "flat threshold"));
+                        var entry = new VectorSettings((VectorMetric)metricByte, inner.ReadCount(256, "HNSW M"), inner.ReadCount(4096, "HNSW efConstruction"), inner.ReadCount(100_000_000, "flat threshold"));
+                        if (entry == VectorSettings.Default)
+                        {
+                            throw new MalformedInputException($"vector field '{defs[field].Name}' lists default settings, which are not written");
+                        }
+
+                        settings[field] = entry;
                         last = field;
                     }
 

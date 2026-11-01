@@ -36,4 +36,16 @@ public sealed class VectorSchemaTests
         SchemaEvolutionException e = Assert.Throws<SchemaEvolutionException>(() => { _ = SchemaDiff.Compare(With(), With(dims: 16), limits); });
         Assert.Contains("'v'", e.Message);
     }
+
+    [Fact]
+    public void SectionsThisBuildDoesNotKnowAreDroppedAndTheRewrittenSchemaIsStable()
+    {
+        // Found by the commit fuzz target: a version 2 schema made only of unknown sections. The input's first byte is the target's route.
+        byte[] input = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(ThisFile())!, "..", "..", "testdata", "fuzz", "commit-schema-unknown-sections.bin"));
+        Assert.True(Schema.TryDeserialize(input.AsSpan(1), null, out Schema? schema, out _));
+        byte[] again = schema.Serialize();
+        Assert.Equal(again, Schema.Deserialize(again).Serialize());
+    }
+
+    private static string ThisFile([System.Runtime.CompilerServices.CallerFilePath] string path = "") => path;
 }
