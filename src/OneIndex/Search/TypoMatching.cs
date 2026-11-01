@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 using OneIndex.Codecs;
 
@@ -70,6 +71,89 @@ public static class TypoRanking
     /// <param name="prefix">Whether the indexed word may also match by beginning like the query word.</param>
     /// <returns>The match, or <see langword="null"/> when the word does not match.</returns>
     public static TypoMatch? Match(string query, string word, int budget, bool prefix)
+        => Match(CodePoints(query), CodePoints(word), budget, prefix);
+
+    /// <summary>
+    /// <see cref="Match(string, string, int, bool)"/> on code points, in one pass over the alignment table and without allocating for
+    /// words up to 255 code points. The last row of the table holds the distance from the query word to every beginning of the indexed
+    /// word, so the whole word and the best beginning come from the same table. The best beginning is a strict improvement over the whole
+    /// word exactly when the match is a prefix extension.
+    /// </summary>
+    /// <param name="q">The query word as code points.</param>
+    /// <param name="w">The indexed word as code points.</param>
+    /// <param name="budget">The most typos allowed, 0 to 2.</param>
+    /// <param name="prefix">Whether the indexed word may also match by beginning like the query word.</param>
+    /// <returns>The match, or <see langword="null"/>.</returns>
+    internal static TypoMatch? Match(ReadOnlySpan<int> q, ReadOnlySpan<int> w, int budget, bool prefix)
+    {
+        int m = q.Length;
+        int k = w.Length;
+        int[]? rented = null;
+        // Three rows of k + 1 integers; fixed small buffer on the stack, rented for longer words.
+        Span<int> rows = 3 * (k + 1) <= 768 ? stackalloc int[768] : (rented = ArrayPool<int>.Shared.Rent(3 * (k + 1)));
+        try
+        {
+            Span<int> prev2 = rows.Slice(0, k + 1);
+            Span<int> prev = rows.Slice(k + 1, k + 1);
+            Span<int> cur = rows.Slice(2 * (k + 1), k + 1);
+            for (int j = 0; j <= k; j++)
+            {
+                prev[j] = j;
+            }
+
+            for (int i = 1; i <= m; i++)
+            {
+                cur[0] = i;
+                for (int j = 1; j <= k; j++)
+                {
+                    int cost = q[i - 1] == w[j - 1] ? 0 : 1;
+                    int v = Math.Min(Math.Min(prev[j] + 1, cur[j - 1] + 1), prev[j - 1] + cost);
+                    if (i > 1 && j > 1 && q[i - 1] == w[j - 2] && q[i - 2] == w[j - 1])
+                    {
+                        v = Math.Min(v, prev2[j - 2] + 1);
+                    }
+
+                    cur[j] = v;
+                }
+
+                Span<int> spare = prev2;
+                prev2 = prev;
+                prev = cur;
+                cur = spare;
+            }
+
+            // prev is now the row of the whole query word: prev[n] is its distance to the first n code points of the word.
+            int firstPenalty = m > 0 && k > 0 && q[0] != w[0] ? 1 : 0; // a typo on the first character counts as two
+            int whole = prev[k] + (k > 0 ? firstPenalty : 0);
+            if (!prefix)
+            {
+                return whole <= budget ? new TypoMatch(whole, false) : null;
+            }
+
+            int best = int.MaxValue;
+            for (int n = 1; n <= k; n++)
+            {
+                best = Math.Min(best, prev[n] + firstPenalty);
+            }
+
+            if (best == int.MaxValue || whole <= best)
+            {
+                return whole <= budget ? new TypoMatch(whole, false) : null;
+            }
+
+            return best <= budget ? new TypoMatch(best, true) : null;
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                ArrayPool<int>.Shared.Return(rented);
+            }
+        }
+    }
+
+    /// <summary>The definition-by-definition match the fast one is tested against.</summary>
+    internal static TypoMatch? MatchByDefinition(string query, string word, int budget, bool prefix)
     {
         int[] q = CodePoints(query);
         int[] w = CodePoints(word);
@@ -200,53 +284,74 @@ internal sealed class PrefixLevenshteinAutomaton : TermAutomaton
 internal static class TypoCandidates
 {
     /// <summary>
-    /// Lists a superset of the words whose <see cref="TypoRanking.Match"/> is within the budget; the caller applies the exact cost.
-    /// A typo on the first character costs two, so with one typo the first character must agree, and with two the words that differ in
-    /// the first character may have only one edit: two passes, the second without a fixed first character.
+    /// Plans the search for a superset of the words whose <see cref="TypoRanking.Match(string, string, int, bool)"/> is within the budget;
+    /// the caller applies the exact cost. A typo on the first character costs two, so with one typo the first character must agree, and
+    /// with two the words that differ in the first character may have only one edit: two passes, the second without a fixed first
+    /// character. The automata are built once and serve every segment and field.
     /// </summary>
-    public static void Collect(ITextFieldReader reader, string word, int budget, bool prefix, Action<byte[], long> add)
+    public sealed class Plan
     {
-        if (word.Length == 0)
+        private readonly byte[] _exact;
+        private readonly int _budget;
+        private readonly bool _prefix;
+        private readonly int _firstLength;
+        private readonly TermAutomaton? _first;
+        private readonly TermAutomaton? _second;
+
+        public Plan(string word, int budget, bool prefix)
         {
-            return;
+            _exact = word.Length == 0 ? [] : Encoding.UTF8.GetBytes(word);
+            _budget = budget;
+            _prefix = prefix;
+            if (word.Length == 0 || budget == 0)
+            {
+                return;
+            }
+
+            _firstLength = Rune.GetRuneAt(word, 0).Utf8SequenceLength;
+            _first = prefix ? new PrefixLevenshteinAutomaton(word, budget) : new LevenshteinAutomaton(word, budget);
+            if (budget == 2)
+            {
+                _second = prefix ? new PrefixLevenshteinAutomaton(word, 1) : new LevenshteinAutomaton(word, 1);
+            }
         }
 
-        byte[] exact = Encoding.UTF8.GetBytes(word);
-        if (budget == 0)
+        public void Collect(ITextFieldReader reader, TermSink sink)
         {
-            if (prefix)
+            if (_exact.Length == 0)
             {
-                Drain(reader.GetTerms(exact), add);
-            }
-            else if (reader.TryGetTerm(exact, out TermInfo info))
-            {
-                add(exact, info.DocFreq);
+                return;
             }
 
-            return;
-        }
+            if (_budget == 0)
+            {
+                if (_prefix)
+                {
+                    Drain(reader.GetTerms(_exact), sink);
+                }
+                else if (reader.TryGetTerm(_exact, out TermInfo info))
+                {
+                    sink(_exact, info);
+                }
 
-        int firstLength = Rune.GetRuneAt(word, 0).Utf8SequenceLength;
-        Run(reader, word, budget, prefix, exact.AsSpan(0, firstLength), add);
-        if (budget == 2)
-        {
-            Run(reader, word, 1, prefix, default, add);
+                return;
+            }
+
+            Drain(reader.Intersect(_first!, _exact.AsSpan(0, _firstLength)), sink);
+            if (_second is not null)
+            {
+                Drain(reader.Intersect(_second), sink);
+            }
         }
     }
 
-    private static void Run(ITextFieldReader reader, string word, int edits, bool prefix, ReadOnlySpan<byte> fixedStart, Action<byte[], long> add)
-    {
-        TermAutomaton automaton = prefix ? new PrefixLevenshteinAutomaton(word, edits) : new LevenshteinAutomaton(word, edits);
-        Drain(reader.Intersect(automaton, fixedStart), add);
-    }
-
-    private static void Drain(ITermEnumerator terms, Action<byte[], long> add)
+    private static void Drain(ITermEnumerator terms, TermSink sink)
     {
         using (terms)
         {
             while (terms.MoveNext())
             {
-                add(terms.Term.ToArray(), terms.Info.DocFreq); // one copy per candidate word of one query word, not a hot path
+                sink(terms.Term, terms.Info);
             }
         }
     }
