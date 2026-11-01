@@ -218,6 +218,16 @@ public sealed class QueryExecutionTests
                 TopDocs actual = searcher.Search(q, 50, countExactly: true);
                 Assert.Equal(expected.TotalHits, actual.TotalHits);
                 Assert.Equal(expected.Hits, actual.Hits);
+
+                if (q is PrefixQuery prefix)
+                {
+                    // A constant-score prefix matches the same documents, each scoring the boost.
+                    TopDocs constant = searcher.Search(prefix with { ConstantScore = true }, 5000, countExactly: true);
+                    Assert.Equal(expected.TotalHits, constant.TotalHits);
+                    Assert.All(constant.Hits, h => Assert.Equal(1f, h.Score));
+                    TopDocs scored = searcher.Search(prefix, 5000, countExactly: true);
+                    Assert.Equal(scored.Hits.Select(h => h.DocId).Order(), constant.Hits.Select(h => h.DocId).Order());
+                }
             }
         }
     }

@@ -89,13 +89,15 @@ public sealed class OneIndexEngine : ITextEngine
     /// <inheritdoc/>
     public void Commit()
     {
+        // Like the comparator, a commit does not wait for the merges it may start: they run in the background.
         _writer!.Commit();
-        _writer.WaitForMerges();
     }
 
     /// <inheritdoc/>
     public void OpenSearcher()
     {
+        // Query rows run on a settled index, so pending merges finish first.
+        _writer!.WaitForMerges();
         _snapshot?.Dispose();
         _snapshot = _writer!.OpenSnapshot();
         _context = SnapshotSearch.CreateContext(_snapshot);
@@ -222,15 +224,22 @@ public sealed class OneIndexEngine : ITextEngine
         _writer?.Dispose();
     }
 
-    private static BooleanQuery Prefix(PrefixQuery px)
+    // The comparator rewrites a prefix to a constant-score union of its terms; the same is asked of OneIndex so both answer one question.
+    private static Query Prefix(PrefixQuery px)
     {
+        var prefix = new OneIndex.Search.PrefixQuery("text", px.Prefix) { ConstantScore = true };
+        if (px.Required.Length == 0)
+        {
+            return prefix;
+        }
+
         var clauses = new List<BooleanClause>();
         foreach (string t in px.Required)
         {
             clauses.Add(new BooleanClause(new TermQuery("text", t), Occur.Must));
         }
 
-        clauses.Add(new BooleanClause(new OneIndex.Search.PrefixQuery("text", px.Prefix), Occur.Must));
+        clauses.Add(new BooleanClause(prefix, Occur.Must));
         return new BooleanQuery(clauses);
     }
 

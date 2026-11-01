@@ -5,7 +5,7 @@ using OneIndex.Harness;
 //
 //   beir     --engine lucene --data <beir dir> --sets scifact,arguana --out <dir> --work <dir> [--threads N]
 //   ndcg     --qrels <test.tsv> <run files...>
-//   driver   --engine lucene --corpus <abstracts.jsonl> --docs N --work <dir> --out <result.json> [--seed 1] [--queries 200] [--reps 3] [--threads 1] [--page-cache text]
+//   driver   --engine lucene --corpus <abstracts.jsonl> --docs N --work <dir> --out <result.json> [--seed 1] [--queries 200] [--reps 3] [--threads 1] [--page-cache text] [--rows Terms1,Prefix]
 //   queries  --corpus <abstracts.jsonl> --docs N --out <queries.json> [--seed 1] [--queries 200]
 if (args.Length == 0)
 {
@@ -148,7 +148,7 @@ switch (args[0])
     case "driver":
         return BenchDriver.Run(new DriverOptions(
             Req("engine"), Req("corpus"), Int("docs", 50_000), Req("work"), Req("out"), Int("seed", 1), Int("queries", 200),
-            Int("reps", 3), Int("threads", 1), opts.GetValueOrDefault("page-cache", "warm: the index was written by this process")));
+            Int("reps", 3), Int("threads", 1), opts.GetValueOrDefault("page-cache", "warm: the index was written by this process"), opts.GetValueOrDefault("rows")));
 
     case "queries":
     {

@@ -170,6 +170,7 @@ internal sealed class FieldTermDictionary
         return pos;
     }
 
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     internal void ReadArc(ReadOnlySpan<byte> fst, int node, ref int pos, out byte label, out long words, out int target)
     {
         if ((uint)pos >= (uint)fst.Length)
@@ -189,7 +190,19 @@ internal sealed class FieldTermDictionary
         target = node - (int)delta;
     }
 
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     private ulong ReadVarUInt(ReadOnlySpan<byte> span, ref int pos)
+    {
+        // Most counts and deltas fit one byte: take that path without the loop.
+        if ((uint)pos < (uint)span.Length && span[pos] < 0x80)
+        {
+            return span[pos++];
+        }
+
+        return ReadVarUIntSlow(span, ref pos);
+    }
+
+    private ulong ReadVarUIntSlow(ReadOnlySpan<byte> span, ref int pos)
     {
         ulong result = 0;
         for (int shift = 0; shift < 63; shift += 7)

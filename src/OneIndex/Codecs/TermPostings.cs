@@ -16,6 +16,7 @@ public sealed class TermPostings : PostingsIterator
     private const int BlockSize = PostingsBlobBuilder.BlockSize;
     private const int EntryBytes = 16;
     private const int PositionBufferBytes = 512;
+    private const int MaxHeaderBytes = 15;
 
     private readonly IRangeReader _file;
     private readonly long _dataEnd;
@@ -25,9 +26,12 @@ public sealed class TermPostings : PostingsIterator
     private readonly int[] _docs = new int[BlockSize];
     private readonly int[] _freqs = new int[BlockSize];
     private readonly uint[] _unpacked = new uint[BlockSize];
-    private readonly byte[] _scratch = new byte[2 + (8 * BlockSize)];
+    // Room for a one-block term's header (at most 15 bytes) and its whole block, read in one go by Reset.
+    private readonly byte[] _scratch = new byte[MaxHeaderBytes + 2 + (8 * BlockSize)];
     private readonly byte[] _posBuffer = new byte[PositionBufferBytes];
 
+    private int _preloadedBlockAt = -1;
+    private int _preloadedEnd;
     private bool _wantFreq;
     private bool _wantPos;
     private bool _wantOffsets;
@@ -107,8 +111,12 @@ public sealed class TermPostings : PostingsIterator
 
         _docFreq = term.DocFreq;
         _blockCount = (_docFreq + BlockSize - 1) / BlockSize;
-        Span<byte> head = _scratch.AsSpan(0, (int)Math.Min(15, _dataEnd - term.PostingsOffset));
-        _file.ReadExactly(term.PostingsOffset, head);
+        // A term of one block (the common case for rare terms) is read with its header in a single call.
+        long available = _dataEnd - term.PostingsOffset;
+        int want = (int)Math.Min(_blockCount == 1 ? MaxHeaderBytes + 2 + (8L * _docFreq) : MaxHeaderBytes, available);
+        _file.ReadExactly(term.PostingsOffset, _scratch.AsSpan(0, want));
+        Span<byte> head = _scratch.AsSpan(0, Math.Min(MaxHeaderBytes, want));
+        _preloadedBlockAt = -1;
         int pos = 0;
         if (_blockCount == 1)
         {
@@ -124,6 +132,8 @@ public sealed class TermPostings : PostingsIterator
             _termImpact = new BlockImpact((int)last, (int)maxFreq, (int)minLen);
             _blocksStart = term.PostingsOffset + pos;
             _tableStart = 0;
+            _preloadedBlockAt = pos; // the block starts here in the scratch buffer, 'want' bytes in all
+            _preloadedEnd = want;
         }
         else
         {
@@ -467,8 +477,17 @@ public sealed class TermPostings : PostingsIterator
             throw Corrupt("block runs past the end of the file");
         }
 
-        Span<byte> data = _scratch.AsSpan(0, bound);
-        _file.ReadExactly(blockStart, data);
+        Span<byte> data;
+        if (_preloadedBlockAt >= 0 && _blockCount == 1 && _preloadedBlockAt + bound <= _preloadedEnd)
+        {
+            data = _scratch.AsSpan(_preloadedBlockAt, bound);
+        }
+        else
+        {
+            data = _scratch.AsSpan(0, bound);
+            _file.ReadExactly(blockStart, data);
+        }
+
         int dw = data[0];
         int fw = data[1];
         if (dw > 32 || fw > 32)

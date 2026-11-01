@@ -151,14 +151,18 @@ public sealed class LevenshteinAutomaton : TermAutomaton
         return n;
     }
 
-    /// <inheritdoc/>
-    // Interned states. A state set is identified by its sorted integers; the table of an id remembers the next id for every ASCII
-    // code point once computed, which is almost every step of a walk over Latin-script terms.
+    // Interned states. A state set is identified by its sorted integers. What a transition does depends on the input code point only
+    // through which positions of the word equal it, so every code point outside the word behaves alike: a state keeps one
+    // remembered next id per distinct code point of the word and one for "any other", which is why a walk over a dictionary costs a
+    // table lookup per step and the automaton computes only a handful of transitions per state.
     private const int Unknown = -3;
     private readonly List<int[]> _sets = [];
-    private readonly List<int[]> _asciiNext = [];
+    private int[][] _next = new int[16][];
     private readonly List<bool> _accepting = [];
     private readonly Dictionary<int[], int> _ids = new(IntSetComparer.Instance);
+    private int[]? _alphabet;
+    private byte[]? _asciiClass;
+    private int[]? _scratch;
     private int _startId = Unknown;
 
     /// <inheritdoc/>
@@ -168,8 +172,8 @@ public sealed class LevenshteinAutomaton : TermAutomaton
         {
             if (_startId == Unknown)
             {
-                var buffer = new int[MaxStateLength];
-                _startId = Intern(buffer, Start(buffer));
+                EnsureTables();
+                _startId = Intern(_scratch!, Start(_scratch!));
             }
 
             return _startId;
@@ -179,24 +183,57 @@ public sealed class LevenshteinAutomaton : TermAutomaton
     /// <inheritdoc/>
     public override int NextStateId(int stateId, int codePoint)
     {
-        int[] table = _asciiNext[stateId];
-        if ((uint)codePoint < 128 && table[codePoint] != Unknown)
+        int cls = ClassOf(codePoint);
+        int[] table = _next[stateId];
+        int cached = table[cls];
+        if (cached != Unknown)
         {
-            return table[codePoint];
+            return cached;
         }
 
-        var buffer = new int[MaxStateLength];
-        int next = Intern(buffer, Transition(_sets[stateId], codePoint, buffer));
-        if ((uint)codePoint < 128)
-        {
-            table[codePoint] = next;
-        }
-
+        // The representative of "any other code point" is one the word does not contain.
+        int representative = cls == _alphabet!.Length ? -1 : codePoint;
+        int next = Intern(_scratch!, Transition(_sets[stateId], representative, _scratch!));
+        table[cls] = next;
         return next;
     }
 
     /// <inheritdoc/>
     public override bool IsAcceptingId(int stateId) => _accepting[stateId];
+
+    private void EnsureTables()
+    {
+        if (_alphabet is not null)
+        {
+            return;
+        }
+
+        _scratch = new int[MaxStateLength];
+        int[] alphabet = [.. _word.Distinct().Order()];
+        var ascii = new byte[128];
+        Array.Fill(ascii, (byte)alphabet.Length);
+        for (int i = 0; i < alphabet.Length; i++)
+        {
+            if (alphabet[i] < 128)
+            {
+                ascii[alphabet[i]] = (byte)i;
+            }
+        }
+
+        _asciiClass = ascii;
+        _alphabet = alphabet;
+    }
+
+    private int ClassOf(int codePoint)
+    {
+        if ((uint)codePoint < 128)
+        {
+            return _asciiClass![codePoint];
+        }
+
+        int i = Array.BinarySearch(_alphabet!, codePoint);
+        return i >= 0 ? i : _alphabet!.Length;
+    }
 
     private int Intern(int[] buffer, int length)
     {
@@ -214,9 +251,14 @@ public sealed class LevenshteinAutomaton : TermAutomaton
 
         id = _sets.Count;
         _sets.Add(set);
-        var table = new int[128];
+        var table = new int[_alphabet!.Length + 1];
         Array.Fill(table, Unknown);
-        _asciiNext.Add(table);
+        if (id == _next.Length)
+        {
+            Array.Resize(ref _next, id * 2);
+        }
+
+        _next[id] = table;
         _accepting.Add(IsAccepting(set));
         _ids.Add(set, id);
         return id;

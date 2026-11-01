@@ -166,7 +166,7 @@ public sealed class QueryEngine : IWeightFactory
             CheckBoost(query);
             FieldDefinition def = RequireTextField(query.Field);
             byte[] prefix = Encoding.UTF8.GetBytes(query.Prefix);
-            return Expand(def, query.Boost, leaf => leaf.GetTerms(prefix));
+            return Expand(def, query.Boost, leaf => leaf.GetTerms(prefix), query.ConstantScore);
         }
 
         public override Weight VisitFuzzy(FuzzyQuery query)
@@ -204,7 +204,9 @@ public sealed class QueryEngine : IWeightFactory
             }
 
             byte[] prefix = Encoding.UTF8.GetBytes(query.Term[..split]);
-            return Expand(def, query.Boost, leaf => leaf.Intersect(new LevenshteinAutomaton(query.Term, query.MaxEdits, query.Transpositions), prefix));
+            // One automaton serves every segment in turn: it remembers the states it has met, so later segments start warm.
+            var automaton = new LevenshteinAutomaton(query.Term, query.MaxEdits, query.Transpositions);
+            return Expand(def, query.Boost, leaf => leaf.Intersect(automaton, prefix));
         }
 
         public override Weight VisitRegex(RegexQuery query)
@@ -235,7 +237,7 @@ public sealed class QueryEngine : IWeightFactory
             return RangeWeightFactory.Create(context.Schema, query);
         }
 
-        private Weight Expand(FieldDefinition def, float boost, Func<ITextFieldReader, ITermEnumerator> open)
+        private Weight Expand(FieldDefinition def, float boost, Func<ITextFieldReader, ITermEnumerator> open, bool constantScore = false)
         {
             int limit = options.MaxExpandedTerms;
             bool keepMost = options.Overflow == ExpansionOverflow.KeepMostFrequent;
@@ -304,6 +306,18 @@ public sealed class QueryEngine : IWeightFactory
                 }
 
                 return new BooleanWeight(children, 0, boost);
+            }
+
+            if (constantScore)
+            {
+                // Which documents match is all that is asked for: the union of the postings, scored with the boost.
+                var perLeafTerms = new TermInfo[]?[perLeaf.Length];
+                for (int i = 0; i < perLeaf.Length; i++)
+                {
+                    perLeafTerms[i] = perLeaf[i]?.Where(static e => !e.Term.Dropped).Select(static e => e.Info).ToArray();
+                }
+
+                return new ConstantExpansionWeight(def.Name, perLeafTerms, boost);
             }
 
             if (expanded.Length < ExpansionWeight.MinTerms)

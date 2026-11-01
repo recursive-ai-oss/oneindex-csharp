@@ -125,6 +125,45 @@ internal sealed class ExpansionWeight : Weight
     public override Explanation? Explain(LeafContext leaf, int docId) => _disjunction.Value.Explain(leaf, docId);
 }
 
+/// <summary>The weight of an expansion whose matches all score the boost: the union of the matching terms' postings.</summary>
+internal sealed class ConstantExpansionWeight(string field, TermInfo[]?[] perLeaf, float boost) : Weight
+{
+    public override Scorer? GetScorer(LeafContext leaf)
+    {
+        if (perLeaf[leaf.Ordinal] is not { Length: > 0 } terms || leaf.Reader.GetTextField(field) is not { } reader)
+        {
+            return null;
+        }
+
+        var bits = new ulong[(leaf.Reader.MaxDoc + 63) >> 6];
+        PostingsIterator? it = null;
+        foreach (TermInfo info in terms)
+        {
+            if (it is TermPostings reusable)
+            {
+                reusable.Reset(info, PostingsFeatures.None);
+            }
+            else
+            {
+                it = reader.GetPostings(info, PostingsFeatures.None);
+            }
+
+            for (int d = it!.NextDoc(); d != DocIdSetIterator.NoMoreDocs; d = it.NextDoc())
+            {
+                bits[d >> 6] |= 1UL << (d & 63);
+            }
+        }
+
+        return new ConstantScorer(new BitSetIterator(bits), boost);
+    }
+
+    public override Explanation? Explain(LeafContext leaf, int docId)
+    {
+        Scorer? s = GetScorer(leaf);
+        return s is not null && s.Advance(docId) == docId ? new Explanation(boost, "expanded prefix, constant score = boost") : null;
+    }
+}
+
 /// <summary>Documents and scores already computed, in increasing document order.</summary>
 internal sealed class SortedDocScorer : Scorer
 {
