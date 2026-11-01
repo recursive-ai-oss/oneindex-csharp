@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using OneIndex.Storage;
+using OneIndex.Vectors;
 
 namespace OneIndex.Index;
 
@@ -108,6 +109,27 @@ public sealed class FieldDefinition
 
     /// <summary>The dimension of a vector field, 1 to <see cref="IndexLimits.MaxVectorDimensions"/>; 0 for other types.</summary>
     public int Dimensions { get; init; }
+
+    /// <summary>How a vector field measures closeness. Default <see cref="VectorMetric.Cosine"/>. Vector fields only.</summary>
+    public VectorMetric Metric { get; init; }
+
+    /// <summary>HNSW's M: links per node above layer 0 (layer 0 allows twice as many), 2 to 256. Default 16. Vector fields only.</summary>
+    public int HnswM { get; init; } = DefaultHnswM;
+
+    /// <summary>HNSW's efConstruction: the candidate list size while building, M to 4096. Default 100. Vector fields only.</summary>
+    public int EfConstruction { get; init; } = DefaultEfConstruction;
+
+    /// <summary>A segment with fewer vectors than this is searched exactly and gets no graph. Default 1000, 0 to 100 million. Vector fields only.</summary>
+    public int FlatThreshold { get; init; } = DefaultFlatThreshold;
+
+    /// <summary>The default for <see cref="HnswM"/>.</summary>
+    public const int DefaultHnswM = 16;
+
+    /// <summary>The default for <see cref="EfConstruction"/>.</summary>
+    public const int DefaultEfConstruction = 100;
+
+    /// <summary>The default for <see cref="FlatThreshold"/>.</summary>
+    public const int DefaultFlatThreshold = 1000;
 }
 
 /// <summary>
@@ -189,9 +211,21 @@ public sealed class Schema : IEquatable<Schema>
                 throw new ArgumentException($"Field '{f.Name}' is {def.Type} but the value is {f.Value.Kind}.", nameof(document));
             }
 
-            if (def.Type == FieldType.Vector && f.Value.AsVector().Length != def.Dimensions)
+            if (def.Type == FieldType.Vector)
             {
-                throw new ArgumentException($"Field '{f.Name}' has {f.Value.AsVector().Length} dimensions but the schema declares {def.Dimensions}.", nameof(document));
+                ReadOnlySpan<float> vector = f.Value.AsVector().Span;
+                if (vector.Length != def.Dimensions)
+                {
+                    throw new ArgumentException($"Field '{f.Name}' has {vector.Length} dimensions but the schema declares {def.Dimensions}.", nameof(document));
+                }
+
+                foreach (float x in vector)
+                {
+                    if (!float.IsFinite(x))
+                    {
+                        throw new ArgumentException($"Field '{f.Name}' holds a NaN or infinite value; vectors must be finite.", nameof(document));
+                    }
+                }
             }
 
             if (!def.Multi)
@@ -313,6 +347,14 @@ public sealed class Schema : IEquatable<Schema>
             sink.WriteString(f.Analyzer ?? string.Empty);
             sink.WriteByte((byte)f.IndexOptions);
             sink.WriteVarUInt((ulong)f.Dimensions);
+            if (f.Type == FieldType.Vector)
+            {
+                // Vector fields carry their index settings; other fields are unchanged.
+                sink.WriteByte((byte)f.Metric);
+                sink.WriteVarUInt((ulong)f.HnswM);
+                sink.WriteVarUInt((ulong)f.EfConstruction);
+                sink.WriteVarUInt((ulong)f.FlatThreshold);
+            }
         }
 
         sink.WriteString(schema.IdField ?? string.Empty);
@@ -352,6 +394,24 @@ public sealed class Schema : IEquatable<Schema>
                 throw new MalformedInputException($"field '{name}' has an unknown type, option or flag");
             }
 
+            var metric = VectorMetric.Cosine;
+            int hnswM = FieldDefinition.DefaultHnswM;
+            int efConstruction = FieldDefinition.DefaultEfConstruction;
+            int flatThreshold = FieldDefinition.DefaultFlatThreshold;
+            if ((FieldType)type == FieldType.Vector)
+            {
+                byte metricByte = src.ReadByte();
+                if (metricByte > (byte)VectorMetric.Euclidean)
+                {
+                    throw new MalformedInputException($"vector field '{name}' has an unknown metric");
+                }
+
+                metric = (VectorMetric)metricByte;
+                hnswM = src.ReadCount(256, "HNSW M");
+                efConstruction = src.ReadCount(4096, "HNSW efConstruction");
+                flatThreshold = src.ReadCount(100_000_000, "flat threshold");
+            }
+
             builder.Add(new FieldDefinition(name, (FieldType)type)
             {
                 Indexed = (flags & 1) != 0,
@@ -363,6 +423,10 @@ public sealed class Schema : IEquatable<Schema>
                 Analyzer = analyzer.Length == 0 ? null : analyzer,
                 IndexOptions = (IndexOptions)options,
                 Dimensions = dimensions,
+                Metric = metric,
+                HnswM = hnswM,
+                EfConstruction = efConstruction,
+                FlatThreshold = flatThreshold,
             });
         }
 
@@ -468,6 +532,14 @@ public sealed class SchemaBuilder
     /// <returns>This builder.</returns>
     public SchemaBuilder Vector(string name, int dimensions) => Add(new FieldDefinition(name, FieldType.Vector) { Dimensions = dimensions });
 
+    /// <summary>Adds a vector field with a chosen metric.</summary>
+    /// <param name="name">The field name.</param>
+    /// <param name="dimensions">The vector length.</param>
+    /// <param name="metric">How closeness is measured.</param>
+    /// <returns>This builder.</returns>
+    public SchemaBuilder Vector(string name, int dimensions, VectorMetric metric)
+        => Add(new FieldDefinition(name, FieldType.Vector) { Dimensions = dimensions, Metric = metric });
+
     /// <summary>Adds a dynamic JSON field.</summary>
     /// <param name="name">The field name.</param>
     /// <returns>This builder.</returns>
@@ -555,6 +627,16 @@ public sealed class SchemaBuilder
             if (f.Dimensions < 1 || f.Dimensions > _limits.MaxVectorDimensions)
             {
                 throw new ArgumentException($"Vector field '{n}' needs 1 to {_limits.MaxVectorDimensions} dimensions, not {f.Dimensions}.");
+            }
+
+            if (f.Multi)
+            {
+                throw new ArgumentException($"Vector field '{n}' holds one vector per document.");
+            }
+
+            if (!Enum.IsDefined(f.Metric) || f.HnswM < 2 || f.HnswM > 256 || f.EfConstruction < f.HnswM || f.EfConstruction > 4096 || f.FlatThreshold < 0 || f.FlatThreshold > 100_000_000)
+            {
+                throw new ArgumentException($"Vector field '{n}' needs a known metric, M from 2 to 256, efConstruction from M to 4096 and a flat threshold from 0 to 100 million.");
             }
         }
         else if (f.Dimensions != 0)
