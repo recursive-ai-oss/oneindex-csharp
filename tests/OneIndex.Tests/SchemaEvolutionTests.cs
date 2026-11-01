@@ -212,10 +212,8 @@ public sealed class SchemaEvolutionTests
         using IndexSnapshot s = IndexSnapshot.Open(storage);
         Assert.Equal(simple, s.Schema);
         Assert.Equal(Expected(_ => true), s.LiveDocCount);
-        using IRangeReader file = storage.OpenRead(CommitFileNames.For(s.Generation));
-        var head = new byte[8];
-        file.ReadExactly(0, head);
-        Assert.Equal(1u, BitConverter.ToUInt32(head, 4));
+        Assert.Equal(0, s.Commit.SchemaEpoch);
+        Assert.Null(s.Commit.Pending);
     }
 
     [Fact]

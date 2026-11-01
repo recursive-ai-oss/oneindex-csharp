@@ -56,10 +56,7 @@ public sealed partial class IndexWriter
                 }
 
                 infos.Add(info);
-                foreach (SegmentFile f in info.Files)
-                {
-                    names.Add(f.FileName);
-                }
+                names.AddRange(info.FileNames);
             }
 
             ReaderLease? lease = IndexLocks.AcquireViewLease(_storage, _current?.Generation ?? 0, cancellationToken);

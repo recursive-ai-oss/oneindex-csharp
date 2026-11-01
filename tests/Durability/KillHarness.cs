@@ -130,7 +130,7 @@ public static class KillHarness
     public sealed record Summary(int Kills, int Failures, List<string> Messages, long Commits, int KilledDuringCommit, int CommitLandedUnacknowledged);
 
     /// <summary>Runs <paramref name="kills"/> kill cycles in one directory.</summary>
-    public static Summary RunLane(string directory, string failureDirectory, int kills, int seed, int maxDelayMs, string[] childCommand, bool evolve = false)
+    public static Summary RunLane(string directory, string failureDirectory, int kills, int seed, int maxDelayMs, string[] childCommand, bool evolve = false, bool clear = false)
     {
         int version = 1;
         var rng = new Random(seed);
@@ -140,7 +140,7 @@ public static class KillHarness
         int landed = 0;
         long lastGen = 0;
         string lastHash = new Workload.Model().Hash();
-        Directory.CreateDirectory(directory);
+        CampaignDirectory.Prepare(directory, clear);
         int done = 0;
         for (; done < kills; done++)
         {

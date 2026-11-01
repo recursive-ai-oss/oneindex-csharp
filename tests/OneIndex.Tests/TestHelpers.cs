@@ -22,6 +22,13 @@ internal static class TestHelpers
         return bytes;
     }
 
+    /// <summary>The bytes of one part, whether it has a file of its own or sits inside a pack file.</summary>
+    public static byte[] ReadPart(IStorage storage, SegmentFile file)
+    {
+        byte[] all = ReadAll(storage, file.FileName);
+        return file.Offset == 0 ? all : all.AsSpan((int)file.Offset, (int)file.Length).ToArray();
+    }
+
     public static void WriteAll(IStorage storage, string name, ReadOnlySpan<byte> data, bool sync = true)
     {
         using IStorageWriter writer = storage.Create(name);

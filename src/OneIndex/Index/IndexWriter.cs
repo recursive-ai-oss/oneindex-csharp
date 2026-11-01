@@ -826,20 +826,14 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
         var names = new List<string> { CommitFileNames.For(commit.Generation) };
         foreach (SegmentInfo s in commit.Segments)
         {
-            foreach (SegmentFile f in s.Files)
-            {
-                names.Add(f.FileName);
-            }
+            names.AddRange(s.FileNames);
         }
 
         if (commit.Pending is { } pending)
         {
             foreach (RebuiltSegment r in pending.Rebuilt)
             {
-                foreach (SegmentFile f in r.Info.Files)
-                {
-                    names.Add(f.FileName);
-                }
+                names.AddRange(r.Info.FileNames);
             }
         }
 
@@ -1018,7 +1012,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
         if (s.IsNew)
         {
             // Never committed: its only reference is the pending one.
-            List<string> names = s.Info.Files.Select(f => f.FileName).Where(_pending.Contains).ToList();
+            List<string> names = s.Info.FileNames.Where(_pending.Contains).ToList();
             foreach (string n in names)
             {
                 _pending.Remove(n);
@@ -1047,7 +1041,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
         }
 
         string name = NewSegmentName();
-        var sink = new SegmentFileSink(_storage, name) { DeferSync = true };
+        var sink = new SegmentFileSink(_storage, name) { DeferSync = true, Pack = true };
         try
         {
             IReadOnlyList<Document> expanded = DynamicFields.Expand(_schema, docs, _limits, out Schema flushSchema);
@@ -1093,7 +1087,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
     private void AddUniqueSegment(SegmentInfo info, int position)
     {
         var seg = new WorkSegment(info) { IsNew = true };
-        List<string> names = info.Files.Select(f => f.FileName).ToList();
+        List<string> names = info.FileNames.ToList();
         foreach (string n in names)
         {
             _pending.Add(n);

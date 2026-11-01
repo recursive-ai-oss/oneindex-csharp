@@ -248,7 +248,7 @@ internal static class DocValuesFixture
 
     private static byte[] Read(MemoryStorage storage, SegmentInfo info, string part)
     {
-        using IRangeReader r = storage.OpenRead(info.FindPart(part)!.FileName);
+        using IRangeReader r = PackedFiles.Open(storage, info.FindPart(part)!, default);
         var bytes = new byte[r.Length];
         r.ReadExactly(0, bytes);
         return bytes;

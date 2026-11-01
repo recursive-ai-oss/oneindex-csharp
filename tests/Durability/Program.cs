@@ -2,7 +2,15 @@ using System.Diagnostics;
 using System.Globalization;
 using OneIndex.Durability;
 
-return Run(args);
+try
+{
+    return Run(args);
+}
+catch (CampaignDirectoryException e)
+{
+    Console.Error.WriteLine(e.Message);
+    return 2;
+}
 
 static int Run(string[] args)
 {
@@ -55,7 +63,7 @@ static int Run(string[] args)
             string sparseRoot = Option("dir", Path.Combine(Path.GetTempPath(), "oneindex-sparse-kill"));
             string[] sparseChild = [Environment.ProcessPath!, .. Environment.GetCommandLineArgs().Take(1).Where(a => a.EndsWith(".dll", StringComparison.Ordinal))];
             var sparseClock = Stopwatch.StartNew();
-            SparseKill.Result sr = SparseKill.Run(sparseRoot, Number("kills", 100), Number("seed", 1), Number("max-delay-ms", 600), sparseChild);
+            SparseKill.Result sr = SparseKill.Run(sparseRoot, Number("kills", 100), Number("seed", 1), Number("max-delay-ms", 600), sparseChild, Option("clear", "false") == "true");
             Console.WriteLine($"sparse-kill: {sr.Kills} kills (seed {Number("seed", 1)}), {sr.Commits} commits acknowledged, {sr.KilledDuringCommit} kills inside a commit call, {sr.Documents} documents checked, {sr.Failures} failures, {sparseClock.Elapsed.TotalSeconds:F0} s");
             foreach (string m in sr.Messages.Take(20))
             {
@@ -73,7 +81,7 @@ static int Run(string[] args)
             string root = Option("dir", Path.Combine(Path.GetTempPath(), "oneindex-embed-kill"));
             string[] childCommand = [Environment.ProcessPath!, .. Environment.GetCommandLineArgs().Take(1).Where(a => a.EndsWith(".dll", StringComparison.Ordinal))];
             var clock = Stopwatch.StartNew();
-            EmbedKill.Result r = EmbedKill.Run(root, Number("kills", 100), Number("seed", 1), Number("max-delay-ms", 600), childCommand);
+            EmbedKill.Result r = EmbedKill.Run(root, Number("kills", 100), Number("seed", 1), Number("max-delay-ms", 600), childCommand, Option("clear", "false") == "true");
             Console.WriteLine($"embed-kill: {r.Kills} kills (seed {Number("seed", 1)}), {r.Commits} commits acknowledged, {r.KilledDuringCommit} kills inside a commit call, {r.Documents} documents checked, {r.Failures} failures, {clock.Elapsed.TotalSeconds:F0} s");
             foreach (string m in r.Messages.Take(20))
             {
@@ -116,7 +124,7 @@ static int Run(string[] args)
             {
                 int laneIndex = lane;
                 int perLane = kills / lanes + (laneIndex < kills % lanes ? 1 : 0);
-                tasks.Add(Task.Run(() => KillHarness.RunLane(Path.Combine(root, "lane" + laneIndex), failures, perLane, seed + (laneIndex * 7919), maxDelay, childCommand, evolve)));
+                tasks.Add(Task.Run(() => KillHarness.RunLane(Path.Combine(root, "lane" + laneIndex), failures, perLane, seed + (laneIndex * 7919), maxDelay, childCommand, evolve, Option("clear", "false") == "true")));
             }
 
             KillHarness.Summary[] all = Task.WhenAll(tasks).GetAwaiter().GetResult();
@@ -132,7 +140,7 @@ static int Run(string[] args)
         }
 
         default:
-            Console.WriteLine("usage: Durability sweep [--workloads N] [--crash-seeds N] [--ops N] | kill --dir D --kills N [--lanes L] [--seed S] | child --dir D --seed S");
+            Console.WriteLine("usage: Durability sweep [--workloads N] [--crash-seeds N] [--ops N] | kill --dir D --kills N [--lanes L] [--seed S] [--clear true] (the directory must be empty unless --clear true) | child --dir D --seed S");
             return 2;
     }
 }

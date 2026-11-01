@@ -44,10 +44,7 @@ public sealed partial class IndexWriter
         {
             _busy.Add(s.Info.Name);
             infos.Add(s.Info);
-            foreach (SegmentFile f in s.Info.Files)
-            {
-                held.Add(f.FileName);
-            }
+            held.AddRange(s.Info.FileNames);
 
             captured.Add(s.Words is not null
                 ? LiveDocs.FromWords(s.Info.DocCount, (ulong[])s.Words.Clone())
@@ -127,7 +124,7 @@ public sealed partial class IndexWriter
                 {
                     if (result is not null)
                     {
-                        List<string> names = result.Files.Select(f => f.FileName).ToList();
+                        List<string> names = result.FileNames.ToList();
                         foreach (string n in names)
                         {
                             _pending.Add(n);
