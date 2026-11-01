@@ -97,6 +97,20 @@ the document, take the occurrences of the query words in position order. Every t
 
 The default weight was chosen on the four BEIR gate sets; see below.
 
+Cost (302,567 Wikipedia abstracts, one thread, median ms per query over 200 seeded queries, indicative runs on a loaded 32-core x64 machine; Lucene.NET's disjunctive rows on the same run: Terms2 0.373, Terms5 0.648):
+
+| Query shape | No bonus | Bonus, weight 0.1 | Notes |
+|---|---|---|---|
+| User text, every word required (what the default compiles), 2 words | 0.16 to 0.18 | 0.28 | +0.10 ms; 1.6x its own base, 0.75x Lucene.NET's Terms2 |
+| Same, 5 words | 0.100 | 0.17 | 1.7x its own base, 0.27x Lucene.NET's Terms5 |
+| Typed disjunction wrapped by hand, 2 words | 0.25 | 0.44 to 0.59 | 1.8x to 2.4x; against Lucene.NET 1.2x to 1.6x |
+| Typed disjunction wrapped by hand, 5 words | 0.80 | 1.36 to 1.74 | 1.7x to 2.2x; against Lucene.NET 2.1x to 2.7x |
+
+The default never builds a disjunction: user text requires every word, so the bonus is paid only on documents that contain all the words. A
+hand-wrapped disjunction pays for the positions of every document that matches two of the words and loses most pruning headroom, so wrapping
+disjunctions is for callers who want it. Typed queries that are not wrapped (and so the benchmark rows Terms1, Terms2, Terms5 and Phrase) are not
+changed by the bonus.
+
 Measured effect of the weight (BEIR gate sets):
 
 | Proximity weight | SciFact | ArguAna | SCIDOCS | NQ |
