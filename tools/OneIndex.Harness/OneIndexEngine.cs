@@ -224,10 +224,9 @@ public sealed class OneIndexEngine : ITextEngine
         _writer?.Dispose();
     }
 
-    // The comparator rewrites a prefix to a constant-score union of its terms; the same is asked of OneIndex so both answer one question.
     private static Query Prefix(PrefixQuery px)
     {
-        var prefix = new OneIndex.Search.PrefixQuery("text", px.Prefix) { ConstantScore = true };
+        var prefix = new OneIndex.Search.PrefixQuery("text", px.Prefix);
         if (px.Required.Length == 0)
         {
             return prefix;

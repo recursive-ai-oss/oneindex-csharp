@@ -170,7 +170,6 @@ internal sealed class FieldTermDictionary
         return pos;
     }
 
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     internal void ReadArc(ReadOnlySpan<byte> fst, int node, ref int pos, out byte label, out long words, out int target)
     {
         if ((uint)pos >= (uint)fst.Length)
@@ -190,19 +189,7 @@ internal sealed class FieldTermDictionary
         target = node - (int)delta;
     }
 
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     private ulong ReadVarUInt(ReadOnlySpan<byte> span, ref int pos)
-    {
-        // Most counts and deltas fit one byte: take that path without the loop.
-        if ((uint)pos < (uint)span.Length && span[pos] < 0x80)
-        {
-            return span[pos++];
-        }
-
-        return ReadVarUIntSlow(span, ref pos);
-    }
-
-    private ulong ReadVarUIntSlow(ReadOnlySpan<byte> span, ref int pos)
     {
         ulong result = 0;
         for (int shift = 0; shift < 63; shift += 7)
@@ -304,7 +291,6 @@ internal sealed class FieldTermDictionary
             public bool SelfDone;
             public int StateOffset;
             public int StateLength;
-            public int StateId;
             public int SavedTop;
             public int Partial;
             public int Need;
@@ -323,7 +309,6 @@ internal sealed class FieldTermDictionary
         private long _ordinal;
         private long _budget;
         private bool _done;
-        private readonly bool _ids;
         private InfoCursor _cursor = new() { Ordinal = -1 };
 
         public TermEnumerator(FieldTermDictionary dict, ReadOnlySpan<byte> prefix, int node, long ordinal, TermAutomaton? automaton)
@@ -336,32 +321,7 @@ internal sealed class FieldTermDictionary
             _nextOrdinal = ordinal;
             _budget = dict.TotalTermBytes + 2;
             int stateLength = 0;
-            int startId = 0;
-            if (automaton is not null && automaton.StartStateId != TermAutomaton.NoStateIds)
-            {
-                // An interning automaton: a state is one integer and a step is a table lookup.
-                _ids = true;
-                startId = automaton.StartStateId;
-                int pos = 0;
-                while (startId >= 0 && pos < prefix.Length)
-                {
-                    if (Rune.DecodeFromUtf8(prefix[pos..], out Rune r, out int used) != System.Buffers.OperationStatus.Done)
-                    {
-                        startId = TermAutomaton.DeadStateId;
-                        break;
-                    }
-
-                    pos += used;
-                    startId = automaton.NextStateId(startId, r.Value);
-                }
-
-                if (startId < 0)
-                {
-                    _done = true;
-                    return;
-                }
-            }
-            else if (automaton is not null)
+            if (automaton is not null)
             {
                 _pool = new int[Math.Max(8, automaton.MaxStateLength * 4)];
                 stateLength = automaton.Start(_pool);
@@ -399,7 +359,7 @@ internal sealed class FieldTermDictionary
             }
 
             _frames[0] = default;
-            InitFrame(ref _frames[0], node, 0, stateLength, 0, 0, 0, startId);
+            InitFrame(ref _frames[0], node, 0, stateLength, 0, 0);
             _depth = 0;
         }
 
@@ -429,7 +389,7 @@ internal sealed class FieldTermDictionary
                     f.SelfDone = true;
                     if (f.IsFinal)
                     {
-                        if (f.Need == 0 && (_automaton is null || (_ids ? _automaton.IsAcceptingId(f.StateId) : _automaton.IsAccepting(_pool.AsSpan(f.StateOffset, f.StateLength)))))
+                        if (f.Need == 0 && (_automaton is null || _automaton.IsAccepting(_pool.AsSpan(f.StateOffset, f.StateLength))))
                         {
                             _ordinal = _nextOrdinal++;
                             if (_ordinal >= _dict.TermCount)
@@ -463,7 +423,6 @@ internal sealed class FieldTermDictionary
                 int childNeed = 0;
                 int stateOffset = f.StateOffset;
                 int stateLength = f.StateLength;
-                int stateId = f.StateId;
                 int saved = _poolTop;
                 if (_automaton is not null)
                 {
@@ -519,25 +478,17 @@ internal sealed class FieldTermDictionary
 
                     if (!prune && complete)
                     {
-                        if (_ids)
+                        EnsurePool(_poolTop + _automaton.MaxStateLength);
+                        int n = _automaton.Transition(_pool.AsSpan(f.StateOffset, f.StateLength), cp, _pool.AsSpan(_poolTop, _automaton.MaxStateLength));
+                        if (n == 0)
                         {
-                            stateId = _automaton.NextStateId(f.StateId, cp);
-                            prune = stateId < 0;
+                            prune = true;
                         }
                         else
                         {
-                            EnsurePool(_poolTop + _automaton.MaxStateLength);
-                            int n = _automaton.Transition(_pool.AsSpan(f.StateOffset, f.StateLength), cp, _pool.AsSpan(_poolTop, _automaton.MaxStateLength));
-                            if (n == 0)
-                            {
-                                prune = true;
-                            }
-                            else
-                            {
-                                stateOffset = _poolTop;
-                                stateLength = n;
-                                _poolTop += n;
-                            }
+                            stateOffset = _poolTop;
+                            stateLength = n;
+                            _poolTop += n;
                         }
                     }
 
@@ -565,7 +516,7 @@ internal sealed class FieldTermDictionary
                 }
 
                 _depth++;
-                InitFrame(ref _frames[_depth], target, stateOffset, stateLength, saved, childNeed, childPartial, stateId);
+                InitFrame(ref _frames[_depth], target, stateOffset, stateLength, saved, childNeed, childPartial);
                 fst = _dict.Fst;
             }
         }
@@ -574,7 +525,7 @@ internal sealed class FieldTermDictionary
         {
         }
 
-        private void InitFrame(ref Frame frame, int node, int stateOffset, int stateLength, int saved, int need, int partial = 0, int stateId = 0)
+        private void InitFrame(ref Frame frame, int node, int stateOffset, int stateLength, int saved, int need, int partial = 0)
         {
             int pos = _dict.ReadHeader(_dict.Fst, node, out int arcCount, out bool isFinal);
             frame = new Frame
@@ -586,7 +537,6 @@ internal sealed class FieldTermDictionary
                 SelfDone = false,
                 StateOffset = stateOffset,
                 StateLength = stateLength,
-                StateId = stateId,
                 SavedTop = saved,
                 Need = need,
                 Partial = partial,

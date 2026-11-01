@@ -181,14 +181,6 @@ public sealed record PhraseQuery(string Field, IReadOnlyList<string> Terms) : Qu
 /// <param name="Prefix">The prefix, already analyzed.</param>
 public sealed record PrefixQuery(string Field, string Prefix) : Query
 {
-    /// <summary>
-    /// Whether every matching document scores the query boost instead of the sum of its matching terms' scores. Default
-    /// <see langword="false"/>. A constant score skips the per-posting BM25 arithmetic, which is what makes a prefix that expands to
-    /// thousands of terms cheap, and is the right choice when the prefix filters rather than ranks. It is a property of the object
-    /// and is not part of the query JSON form.
-    /// </summary>
-    public bool ConstantScore { get; init; }
-
     /// <inheritdoc/>
     public override TResult Accept<TResult>(QueryVisitor<TResult> visitor) => visitor.VisitPrefix(this);
 }
