@@ -24,6 +24,9 @@ internal sealed class HnswBuilder : HnswGraph
     /// <summary>Experiment switch: choose the nearest candidates without the diversity heuristic.</summary>
     internal static bool SimpleSelection { get; set; }
 
+    /// <summary>Experiment switch: a candidate is dropped only when its distance to a chosen neighbour is below its distance to the base node by more than (factor - 1) times that distance (1 is the paper's rule).</summary>
+    internal static float Relaxation { get; set; } = 1f;
+
     private readonly VectorValues _values;
     private readonly DistanceKind _kind;
     private readonly int _m;
@@ -349,7 +352,7 @@ internal sealed class HnswBuilder : HnswGraph
             bool good = true;
             for (int j = 0; !SimpleSelection && j < kept; j++)
             {
-                if (Pair(c.Id, chosen[j]) < c.Key)
+                if (Pair(c.Id, chosen[j]) < c.Key - ((Relaxation - 1f) * MathF.Abs(c.Key)))
                 {
                     good = false;
                     break;

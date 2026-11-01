@@ -43,6 +43,7 @@ internal static class Program
         Engines.Quantization = Option("quant", "none") switch { "8" => OneIndex.Vectors.VectorQuantization.Scalar8, "4" => OneIndex.Vectors.VectorQuantization.Scalar4, "1" => OneIndex.Vectors.VectorQuantization.OneBit, _ => OneIndex.Vectors.VectorQuantization.None };
         OneIndex.Vectors.HnswBuilder.KeepPruned = Option("keep-pruned", "0") == "1";
         OneIndex.Vectors.HnswBuilder.Layer0Select = int.Parse(Option("select0", "0"), CultureInfo.InvariantCulture);
+        OneIndex.Vectors.HnswBuilder.Relaxation = float.Parse(Option("alpha", "1"), CultureInfo.InvariantCulture);
         OneIndex.Vectors.HnswBuilder.SimpleSelection = Option("simple", "0") == "1";
 
         JsonElement manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, "manifest.json"))).RootElement;
