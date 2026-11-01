@@ -374,7 +374,7 @@ internal sealed class QuantizedNodeScorer : NodeScorer
         double sum = BinaryPrimitives.ReadInt32LittleEndian(corrections[8..]);
         double norm = BinaryPrimitives.ReadSingleLittleEndian(corrections[12..]);
         int dot = _codec == VectorQuantization.Scalar8
-            ? VectorKernels.DotInt8(System.Runtime.InteropServices.MemoryMarshal.Cast<byte, sbyte>(record[..d]), _query.AsSpan(0, d))
+            ? QuantizedKernels.DotInt8(record[..d], _query.AsSpan(0, d))
             : QuantizedKernels.DotInt4(record[..codesLength], _query.AsSpan(0, codesLength), _query.AsSpan(codesLength, codesLength));
 
         // Expand (a_x + s_x X)(a_y + s_y Y) over the d components.

@@ -39,6 +39,7 @@ and sum of squares over `float`, and dot product and squared distance over `sbyt
   accepts up to 131,071 elements and squared distance up to 32,768 without overflowing `int`; longer inputs throw.
 * Files with `unsafe` constructs, `Unsafe.*`, `MemoryMarshal` or intrinsics: `Kernels/VectorKernels.cs` (loads through
   `Vector128/256/512.LoadUnsafe` behind a length check made once per call, and fixed 16-float `stackalloc` tail buffers),
+  `Kernels/QuantizedKernels.cs` (the same loads for the 4-bit dot product, and a byte-to-signed-byte reinterpretation),
   `Codecs/VectorPartReader.cs` and `Codecs/VectorSegmentCodec.cs` and `Codecs/VectorFiles.cs` (`MemoryMarshal.Cast` between the bytes of
   a checked block and the floats or ints in it; bounds are those of the block), `Vectors/HnswBuilder.cs` is entirely safe code.
 

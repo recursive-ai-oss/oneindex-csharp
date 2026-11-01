@@ -50,6 +50,13 @@ internal static class QuantizedKernels
     public static int DotInt4(ReadOnlySpan<byte> packed, ReadOnlySpan<sbyte> queryLow, ReadOnlySpan<sbyte> queryHigh)
         => DotInt4(VectorKernels.Best, packed, queryLow, queryHigh);
 
+    /// <summary>The dot product of stored signed codes (read from a byte span) with a signed-byte query: <see cref="VectorKernels.DotInt8(ReadOnlySpan{sbyte}, ReadOnlySpan{sbyte})"/> on bytes that hold signed values.</summary>
+    /// <param name="codes">The record's codes; each byte is a two's-complement signed byte.</param>
+    /// <param name="query">The query codes, the same length.</param>
+    /// <returns>The sum of products.</returns>
+    public static int DotInt8(ReadOnlySpan<byte> codes, ReadOnlySpan<sbyte> query)
+        => VectorKernels.DotInt8(MemoryMarshal.Cast<byte, sbyte>(codes), query); // same length and layout: a reinterpretation, no copy
+
     /// <summary>The number of differing bits of two equally long bit vectors whose length is a multiple of 8 bytes.</summary>
     /// <param name="a">The first bit vector.</param>
     /// <param name="b">The second bit vector.</param>
