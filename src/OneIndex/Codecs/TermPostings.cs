@@ -1,4 +1,6 @@
 using System.Buffers.Binary;
+using System.Numerics;
+using System.Runtime.Intrinsics;
 using OneIndex.Index;
 using OneIndex.Search;
 using OneIndex.Storage;
@@ -15,7 +17,7 @@ public sealed class TermPostings : PostingsIterator
 {
     private const int BlockSize = PostingsBlobBuilder.BlockSize;
     private const int EntryBytes = 16;
-    private const int PositionBufferBytes = 512;
+    private const int PositionBufferBytes = 2048;
     private const int MaxHeaderBytes = 15;
 
     private readonly IRangeReader _file;
@@ -657,10 +659,53 @@ public sealed class TermPostings : PostingsIterator
 
     private void SkipPositions(long count)
     {
-        long varints = count * (_fieldHasOffsets ? 3 : 1);
-        for (long i = 0; i < varints; i++)
+        long remaining = count * (_fieldHasOffsets ? 3 : 1);
+        if (!Vector128.IsHardwareAccelerated)
         {
-            ReadPosVar();
+            for (long i = 0; i < remaining; i++)
+            {
+                ReadPosVar();
+            }
+
+            return;
+        }
+
+        // A varint ends at the byte whose high bit is clear, so skipping n numbers means passing the n-th such byte. The window is
+        // scanned 16 bytes at a time: the high bits of a chunk come out as a 16-bit mask whose zero bits mark the ends. The
+        // skipped numbers are not decoded (the ones read afterwards are checked); running out of data still raises the corruption error.
+        while (remaining > 0)
+        {
+            if (_posBufLen - _posBufPos < 16)
+            {
+                RefillPositions();
+                if (_posBufLen - _posBufPos < 16)
+                {
+                    // The last bytes of the file: finish with the checked reader.
+                    for (; remaining > 0; remaining--)
+                    {
+                        ReadPosVar();
+                    }
+
+                    return;
+                }
+            }
+
+            uint ends = ~Vector128.Create(new ReadOnlySpan<byte>(_posBuffer, _posBufPos, 16)).ExtractMostSignificantBits() & 0xFFFFu;
+            int found = BitOperations.PopCount(ends);
+            if (found < remaining)
+            {
+                remaining -= found;
+                _posBufPos += 16;
+                continue;
+            }
+
+            for (long k = 1; k < remaining; k++)
+            {
+                ends &= ends - 1; // drop the lowest end
+            }
+
+            _posBufPos += BitOperations.TrailingZeroCount(ends) + 1;
+            remaining = 0;
         }
     }
 
