@@ -101,6 +101,8 @@ converted to the OneModel file format with the matrix-multiply weights and the w
 - Licence: MIT (the model card's metadata states `license: mit`, and its License section: "The released models can be used for commercial
   purposes free of charge.")
 - The licence text packed with the weights is `models/bge-small-en-v1.5/LICENSE-bge-small-en-v1.5.txt` in the package.
+- Provenance: we did not train this model; the weights are redistributed as published, converted and quantized. Training data as the authors state it: the model card does not list the
+  sets; it points to the released BGE training data (BAAI-MTP, "the massive training data of BGE"), whose composition is described by its publisher.
 
 ### cross-encoder/ms-marco-MiniLM-L6-v2 (package `RecursiveAI.OneIndex.Models`)
 
@@ -111,6 +113,7 @@ stored as 8-bit integers. The model was trained on the MS MARCO passage ranking 
 - Source: https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2, revision 233902d25c440f23af6f7d6e94d2946bac0bee0a
 - Licence: Apache License 2.0 (the model card's metadata states `license: apache-2.0`).
 - The notice packed with the weights is `models/ms-marco-MiniLM-L6-v2/LICENSE-ms-marco-MiniLM-L6-v2.txt` in the package.
+- Provenance: we did not train this model; the weights are redistributed as published, converted and quantized. Training data as the authors state it: the MS MARCO passage ranking set. The weights are governed by their Apache-2.0 licence; the MS MARCO data terms are the data owner's and apply to that data, which is not included. Weights stay loadable from files (`MiniLmReranker.Open`), so an application can use another model or none.
 
 The tests and tools also run the Hugging Face `tokenizers` and ONNX Runtime packages as reference implementations (fetched into a cache,
 not part of the repository or any package).
