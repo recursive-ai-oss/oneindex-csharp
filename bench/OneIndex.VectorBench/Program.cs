@@ -59,6 +59,11 @@ internal static class Program
             exact[q] = [.. truthTop[q]];
         }
 
+        if (Option("mode", "search") == "filtered")
+        {
+            return FilteredRun.Run(data, count, dims, queries, Option("selectivities", "0.5,0.1,0.01,0.001"), Option("efs", "100"), float.Parse(Option("flat-factor", "20"), CultureInfo.InvariantCulture), int.Parse(Option("cap", "32"), CultureInfo.InvariantCulture), m, efc, scratch);
+        }
+
         if (Option("mode", "search") == "merge")
         {
             return MergeRun.Run(data, count, dims, queries, exact, m, efc, scratch);

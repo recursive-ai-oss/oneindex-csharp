@@ -70,11 +70,8 @@ extended candidates; connections dropped by pruning are not refilled, which is t
   machine (kernels above). Tests build twice and compare every link.
 * **Deletes.** A deleted document stays in the graph, because removing it can cut paths. Search walks through it and leaves it out of
   the results. A segment with many deletes is rebuilt by the merge policy like any other.
-* **Filters.** A query may carry a filter (a query whose matches are the allowed documents). The segment turns it into a bit set. A
-  filtered graph search keeps walking through rejected nodes and collects accepted ones until `ef` are found. If fewer than
-  `sqrt(ef * n)` documents pass, an exact scan of the accepted vectors is cheaper than walking to `ef / selectivity` nodes and is used
-  instead; a graph walk that visits more nodes than there are accepted documents stops and falls back to the exact scan, so the cost is
-  bounded by twice the exact one. (ACORN-style traversal is a later unit.)
+* **Filters.** A query may carry a filter (a query whose matches are the allowed documents). The segment turns it into a bit set, and
+  the search is described under "Filtered search" below.
 
 ### Merge
 

@@ -71,6 +71,34 @@ internal static class VectorScenario
         Require(searcher.Context.Leaves[0].Reader.GetVectors("v")!.Metric == VectorMetric.Cosine, "metric");
     }
 
+    /// <summary>A filter that admits more than 50 times the search breadth, so the segment walks the graph over the accepted nodes instead of scanning them.</summary>
+    public static void RunFilteredWalk()
+    {
+        Schema schema = new SchemaBuilder().Id("id").Integral("n")
+            .Add(new FieldDefinition("v", FieldType.Vector) { Dimensions = 6, FlatThreshold = 8, HnswM = 8, EfConstruction = 32 })
+            .Add(new FieldDefinition("v4", FieldType.Vector) { Dimensions = 6, FlatThreshold = 8, HnswM = 8, EfConstruction = 32, Quantization = VectorQuantization.Scalar4 })
+            .Build();
+        var rng = new Random(8);
+        using IndexWriter writer = IndexWriter.Open(new MemoryStorage(), schema, new IndexWriterOptions { MaxBufferedDocuments = 2000, AutoMerge = false });
+        for (int i = 0; i < 1200; i++)
+        {
+            writer.Upsert(new Document().Add("id", "d" + i).Add("n", (long)i).Add("v", Vector(rng)).Add("v4", Vector(rng)));
+        }
+
+        writer.Commit();
+        using IndexSnapshot snapshot = writer.OpenSnapshot();
+        IndexSearcher searcher = SnapshotSearch.CreateSearcher(snapshot);
+        Query filter = new RangeQuery("n", null, FieldValue.FromInt64(600)) { IncludeUpper = false };
+        float[] q = Vector(rng);
+        foreach (string field in new[] { "v", "v4" })
+        {
+            TopDocs walk = searcher.Search(new KnnQuery(field, q, 5) { Ef = 10, Filter = filter }, 5);
+            TopDocs exact = searcher.Search(new KnnQuery(field, q, 5) { Exact = true, Filter = filter }, 5);
+            Require(walk.Hits.Count == 5 && walk.Hits.All(h => h.DocId < 600), "filtered walk " + field);
+            Require(walk.Hits.Select(h => h.DocId).Intersect(exact.Hits.Select(h => h.DocId)).Count() >= 3, "filtered walk recall " + field);
+        }
+    }
+
     public static void RunHappyPath()
     {
         var rng = new Random(6);

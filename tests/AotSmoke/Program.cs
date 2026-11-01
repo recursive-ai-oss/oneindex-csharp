@@ -12,6 +12,7 @@ QueryFormsLowLevelScenario.Run();
 ModelsScenario.Run();
 HybridScenario.Run();
 VectorScenario.RunLowLevel();
+VectorScenario.RunFilteredWalk();
 VectorScenario.RunHappyPath();
 SmokeScenario.RunWriter(new MemoryStorage(), threadedMerges: true);
 SmokeScenario.RunWriter(new MemoryStorage(), threadedMerges: false);
