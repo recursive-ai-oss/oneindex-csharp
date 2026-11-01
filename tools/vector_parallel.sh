@@ -10,7 +10,7 @@ pids=()
 for spec in "$@"; do
   label=${spec%%:*}; extra=${spec#*:}
   # shellcheck disable=SC2086
-  ( dotnet "$out/vb/OneIndex.VectorBench.dll" --dir "$dir" --count "$count" --passes 1 $extra 2>&1 | grep -E "^#|^@|^oneindex|^hnsw" | sed "s/^/[$label] /" ) &
+  ( dotnet "$out/vb/OneIndex.VectorBench.dll" $extra --dir "$dir" --count "$count" --passes 1 2>&1 | grep -E "^#|^@|^oneindex|^hnsw" | sed "s/^/[$label] /" ) &
   pids+=($!)
 done
 # Stop at once if a benchmark takes the machine.
