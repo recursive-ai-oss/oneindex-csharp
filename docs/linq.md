@@ -19,6 +19,10 @@ The pieces of the lambda that do not mention the document (captured variables, c
 
 Numeric widening conversions the compiler inserts are looked through (`x.Count > someLong`). Comparing an integer member with a fractional value rounds the bound inward (`x.Count > 2.5` means `>= 3`). Nullable members compare as C# does for non-null values; a document without the value matches `!=` and `!` and nothing else, as lifted comparisons do.
 
+## Paths in dynamic JSON
+
+A `[Dynamic]` property is reached with `Path`: `x.Meta.Path("customer.age") >= 18`, `x.Meta.Path("tags") == "red"`, `x.Meta.Path("customer.name").Exists()`. The comparison is with a string, a number, a `bool` or a date; the member must be on the left. See dynamic.md for what "any value at the path" means and how the path is written.
+
 ## What fails
 
 Anything else throws `UnsupportedExpressionException` (a `NotSupportedException`) **when `Where` is called**, naming the sub-expression: `The expression '(x.Text == "doc 1")' cannot be used in Where: 'Text' is full-text; match it with the search text, or filter on a separate [Keyword] property.` The usual causes:

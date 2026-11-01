@@ -151,7 +151,7 @@ public class CommitTests
     [Fact]
     public void NewerFormatAndUnknownCodecAreUnsupportedNotCorrupt()
     {
-        byte[] newer = Framed(s => { Header(s); s.WriteVarUInt(0); }, version: 2);
+        byte[] newer = Framed(s => { Header(s); s.WriteVarUInt(0); }, version: 3);
         Assert.Throws<UnsupportedFormatException>(() => CommitFileFormat.Parse(newer, "c"));
 
         byte[] codec = Framed(s =>

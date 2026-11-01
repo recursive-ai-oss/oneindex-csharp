@@ -15,14 +15,15 @@ public static class KillHarness
     /// <summary>Exit code of a writer child that found the index locked by another writer.</summary>
     public const int LockedExitCode = 3;
 
-    public static int RunChild(string directory, int seed, int maxOps, string? expectDirectory = null, int paceMs = 0)
+    public static int RunChild(string directory, int seed, int maxOps, string? expectDirectory = null, int paceMs = 0, int evolveVersion = 0)
     {
         var storage = new FileSystemStorage(directory);
-        IndexWriterOptions options = Workload.Options(seed % 2 == 0 ? new ThreadedMergeScheduler() : null, maxBuffered: 8);
+        IMergeScheduler? scheduler = seed % 2 == 0 ? new ThreadedMergeScheduler() : null;
+        IndexWriterOptions options = evolveVersion > 0 ? Workload.EvolveOptions(scheduler, maxBuffered: 8) : Workload.Options(scheduler, maxBuffered: 8);
         IndexWriter writer;
         try
         {
-            writer = IndexWriter.Open(storage, Workload.Schema, options);
+            writer = IndexWriter.Open(storage, Workload.ForVersion(evolveVersion), options);
         }
         catch (IndexLockedException)
         {
@@ -32,11 +33,11 @@ public static class KillHarness
 
         using (writer)
         {
-            return RunWriter(writer, seed, maxOps, expectDirectory, paceMs);
+            return RunWriter(writer, seed, maxOps, expectDirectory, paceMs, evolveVersion > 0);
         }
     }
 
-    private static int RunWriter(IndexWriter writer, int seed, int maxOps, string? expectDirectory, int paceMs)
+    private static int RunWriter(IndexWriter writer, int seed, int maxOps, string? expectDirectory, int paceMs, bool evolving)
     {
         var model = new Workload.Model();
         if (writer.Generation > 0)
@@ -65,6 +66,10 @@ public static class KillHarness
             {
                 op = new Workload.Op(Workload.Kind.DeleteId, id, "", "", 0);
             }
+            else if (evolving)
+            {
+                op = new Workload.Op(Workload.Kind.DeleteId, "doc" + rng.Next(300), "", "", 0); // the default codecs cannot look up keyword values
+            }
             else
             {
                 op = new Workload.Op(Workload.Kind.DeleteTag, "", "t" + rng.Next(5), "", 0);
@@ -81,6 +86,16 @@ public static class KillHarness
                 {
                     throw new InvalidDataException("the near-real-time view differs from the writer's state");
                 }
+            }
+
+            if (evolving && rng.Next(60) == 0)
+            {
+                // Finish the rebuild now. Every commit it makes publishes the same content, so the one pre-announcement covers them all.
+                Console.Out.WriteLine("PRE " + model.Hash());
+                writer.CompleteSchemaEvolution();
+                long finished = writer.Commit(); // publishes the operations still buffered when nothing was waiting for a rebuild
+                Console.Out.WriteLine($"ACK {finished} {model.Hash()}");
+                sinceCommit = 0;
             }
 
             sinceCommit++;
@@ -115,8 +130,9 @@ public static class KillHarness
     public sealed record Summary(int Kills, int Failures, List<string> Messages, long Commits, int KilledDuringCommit, int CommitLandedUnacknowledged);
 
     /// <summary>Runs <paramref name="kills"/> kill cycles in one directory.</summary>
-    public static Summary RunLane(string directory, string failureDirectory, int kills, int seed, int maxDelayMs, string[] childCommand)
+    public static Summary RunLane(string directory, string failureDirectory, int kills, int seed, int maxDelayMs, string[] childCommand, bool evolve = false)
     {
+        int version = 1;
         var rng = new Random(seed);
         var messages = new List<string>();
         long commits = 0;
@@ -140,7 +156,22 @@ public static class KillHarness
                 psi.ArgumentList.Add(a);
             }
 
-            psi.ArgumentList.Add("child");
+            if (evolve && rng.Next(2) == 0)
+            {
+                version = 3 - version; // the type changes between runs about half the time
+            }
+
+            if (evolve)
+            {
+                psi.ArgumentList.Add("child");
+                psi.ArgumentList.Add("--evolve");
+                psi.ArgumentList.Add(version.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            else
+            {
+                psi.ArgumentList.Add("child");
+            }
+
             psi.ArgumentList.Add("--dir");
             psi.ArgumentList.Add(directory);
             psi.ArgumentList.Add("--seed");
@@ -183,7 +214,7 @@ public static class KillHarness
             child.WaitForExit();
             if (exited && child.ExitCode != 0)
             {
-                messages.Add($"kill {done}: child failed on its own with exit code {child.ExitCode}: {errors}");
+                messages.Add($"kill {done}: child failed on its own with exit code {child.ExitCode}: {errors} {string.Join(" | ", lines.Take(3))}");
                 Preserve(directory, failureDirectory, done);
                 break;
             }
@@ -213,7 +244,16 @@ public static class KillHarness
                 }
             }
 
-            string? failure = Verify(directory, ackGen, ackHash, pre, out long gen, out string hash);
+            string? failure = Verify(directory, ackGen, ackHash, pre, out long gen, out string hash, evolve);
+            if (failure is null && evolve && (done % 25 == 24 || done == kills - 1))
+            {
+                failure = FinishRebuild(directory, version, hash);
+                if (failure is null)
+                {
+                    failure = Verify(directory, gen, hash, null, out gen, out hash, evolve);
+                }
+            }
+
             if (failure is not null)
             {
                 messages.Add($"kill {done} (delay {delay} ms, child seed {childSeed}): {failure}");
@@ -237,7 +277,36 @@ public static class KillHarness
         return new Summary(done, messages.Count, messages, commits, duringCommit, landed);
     }
 
-    internal static string? Verify(string directory, long ackGen, string ackHash, string? pre, out long gen, out string hash)
+    /// <summary>Opens the directory in this process with the cycle's schema and runs the rebuild to the end; nothing may be lost or left waiting.</summary>
+    internal static string? FinishRebuild(string directory, int version, string expectedHash)
+    {
+        try
+        {
+            var storage = new FileSystemStorage(directory);
+            using IndexWriter w = IndexWriter.Open(storage, Workload.ForVersion(version), Workload.EvolveOptions());
+            w.CompleteSchemaEvolution();
+            if (w.SchemaEvolution.InProgress)
+            {
+                return "the rebuild did not run to completion";
+            }
+
+            using IndexSnapshot snap = w.OpenSnapshot();
+            snap.Verify();
+            if (snap.Commit.Segments.Any(s => s.SchemaEpoch != snap.Commit.SchemaEpoch))
+            {
+                return "a segment is still older than the commit's schema epoch after the rebuild";
+            }
+
+            string hash = Workload.HashRows(Workload.ReadContent(snap));
+            return hash == expectedHash ? null : $"the rebuild changed the content: {hash} instead of {expectedHash}";
+        }
+        catch (Exception e) when (e is IOException or InvalidDataException or InvalidOperationException)
+        {
+            return $"failed rebuild: {e.GetType().Name}: {e.Message}";
+        }
+    }
+
+    internal static string? Verify(string directory, long ackGen, string ackHash, string? pre, out long gen, out string hash, bool evolving = false)
     {
         gen = 0;
         hash = new Workload.Model().Hash();
@@ -251,8 +320,13 @@ public static class KillHarness
             }
 
             gen = commit.Generation;
-            using IndexSnapshot snap = IndexSnapshot.Open(storage, Workload.Codecs);
+            using IndexSnapshot snap = IndexSnapshot.Open(storage, evolving ? null : Workload.Codecs);
             snap.Verify();
+            if (snap.Commit.Segments.Any(s => s.SchemaEpoch != snap.Commit.SchemaEpoch))
+            {
+                return $"generation {gen} serves segments of two schema epochs";
+            }
+
             SortedDictionary<string, string> content = Workload.ReadContent(snap);
             hash = Workload.HashRows(content);
             if (gen < ackGen)
@@ -263,6 +337,17 @@ public static class KillHarness
             if ((gen == ackGen && hash == ackHash) || (gen == ackGen + 1 && pre is not null && hash == pre))
             {
                 return Workload.CheckSearch(snap, content) is { } searchFailure ? $"wrong search results at generation {gen}: {searchFailure}" : null;
+            }
+
+            // Opening with a changed type, and each step of a rebuild, commits again without changing any document.
+            if (evolving && hash == ackHash)
+            {
+                return Workload.CheckSearch(snap, content) is { } evolveFailure ? $"wrong search results at generation {gen}: {evolveFailure}" : null;
+            }
+
+            if ((gen == ackGen + 1 || (evolving && gen > ackGen)) && pre is not null && hash == pre)
+            {
+                return Workload.CheckSearch(snap, content) is { } preFailure ? $"wrong search results at generation {gen}: {preFailure}" : null;
             }
 
             return $"silently wrong: generation {gen} content {hash}, acknowledged generation {ackGen} content {ackHash}, in-flight content {pre ?? "none"}";

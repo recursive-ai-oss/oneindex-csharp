@@ -17,6 +17,7 @@
 | `strict` | UTF-16 text | the strict query parser, its printer and binder: only `QueryParseException` may come out; what parses prints and reads back to an equal tree; the compiled query runs on a small index |
 | `filter` | UTF-16 text | the filter-string parser and printer (geo conditions included), same checks |
 | `queryjson` | UTF-8 bytes | the query JSON reader and writer (geo nodes, function-score nodes, `sort` and `searchAfter` included): only `QueryParseException`; write then read gives an equal request; the compiled query runs, and a sorted request runs its first page and a page after its cursor |
+| `dynamic` | first byte = route, then JSON bytes | hostile JSON indexed by path (directly, or after a schema change that rebuilds it from stored source), committed, reopened and queried: only typed exceptions; derived fields stay within the path limit; the stored value comes back whole |
 
 Only `CorruptIndexException` (and its subclass `UnsupportedFormatException`) may come out of a reader. Any other exception, a failed invariant, a hang (`-timeout`) or a memory blow-up (`-rss_limit_mb`) is a finding.
 

@@ -6,6 +6,12 @@ public sealed partial class IndexWriter
 {
     private void MaybeMergeLocked()
     {
+        if (_target is not null)
+        {
+            // Segments being rebuilt for a new schema are not merged: the rebuilt twins are tied to their sources.
+            return;
+        }
+
         var candidates = new List<MergeCandidate>();
         foreach (WorkSegment s in _segments)
         {
@@ -106,7 +112,7 @@ public sealed partial class IndexWriter
                     IdsFormat.Write(sink, entries, cancellationToken);
                 }
 
-                result = new SegmentInfo(name, total, 0, 0, sink.Files);
+                result = new SegmentInfo(name, total, 0, 0, sink.Files, _schemaEpoch);
             }
 
             lock (_gate)
