@@ -68,6 +68,14 @@ switch (args[0])
     case "hybrid":
         return HybridGate();
 
+    case "nq-index":
+    case "nq-run":
+    case "nq-eval":
+    case "standin-dense":
+    case "standin-sparse":
+    case "standin-rerank":
+        return NqCommands.Run(args[0], options);
+
     case "pair-ids":
     case "rerank-parity":
     case "rerank-beir":
