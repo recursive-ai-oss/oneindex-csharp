@@ -76,7 +76,30 @@ var hits = index.Search("red apple").Sparse().Take(10);  // text + sparse, fused
   `{"q":..., "hybrid":{"sparse":true,"sparseWeight":..}}` adds the sparse list. `SearchTool` describes a `sparse` node per sparse field and the
   `sparse`/`sparseWeight` request properties.
 
-## Results (information; see the report of the unit for machines and job ids)
+## Results (information)
+
+int8 weights, `ExtraLog1p = 1`, our engine's `SparseQuery` over a force-merged index, nDCG@10 under the BEIR convention (a hit with the query's own id is dropped):
+
+| Set | Docs | Ours | Model card | Entries per doc | Sparse-only index | Sparse query (on disk, warm) |
+|---|---|---|---|---|---|---|
+| SciFact | 5,183 | 0.7056 | 0.708 | - | 13.1 MB | 1.4 ms |
+| ArguAna | 8,674 | 0.5194 | 0.520 | 248.2 | 23.7 MB | 67 ms (queries are whole passages) |
+| SCIDOCS | 25,657 | 0.1628 | 0.163 | 224.5 | 70.2 MB | 3.4-4.0 ms |
+
+All three are within 1 point of the card. SciFact is one of the model's training sets (its card lists scifact), so it is not an out-of-domain figure. One thread, one machine, indicative only.
+
+Hybrid, same sets, on one on-disk index holding BM25 (title and text), the bge-small dense vectors and the sparse vectors (default rank constant 10, semantic ratio 0.75, window 100; sparse weight 1 under rank fusion):
+
+| Configuration | SciFact | ArguAna | SCIDOCS | Mean |
+|---|---|---|---|---|
+| BM25 | 0.6912 | 0.4333 | 0.1531 | 0.4259 |
+| dense | 0.7126 | 0.6048 | 0.2041 | 0.5072 |
+| sparse | 0.7056 | 0.5194 | 0.1628 | 0.4626 |
+| text + dense (the default hybrid) | 0.7257 | 0.6100 | 0.2064 | 0.5140 |
+| text + sparse | 0.7209 | 0.5020 | 0.1664 | 0.4631 |
+| text + dense + sparse, rank fusion | 0.7374 | 0.6049 | 0.2063 | 0.5162 |
+| text + dense + sparse, linear fusion | 0.7439 | 0.6149 | 0.2066 | 0.5218 |
+
+The sparse arm is opt-in (`Sparse()`); it helps SciFact and is neutral on the other two sets with rank fusion, and it is not part of the default hybrid.
 
 - Reference parity (200 texts, fp32): identical to the reference runtime. int8 weights: document cosine median 0.9991, min 0.9818.
-- SciFact, int8 weights, our engine's `SparseQuery`: nDCG@10 0.7056 (model card 0.708). SciFact is one of the model's training sets (its card lists scifact), so this is not an out-of-domain figure.
