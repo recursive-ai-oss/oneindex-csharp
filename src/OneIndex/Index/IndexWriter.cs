@@ -342,7 +342,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
         if (_target is not null)
         {
             // New documents are written under one schema only, so the rebuild ends first (docs/schema-evolution.md).
-            CompleteSchemaEvolution(cancellationToken);
+            FinishRebuildBeforeWrite(cancellationToken);
         }
 
         _schema.Validate(document);

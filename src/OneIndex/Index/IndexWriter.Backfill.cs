@@ -124,6 +124,36 @@ public sealed partial class IndexWriter
         }
     }
 
+    // Runs the rebuild to its end and makes the swap in memory only: nothing is committed on the caller's behalf, so what readers see
+    // changes only at the commit the application asks for. A crash before that commit leaves the last commit, with its listed twins.
+    private void FinishRebuildBeforeWrite(CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            lock (_gate)
+            {
+                ThrowIfUnusable();
+                if (_target is null)
+                {
+                    return;
+                }
+
+                InstallMergesLocked();
+                DropEmptySegmentsLocked();
+                PruneShadowsLocked();
+                TrySwapLocked();
+                if (_target is null)
+                {
+                    return;
+                }
+
+                StartConversionsLocked(int.MaxValue);
+            }
+
+            WaitForMerges(cancellationToken);
+        }
+    }
+
     /// <summary>Rebuilds segments for a pending schema change (see <see cref="CompleteSchemaEvolution(CancellationToken)"/>).</summary>
     /// <param name="cancellationToken">Cancels between segments.</param>
     /// <returns>A completed task.</returns>
