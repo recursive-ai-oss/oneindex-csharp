@@ -58,6 +58,17 @@ A node is an object with a `type`. Every node accepts `"boost"` (a non-negative 
 | `geoRadius` | `field` (a geo point field), `lat`, `lng`, `meters` | documents with a point within the distance ([geo.md](geo.md)) |
 | `geoBoundingBox` | `field`, `north`, `south`, `west`, `east` | documents with a point in the rectangle; `west` greater than `east` crosses the antimeridian |
 | `bool` | `must`, `filter`, `should`, `mustNot` (arrays of nodes), `minimumShouldMatch` | all `must` and `filter` clauses, no `mustNot` clause, and enough `should` clauses; `filter` clauses do not score |
+| `functionScore` | `query` (a node; default `matchAll`), `functions` (1 to 32 function objects), `scoreMode` (`multiply`, `sum`, `avg`, `first`, `max`, `min`; default `multiply`), `boostMode` (`multiply`, `replace`, `sum`, `avg`, `max`, `min`; default `multiply`), `maxBoost` (above 0), `minScore` (not negative) | the score of `query` changed by functions of column values; see [function-scores.md](function-scores.md) |
+
+A **function object** has a `type`, an optional `weight` (not negative; default 1) and an optional `filter` (a filter string or a node):
+
+| `type` | Properties |
+|---|---|
+| `weight` | |
+| `fieldValueFactor` | `field` (numeric, date or bool column), `factor` (default 1), `modifier` (`none`, `log`, `log1p`, `log2p`, `ln`, `ln1p`, `ln2p`, `square`, `sqrt`, `reciprocal`), `missing` |
+| `gauss`, `exp`, `linear` | `field` (a numeric, date or geo point column), `origin` (a number; for a date field also an ISO date string; for a geo point `{"lat":…,"lng":…}`), `scale` (above 0; milliseconds for dates, metres for geo points), `offset` (default 0), `decay` (above 0 and below 1; default 0.5) |
+
+Function fields need a column, not an index. The custom function of the low-level API has no JSON form. A written `origin` is always a number (a date as milliseconds since 1970).
 
 `phrase`, `prefix`, `fuzzy`, `regex` and `multiFieldTerm` carry **already analyzed** terms, as the query objects do: write them lower case for the default analyzer. To search words the way a user would, use `text` or `strict` (`{"type":"strict","text":"Title:\"acme corp\""}`).
 

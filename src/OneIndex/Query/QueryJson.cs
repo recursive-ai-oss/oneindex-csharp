@@ -77,7 +77,7 @@ public sealed record QuerySort(IReadOnlyList<SortCriterion> Keys)
 /// properties, wrong types and unknown fields are errors that name the JSON path. Reading uses <see cref="JsonDocument"/> and writing
 /// uses <see cref="Utf8JsonWriter"/>, with no reflection. The format is in <c>docs/query-json.md</c>.
 /// </summary>
-public static class QueryJson
+public static partial class QueryJson
 {
     /// <summary>The format version this build reads and writes.</summary>
     public const int Version = 1;
@@ -429,6 +429,9 @@ public static class QueryJson
             case BooleanQuery b:
                 WriteBoolean(w, b);
                 break;
+            case FunctionScoreQuery fs:
+                WriteFunctionScore(w, fs);
+                break;
             default:
                 throw new ArgumentException($"A {q.GetType().Name} cannot be written as query JSON.", nameof(q));
         }
@@ -507,7 +510,7 @@ public static class QueryJson
 }
 
 /// <summary>Reads query JSON into query objects. One instance reads one document.</summary>
-internal sealed class QueryJsonReader
+internal sealed partial class QueryJsonReader
 {
     private static readonly string[] RequestProperties = ["v", "q", "query", "filter", "limit", "offset", "countExactly", "highlight", "sort", "searchAfter"];
 
@@ -515,7 +518,7 @@ internal sealed class QueryJsonReader
     private static readonly string[] Reserved = ["facets", "aggregations", "distinct", "hybrid", "vector"];
 
     private static readonly string[] NodeTypes =
-        ["matchAll", "text", "strict", "filter", "term", "phrase", "prefix", "fuzzy", "regex", "range", "exists", "multiFieldTerm", "geoRadius", "geoBoundingBox", "bool"];
+        ["matchAll", "text", "strict", "filter", "term", "phrase", "prefix", "fuzzy", "regex", "range", "exists", "multiFieldTerm", "geoRadius", "geoBoundingBox", "bool", "functionScore"];
 
     private readonly Schema _schema;
     private readonly UserTextCompiler _userText;
@@ -840,6 +843,8 @@ internal sealed class QueryJsonReader
 
             case "bool":
                 return ReadBoolQuery(e, path, depth);
+            case "functionScore":
+                return ReadFunctionScore(e, path, depth);
             default:
                 {
                     string? near = QuerySyntax.Nearest(type, NodeTypes);

@@ -16,7 +16,7 @@
 | `usertext` | UTF-16 text (lone surrogates and controls included) | the user-text parser and a search over a small index, with and without a filter; nothing may be thrown, pages are bounded and scores finite |
 | `strict` | UTF-16 text | the strict query parser, its printer and binder: only `QueryParseException` may come out; what parses prints and reads back to an equal tree; the compiled query runs on a small index |
 | `filter` | UTF-16 text | the filter-string parser and printer (geo conditions included), same checks |
-| `queryjson` | UTF-8 bytes | the query JSON reader and writer (geo nodes, `sort` and `searchAfter` included): only `QueryParseException`; write then read gives an equal request; the compiled query runs, and a sorted request runs its first page and a page after its cursor |
+| `queryjson` | UTF-8 bytes | the query JSON reader and writer (geo nodes, function-score nodes, `sort` and `searchAfter` included): only `QueryParseException`; write then read gives an equal request; the compiled query runs, and a sorted request runs its first page and a page after its cursor |
 
 Only `CorruptIndexException` (and its subclass `UnsupportedFormatException`) may come out of a reader. Any other exception, a failed invariant, a hang (`-timeout`) or a memory blow-up (`-rss_limit_mb`) is a finding.
 

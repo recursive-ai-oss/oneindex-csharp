@@ -93,6 +93,12 @@ public sealed record StatsQuery(string[] Terms) : HarnessQuery;
 /// <summary>A terms query ordered by the numeric column, largest first, instead of by score.</summary>
 public sealed record SortedQuery(string[] Terms) : HarnessQuery;
 
+/// <summary>
+/// A two-term disjunction whose BM25 score is multiplied by a Gaussian decay of the numeric column from <paramref name="Origin"/> (0.5 at <paramref name="Scale"/>
+/// away), the top hits by that product. Lucene.NET answers it with a collector over the column's doc values, which is how its public API expresses a function score.
+/// </summary>
+public sealed record DecayedQuery(string[] Terms, long Origin, long Scale) : HarnessQuery;
+
 /// <summary>Documents with a synthesized geo point within a radius of a centre (an information row: Lucene.NET's spatial module is not part of the pinned comparator set).</summary>
 public sealed record GeoQuery(double Latitude, double Longitude, double RadiusMeters) : HarnessQuery;
 

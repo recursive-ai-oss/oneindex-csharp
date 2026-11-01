@@ -81,7 +81,7 @@ public sealed partial class SearchQuery<T>
         return With(stages with { Aggregations = all });
     }
 
-    private SearchQuery<T> With(QueryStages stages) => new(_index, _text, _query, _filters, _take, _skip, _exact, _highlight, stages);
+    private SearchQuery<T> With(QueryStages stages) => new(_index, _text, _query, _filters, _take, _skip, _exact, _highlight, stages, _extras);
 
     private SearchResults<T> ExecuteStages(Search.Query query, Search.Query textQuery, SearchIndex<T>.Generation? generation, CancellationToken cancellationToken)
     {
@@ -193,7 +193,7 @@ public sealed partial class SearchQuery<T>
                 LeafContext leaf = LeafOf(generation!.Context, sd.DocId);
                 Document stored = _index.Source(generation, leaf, sd.DocId - leaf.DocBase, out string id)
                     ?? throw new InvalidOperationException($"The stored source of document '{id}' is not available.");
-                SearchHit<T> hit = new(id, sd.Score, _index.Mapping.FromDocument(stored), stored, schema, terms, _highlight);
+                SearchHit<T> hit = new(id, sd.Score, _index.Mapping.FromDocument(stored), stored, schema, terms, _highlight) { Explanation = ExplainHit(generation!, query, sd.DocId) };
                 if (sortedDocs is not null)
                 {
                     FieldDoc fd = sortedDocs[i];

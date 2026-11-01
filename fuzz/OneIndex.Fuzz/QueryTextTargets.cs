@@ -226,6 +226,10 @@ internal static class QueryTextTargets
             "{\"v\":1,\"filter\":{\"type\":\"geoRadius\",\"field\":\"Place\",\"lat\":10,\"lng\":-170,\"meters\":3000000},\"sort\":[\"Number:desc:first\",\"_geoPoint(Place, 1, 2):asc\"],\"limit\":3}",
             "{\"v\":1,\"query\":{\"type\":\"geoBoundingBox\",\"field\":\"Place\",\"north\":50,\"south\":-50,\"west\":150,\"east\":-150},\"sort\":[\"_score\",\"Id\"],\"limit\":2}",
             "{\"v\":1,\"sort\":[\"Number\"],\"searchAfter\":\"AQAAAAAB\"}",
+            "{\"v\":1,\"query\":{\"type\":\"functionScore\",\"query\":{\"type\":\"text\",\"text\":\"cat\"},\"functions\":[{\"type\":\"fieldValueFactor\",\"field\":\"Number\",\"factor\":2,\"modifier\":\"log1p\",\"missing\":1},{\"type\":\"gauss\",\"field\":\"Number\",\"origin\":5,\"scale\":3,\"offset\":1,\"decay\":0.3,\"weight\":2}],\"scoreMode\":\"avg\",\"boostMode\":\"sum\",\"maxBoost\":8,\"minScore\":0.2,\"boost\":1.5},\"limit\":3}",
+            "{\"v\":1,\"query\":{\"type\":\"functionScore\",\"functions\":[{\"type\":\"exp\",\"field\":\"Place\",\"origin\":{\"lat\":10,\"lng\":-170},\"scale\":2000000,\"filter\":\"Number > 2\"},{\"type\":\"linear\",\"field\":\"Number\",\"origin\":0,\"scale\":100},{\"type\":\"weight\",\"weight\":0.5,\"filter\":{\"type\":\"exists\",\"field\":\"Number\"}}],\"scoreMode\":\"first\",\"boostMode\":\"max\"}}",
+            "{\"v\":1,\"query\":{\"type\":\"functionScore\",\"query\":{\"type\":\"functionScore\",\"functions\":[{\"type\":\"weight\",\"weight\":2}]},\"functions\":[{\"type\":\"fieldValueFactor\",\"field\":\"Number\",\"modifier\":\"reciprocal\"}],\"boostMode\":\"replace\"}}",
+            "{\"v\":1,\"query\":{\"type\":\"functionScore\",\"functions\":[{\"type\":\"gauss\",\"field\":\"Number\",\"origin\":0,\"scale\":0}]}}",
             "{\"v\":2}",
         ];
         string[] seeds = kind == 0 ? strict : kind == 1 ? filter : json;
