@@ -74,6 +74,10 @@ Function fields need a column, not an index. The custom function of the low-leve
 
 Numbers on integer fields may be fractional in a `range` (rounded inward, as in filter strings). Dates are ISO strings: `2024-01-31`, `2024-01-31T10:00:00Z`, with an optional fraction and offset.
 
+## Paths in dynamic JSON
+
+Wherever a node names a `field`, the name of a `[Dynamic]` property, a dot and a path name a path inside it (`"field":"Meta.customer.age"`). `term`, `range` and `exists` choose the kind of value from the JSON type of the value given (string, number, boolean; a string bound that reads as a date makes a date range); `prefix`, `fuzzy`, `regex` and `phrase` apply to strings. See dynamic.md.
+
 ## Errors
 
 A `QueryParseException` has `Path` (`$.query.must[1].field`), `Detail`, and `Suggestion` for a misspelt field, property or type. Text that is not JSON has no path; its `Line` and `Column` locate the syntax error. A `filter` or `strict` string with a mistake reports the position inside that string in the message, and the path of the string.

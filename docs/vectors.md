@@ -178,3 +178,28 @@ All widths give bit-identical results; `VectorKernelTests` passes on both machin
 Code that uses `unsafe`-class APIs (`Unsafe.`, `MemoryMarshal`, `stackalloc`) is limited to `Kernels/VectorKernels.cs` (the SIMD kernels),
 `Codecs/VectorPartReader.cs` and `Codecs/VectorFiles.cs` (bulk conversion of file blocks to floats and integers) and
 `Codecs/VectorSegmentCodec.cs` (the same conversions at merge time); each states its bounds where it is used.
+
+## Schema record and evolution
+
+The dimension of a vector field is part of its field record. Its other settings (metric, M, efConstruction, flat threshold) are
+written in schema section 3 (schema format 2: sections are an ascending id and a length-prefixed payload; a reader that does not know
+a section skips it). Section 3 is a varint count, then per vector field whose settings differ from the defaults, in ascending field
+index: the field index, the metric byte, M, efConstruction and the flat threshold as varints. A schema whose vector fields all use
+the defaults is written as format 1, byte for byte what it was before settings existed. Reading rejects a section that names a
+field that is not a vector, is out of order, is empty, or holds an unknown metric.
+
+On open, a changed metric, M, efConstruction or flat threshold rebuilds the vectors from stored source in the background like an
+analyzer change (the graph and the scores both change). A changed dimension is a schema evolution error naming the field.
+
+## Embedding set hashes
+
+SHA-256 of the files written by `tools/embeddings.py` (the sets are not committed).
+
+| Set | File | SHA-256 |
+|---|---|---|
+| bge-small-en-v1.5, 384 d, 150,000 vectors (rev 5c38ec7c405ec4b44b94cc5a9bb96e735b38267a) | `base.f32` | `0b5dd91f914327a2f6215f3b1d587c3bf0e86625208e3c82d74c4646a09fce5b` |
+| | `queries.f32` | `be7b933cd71815d93010c47579432d2fd3ee051a86afc0c4ea6e2cb5255207d7` |
+| | `truth.i32` | `1f422a4d0304cfdb37c2976a5856c8667ef6274e122be4b2eb74b5f2f9663406` |
+| bge-base-en-v1.5, 768 d, 75,000 vectors (rev a5beb1e3e68b9ab74eb54cfd186867f64f240e1a) | `base.f32` | `edd186263e2aceee456c19359f3ecf99d575eb5b50842c31f9623b202034c7fc` |
+| | `queries.f32` | `84c9ec58d1e583172c11dccb0a3a31f079da4cc06c45c173093f679e9f85a04d` |
+| | `truth.i32` | `b7e271b9963e0aa77e8cb5694fc4bc93a7f1b00e4f6774800ccabd905fec3839` |

@@ -48,7 +48,7 @@ public sealed partial class IndexWriter
                 {
                     // Copy the bitmap: the writer keeps changing its own.
                     live[i] = LiveDocs.FromWords(info.DocCount, (ulong[])s.Words.Clone());
-                    info = new SegmentInfo(info.Name, info.DocCount, live[i]!.DeletedCount, info.DeleteGeneration, info.Files);
+                    info = new SegmentInfo(info.Name, info.DocCount, live[i]!.DeletedCount, info.DeleteGeneration, info.Files, info.SchemaEpoch);
                 }
                 else
                 {
@@ -63,7 +63,7 @@ public sealed partial class IndexWriter
             }
 
             ReaderLease? lease = IndexLocks.AcquireViewLease(_storage, _current?.Generation ?? 0, cancellationToken);
-            var view = CommitInfo.NearRealTimeView(_current?.Generation ?? 0, _nextSegmentId, infos, _schema.Serialize(), _appliedPosition, _userData);
+            var view = CommitInfo.NearRealTimeView(_current?.Generation ?? 0, _nextSegmentId, infos, _schema.Serialize(), _appliedPosition, _userData, _schemaEpoch);
             _refs.Acquire(names);
             return new IndexSnapshot(_storage, view, _schema, _codecs, _limits, () =>
             {

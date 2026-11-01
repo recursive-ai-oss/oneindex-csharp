@@ -35,6 +35,29 @@ public static class Workload
     }
 
     /// <summary>
+    /// The schema the evolution campaigns switch to: a stemming analyzer on the body, a column on the tag and a new field. Moving between
+    /// <see cref="Schema"/> and this one in either direction rebuilds the segments from stored source.
+    /// </summary>
+    public static readonly Schema SchemaV2 = new SchemaBuilder()
+        .Id("id")
+        .Add(new FieldDefinition("tag", FieldType.Keyword) { Column = true })
+        .Add(new FieldDefinition("body", FieldType.Text) { Analyzer = "en" })
+        .Integral("n")
+        .Keyword("extra")
+        .Build();
+
+    /// <summary>The schema of an evolution campaign cycle: 1 is <see cref="Schema"/>, 2 is <see cref="SchemaV2"/>.</summary>
+    public static Schema ForVersion(int version) => version == 2 ? SchemaV2 : Schema;
+
+    /// <summary>Options for the evolution campaigns: the real codecs, because the rebuild reads the real stored source.</summary>
+    public static IndexWriterOptions EvolveOptions(IMergeScheduler? scheduler = null, int maxBuffered = 6) => new()
+    {
+        MaxBufferedDocuments = maxBuffered,
+        MergePolicy = new TieredMergePolicy { SegmentsPerTier = 3, MaxMergeAtOnce = 3, FloorSegmentDocs = 4, DeletesPctAllowed = 50 },
+        MergeScheduler = scheduler,
+    };
+
+    /// <summary>
     /// The engine's default codec set (text, columns, points, stored source) with small buffers and a low merge threshold, so that a
     /// short workload flushes and merges often. The schema has a keyword, a text and a numeric field, all stored.
     /// </summary>
@@ -316,12 +339,14 @@ public static class Workload
         var cases = new (string Name, Query Query, Func<(string Tag, string Body, long N), bool> Expect)[]
         {
             ("tag=t1", new TermQuery("tag", "t1"), r => r.Tag == "t1"),
+            // A stemming analyzer (the evolved schema) indexes "body" as its stem, so the raw term is only checked under the plain analyzer.
             ("body:body", new TermQuery("body", "body"), _ => true),
             ($"body:{someNumber}", new TermQuery("body", someNumber), r => r.Body == someBody),
             ("n in [250000,750000)", new RangeQuery("n", FieldValue.FromInt64(250_000), FieldValue.FromInt64(750_000)) { IncludeUpper = false }, r => r.N >= 250_000 && r.N < 750_000),
             ("tag=t0 and n>=500000", new BooleanQuery([new BooleanClause(new TermQuery("tag", "t0"), Occur.Must), new BooleanClause(new RangeQuery("n", FieldValue.FromInt64(500_000), null), Occur.Must)]), r => r.Tag == "t0" && r.N >= 500_000),
         };
-        foreach ((string name, Query query, Func<(string Tag, string Body, long N), bool> expect) in cases)
+        bool plain = !snapshot.Schema.TryGetField("body", out FieldDefinition? bodyField) || bodyField.Analyzer is null;
+        foreach ((string name, Query query, Func<(string Tag, string Body, long N), bool> expect) in cases.Where(c => plain || c.Name != "body:body"))
         {
             TopDocs top = searcher.Search(query, 10_000, countExactly: true);
             var found = new SortedSet<string>(StringComparer.Ordinal);

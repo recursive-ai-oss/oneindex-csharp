@@ -221,8 +221,8 @@ public class IndexWriterTests
             w.Commit();
         }
 
-        Schema other = new SchemaBuilder().Id("id").Text("other").Build();
-        Assert.Throws<ArgumentException>(() => IndexWriter.Open(storage, other, Workload.Options()));
+        Schema other = new SchemaBuilder().Id("other").Build();
+        Assert.Throws<SchemaEvolutionException>(() => IndexWriter.Open(storage, other, Workload.Options()));
     }
 
     [Fact]

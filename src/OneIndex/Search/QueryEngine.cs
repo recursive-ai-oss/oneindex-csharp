@@ -62,7 +62,7 @@ public sealed class QueryEngine : IWeightFactory
     {
         ArgumentNullException.ThrowIfNull(query);
         ArgumentNullException.ThrowIfNull(context);
-        return query.Accept(new WeightBuilder(context, _options));
+        return DynamicQueryRewriter.Rewrite(query, context.Schema).Accept(new WeightBuilder(context, _options));
     }
 
     private sealed class WeightBuilder(SearchContext context, QueryEngineOptions options) : QueryVisitor<Weight>

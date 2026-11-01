@@ -4,6 +4,7 @@ using OneIndex.Storage;
 SmokeScenario.Run(new MemoryStorage());
 AnalysisScenario.Run();
 HappyPathScenario.Run();
+DynamicAndEvolutionScenario.Run();
 SortingGeoScenario.Run();
 FunctionScoreScenario.Run();
 QueryFormsScenario.Run();
