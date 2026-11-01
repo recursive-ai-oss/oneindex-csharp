@@ -88,6 +88,11 @@ public abstract class QueryVisitor<TResult>
     /// <returns>The result.</returns>
     public virtual TResult VisitKnn(KnnQuery query) => VisitUnknown(query);
 
+    /// <summary>Visits a <see cref="HybridQuery"/>.</summary>
+    /// <param name="query">The query.</param>
+    /// <returns>The result.</returns>
+    public virtual TResult VisitHybrid(HybridQuery query) => VisitUnknown(query);
+
     /// <summary>Called for a kind the visitor does not handle.</summary>
     /// <param name="query">The query.</param>
     /// <returns>Never returns normally.</returns>

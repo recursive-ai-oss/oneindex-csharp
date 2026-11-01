@@ -4,6 +4,8 @@
 //   parity   --model <file> --vocab <vocab.txt> --texts <texts.jsonl> --reference <vectors.f32> [--role document|query] [--prefix <text>]
 //   beir     --model <file> --vocab <vocab.txt> --data <beir root> --set <name> --work <dir> [--instruction on|off] [--budget-seconds N]
 //            [--threads N] [--run <file>]
+//   hybrid   as beir (the corpus vectors of a finished beir run are reused), plus --out <dir>: BM25, dense (exact), and hybrid runs
+//            through the engine's own query objects; one run file per configuration
 //
 // beir embeds the corpus in resumable chunks (exit code 3 when the time budget ran out; run it again to continue), then ranks by exact
 // dot product and prints nDCG@10 under the BEIR convention (a document with the query's own id is skipped).
@@ -11,7 +13,11 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using OneIndex.Analysis;
 using OneIndex.Harness;
+using OneIndex.Index;
+using OneIndex.Search;
+using OneIndex.Storage;
 using OneIndex.Models;
 using OneIndex.Vectors;
 using RecursiveAI.OneModel.Format;
@@ -44,6 +50,9 @@ switch (args[0])
 
     case "beir":
         return Beir();
+
+    case "hybrid":
+        return HybridGate();
 
     default:
         Console.Error.WriteLine("unknown command");
@@ -214,4 +223,187 @@ static float Dot(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
     }
 
     return total;
+}
+
+int HybridGate()
+{
+    var data = BeirDataset.Open(Path.Combine(Req("data"), Req("set")));
+    string work = Path.Combine(Req("work"), Req("set"));
+    string outDir = Req("out");
+    Directory.CreateDirectory(outDir);
+    using BertEmbedder embedder = OpenEmbedder(BgeQueryInstruction);
+    int d = embedder.Dimension;
+    const int ChunkDocs = 500;
+    string indexDir = Path.Combine(work, "hybrid-index");
+    if (Directory.Exists(indexDir))
+    {
+        Directory.Delete(indexDir, recursive: true);
+    }
+
+    Directory.CreateDirectory(indexDir);
+    FieldDefinition Text(string name, float boost = 1f) => new(name, FieldType.Text) { Analyzer = "en", IndexOptions = IndexOptions.Freqs, Stored = false, Boost = boost };
+    Schema schema = new SchemaBuilder().Id("id").Add(Text("title", 3f)).Add(Text("text"))
+        .Add(new FieldDefinition("vec", FieldType.Vector) { Dimensions = d, Metric = VectorMetric.Cosine, Stored = false }).Build();
+    var storage = new FileSystemStorage(indexDir);
+    var ids = new List<string>();
+    using (IndexWriter writer = IndexWriter.Open(storage, schema, new IndexWriterOptions { MaxBufferedDocuments = 20_000 }))
+    {
+        int chunk = -1;
+        float[] vectors = [];
+        int inChunk = 0;
+        foreach (Doc doc in data.ReadCorpus())
+        {
+            if (inChunk % ChunkDocs == 0)
+            {
+                chunk++;
+                string file = Path.Combine(work, $"corpus-{chunk:D5}.f32");
+                if (!File.Exists(file))
+                {
+                    Console.WriteLine($"missing {file}: run the beir step to completion first");
+                    return 3;
+                }
+
+                vectors = MemoryMarshal.Cast<byte, float>(File.ReadAllBytes(file)).ToArray();
+                inChunk = 0;
+            }
+
+            float[] v = vectors.AsSpan(inChunk * d, d).ToArray();
+            inChunk++;
+            ids.Add(doc.Id);
+            writer.AddUnique(new Document().Add("id", doc.Id).Add("title", doc.Title).Add("text", doc.Text).Add("vec", v));
+        }
+
+        writer.Commit();
+        writer.WaitForMerges();
+    }
+
+    using var reopened = IndexWriter.Open(storage, schema, new IndexWriterOptions());
+    using IndexSnapshot snapshot = reopened.OpenSnapshot();
+    SearchContext context = SnapshotSearch.CreateContext(snapshot);
+    var idOf = new string[context.MaxDoc];
+    foreach (LeafContext leaf in context.Leaves)
+    {
+        IStoredFieldsReader stored = leaf.Reader.StoredFields ?? throw new InvalidOperationException("no stored source");
+        for (int i = 0; i < leaf.Reader.MaxDoc; i++)
+        {
+            idOf[leaf.DocBase + i] = stored.GetDocument(i).Get("id").AsText();
+        }
+    }
+
+    var searcher = new IndexSearcher(context, new QueryEngine());
+    float[] queryVectors = embedder.EmbedBatch(data.Queries.Select(q => q.Text).ToList(), EmbeddingRole.Query);
+    const int Window = 100;
+    if (Opt("grid", "off") == "on")
+    {
+        // Explores fusion settings: both lists are taken once, deep, and fused here with the documented formulas.
+        const int Deep = 1000;
+        var arms = new List<(List<(string Id, float S)> Text, List<(string Id, float S)> Vec)>();
+        for (int q = 0; q < data.Queries.Count; q++)
+        {
+            var terms = new List<string>();
+            TokenSource tokens = AnalyzerRegistry.Create("en").GetTokens(data.Queries[q].Text.AsMemory());
+            while (tokens.MoveNext())
+            {
+                terms.Add(tokens.Token.Term.ToString());
+            }
+
+            var bm25 = new BooleanQuery([.. terms.Select(t => new BooleanClause(new MultiFieldTermQuery(["title", "text"], t), Occur.Should))]);
+            var knn = new KnnQuery("vec", queryVectors.AsSpan(q * d, d).ToArray(), Deep) { Exact = true };
+            arms.Add(([.. searcher.Search(bm25, Deep).Hits.Select(h => (idOf[h.DocId], h.Score))], [.. searcher.Search(knn, Deep).Hits.Select(h => (idOf[h.DocId], h.Score))]));
+        }
+
+        double Eval(Func<List<(string Id, float S)>, List<(string Id, float S)>, Dictionary<string, double>> fuse)
+        {
+            var run = new Dictionary<string, List<(string Doc, double Score)>>(StringComparer.Ordinal);
+            for (int q = 0; q < arms.Count; q++)
+            {
+                Dictionary<string, double> f = fuse(arms[q].Text, arms[q].Vec);
+                run[data.Queries[q].Id] = [.. f.Where(kv => kv.Key != data.Queries[q].Id).OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.Ordinal).Take(10).Select(kv => (kv.Key, kv.Value))];
+            }
+
+            return TrecEval.NdcgAt(10, data.Qrels, run).Mean;
+        }
+
+        foreach (int w in new[] { 100 })
+        {
+            foreach (int k in new[] { 3, 5, 10, 20 })
+            {
+                foreach (double r in new[] { 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8 })
+                {
+                    double v = Eval((t, vec) =>
+                    {
+                        var f = new Dictionary<string, double>();
+                        for (int i = 0; i < Math.Min(w, t.Count); i++) { f[t[i].Id] = f.GetValueOrDefault(t[i].Id) + (2 * (1 - r) / (k + i + 1)); }
+                        for (int i = 0; i < Math.Min(w, vec.Count); i++) { f[vec[i].Id] = f.GetValueOrDefault(vec[i].Id) + (2 * r / (k + i + 1)); }
+                        return f;
+                    });
+                    Console.WriteLine($"set {data.Name} grid rrf window {w} k {k} ratio {r} nDCG@10 {v:F4}");
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    var configs = new List<(string Name, Func<Query, KnnQuery, Query> Make)>
+    {
+        ("bm25", (t, _) => t),
+        ("dense", (_, k) => k),
+        ("rrf", (t, k) => new HybridQuery(t, k)),
+        ("rrf-k60-ratio0.5", (t, k) => new HybridQuery(t, k) { RankConstant = 60, SemanticRatio = 0.5 }),
+        ("rrf-k10-ratio0.5", (t, k) => new HybridQuery(t, k) { SemanticRatio = 0.5 }),
+        ("rrf-k10-ratio0.3", (t, k) => new HybridQuery(t, k) { SemanticRatio = 0.3 }),
+        ("linear-0.3", (t, k) => new HybridQuery(t, k) { Fusion = FusionMethod.Linear, SemanticRatio = 0.3 }),
+        ("linear-0.5", (t, k) => new HybridQuery(t, k) { Fusion = FusionMethod.Linear, SemanticRatio = 0.5 }),
+        ("linear-0.7", (t, k) => new HybridQuery(t, k) { Fusion = FusionMethod.Linear, SemanticRatio = 0.7 }),
+    };
+    foreach ((string name, Func<Query, KnnQuery, Query> make) in configs)
+    {
+        var run = new Dictionary<string, List<(string Doc, double Score)>>(StringComparer.Ordinal);
+        for (int q = 0; q < data.Queries.Count; q++)
+        {
+            var terms = new List<string>();
+            TokenSource tokens = AnalyzerRegistry.Create("en").GetTokens(data.Queries[q].Text.AsMemory());
+            while (tokens.MoveNext())
+            {
+                terms.Add(tokens.Token.Term.ToString());
+            }
+
+            var bm25 = new BooleanQuery([.. terms.Select(t => new BooleanClause(new MultiFieldTermQuery(["title", "text"], t), Occur.Should))]);
+            var knn = new KnnQuery("vec", queryVectors.AsSpan(q * d, d).ToArray(), Window) { Exact = true };
+            TopDocs top = searcher.Search(make(bm25, knn), 11);
+            var list = new List<(string, double)>(10);
+            foreach (ScoreDoc sd in top.Hits)
+            {
+                if (idOf[sd.DocId] == data.Queries[q].Id)
+                {
+                    continue;
+                }
+
+                list.Add((idOf[sd.DocId], sd.Score));
+                if (list.Count == 10)
+                {
+                    break;
+                }
+            }
+
+            run[data.Queries[q].Id] = list;
+        }
+
+        (double ndcg, int n) = TrecEval.NdcgAt(10, data.Qrels, run);
+        using (var w = new StreamWriter(Path.Combine(outDir, $"{data.Name}.{name}.run")))
+        {
+            foreach ((string qid, var hits) in run)
+            {
+                for (int r = 0; r < hits.Count; r++)
+                {
+                    w.Write($"{qid} Q0 {hits[r].Doc} {r + 1} {hits[r].Score.ToString("R", CultureInfo.InvariantCulture)} {name}\n");
+                }
+            }
+        }
+
+        Console.WriteLine($"set {data.Name} config {name} queries {n} nDCG@10 {ndcg:F4}");
+    }
+
+    return 0;
 }

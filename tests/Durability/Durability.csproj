@@ -10,6 +10,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/OneIndex/OneIndex.csproj" />
+    <!-- The generator runs over the attributed document type of the embedding kill campaign. -->
+    <ProjectReference Include="../../src/OneIndex.Generators/OneIndex.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

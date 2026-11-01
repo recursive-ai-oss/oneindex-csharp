@@ -34,6 +34,7 @@ internal sealed class FuzzMapping : SearchMapping<FuzzDocument>
             new MappedMember("Tag", FieldType.Keyword, multi: false, indexed: true, column: false, facet: false, fullText: false, isId: false, boost: 1f, analyzer: null),
             new MappedMember("Number", FieldType.Integral, multi: false, indexed: true, column: true, facet: false, fullText: false, isId: false, boost: 1f, analyzer: null),
             new MappedMember("Place", FieldType.GeoPoint, multi: false, indexed: true, column: true, facet: false, fullText: false, isId: false, boost: 1f, analyzer: null),
+            new MappedMember("Vec", FieldType.Vector, multi: false, indexed: true, column: false, facet: false, fullText: false, isId: false, boost: 1f, analyzer: null, dimensions: 3),
         ])
     {
     }

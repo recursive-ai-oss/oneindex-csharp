@@ -40,6 +40,13 @@ public sealed record QueryRequest
     /// <summary>A <see cref="SortCursor.ToToken"/> token to continue after (search-after); needs <see cref="Sort"/>. <see langword="null"/> for the first page.</summary>
     public string? SearchAfter { get; init; }
 
+    /// <summary>
+    /// Fuses a text search of the request's <c>q</c> with a vector search over its embedding, or <see langword="null"/> for plain search. With it,
+    /// <c>q</c> is held here and not in <see cref="Query"/>. It needs an index with an embedder: <c>SearchIndex.Parse</c> applies it
+    /// (<see cref="ToQuery"/> does not, because embedding is not the data form's job, and leaves the text out).
+    /// </summary>
+    public HybridRequest? Hybrid { get; init; }
+
     /// <summary>The query the engine runs: <see cref="Query"/> (every document when absent) with <see cref="Filter"/> as a non-scoring restriction.</summary>
     /// <returns>The combined query.</returns>
     public Query ToQuery()
@@ -48,6 +55,15 @@ public sealed record QueryRequest
         return Filter is null ? scored : new BooleanQuery([new BooleanClause(scored, Occur.Must), new BooleanClause(Filter, Occur.Filter)]);
     }
 }
+
+/// <summary>The <c>hybrid</c> setting of a query JSON request (docs/hybrid.md).</summary>
+/// <param name="Text">The request's <c>q</c>: the text searched by words and, embedded, by meaning.</param>
+/// <param name="SemanticRatio">How much the vector arm counts, 0 to 1. Default 0.75.</param>
+/// <param name="Fusion">How the lists combine. Default reciprocal rank fusion.</param>
+/// <param name="RankConstant">The reciprocal rank constant, 1 to 1,000. Default 10.</param>
+/// <param name="Window">How many documents each arm contributes. Default 100.</param>
+/// <param name="Field">The vector property to search, or <see langword="null"/> for the schema's only automatically embedded one.</param>
+public sealed record HybridRequest(string Text, double SemanticRatio = HybridQuery.DefaultSemanticRatio, FusionMethod Fusion = FusionMethod.ReciprocalRank, int RankConstant = HybridQuery.DefaultRankConstant, int Window = 100, string? Field = null);
 
 /// <summary>The sort keys of a query JSON document. Equal when the keys are equal in order.</summary>
 /// <param name="Keys">The keys, 1 to 16.</param>
@@ -247,6 +263,19 @@ public static partial class QueryJson
                 WriteNode(w, request.Filter);
             }
 
+            if (request.Hybrid is { } hy)
+            {
+                w.WriteString("q", hy.Text);
+                w.WriteStartObject("hybrid");
+                if (hy.Field is not null)
+                {
+                    w.WriteString("field", hy.Field);
+                }
+
+                WriteHybridSettings(w, hy.Fusion, hy.RankConstant, hy.SemanticRatio, hy.Window);
+                w.WriteEndObject();
+            }
+
             if (request.Limit != 20)
             {
                 w.WriteNumber("limit", request.Limit);
@@ -290,6 +319,29 @@ public static partial class QueryJson
         }
 
         return Encoding.UTF8.GetString(buffer.WrittenSpan);
+    }
+
+    private static void WriteHybridSettings(Utf8JsonWriter w, FusionMethod fusion, int rankConstant, double ratio, int window)
+    {
+        if (fusion != FusionMethod.ReciprocalRank)
+        {
+            w.WriteString("fusion", "linear");
+        }
+
+        if (rankConstant != HybridQuery.DefaultRankConstant)
+        {
+            w.WriteNumber("rankConstant", rankConstant);
+        }
+
+        if (ratio != HybridQuery.DefaultSemanticRatio)
+        {
+            w.WriteNumber("semanticRatio", ratio);
+        }
+
+        if (window != 100)
+        {
+            w.WriteNumber("window", window);
+        }
     }
 
     /// <summary>Writes one query as a canonical query node object.</summary>
@@ -432,6 +484,14 @@ public static partial class QueryJson
             case FunctionScoreQuery fs:
                 WriteFunctionScore(w, fs);
                 break;
+            case HybridQuery hq:
+                w.WriteString("type", "hybrid");
+                w.WritePropertyName("text");
+                WriteNode(w, hq.Text);
+                w.WritePropertyName("vector");
+                WriteNode(w, hq.Vector);
+                WriteHybridSettings(w, hq.Fusion, hq.RankConstant, hq.SemanticRatio, hq.Window);
+                break;
             case KnnQuery knn:
                 w.WriteString("type", "knn");
                 w.WriteString("field", knn.Field);
@@ -540,13 +600,13 @@ public static partial class QueryJson
 /// <summary>Reads query JSON into query objects. One instance reads one document.</summary>
 internal sealed partial class QueryJsonReader
 {
-    private static readonly string[] RequestProperties = ["v", "q", "query", "filter", "limit", "offset", "countExactly", "highlight", "sort", "searchAfter"];
+    private static readonly string[] RequestProperties = ["v", "q", "query", "filter", "limit", "offset", "countExactly", "highlight", "sort", "searchAfter", "hybrid"];
 
     // Names of features the format keeps room for. They are rejected with a message of their own, not as typos.
-    private static readonly string[] Reserved = ["facets", "aggregations", "distinct", "hybrid", "vector"];
+    private static readonly string[] Reserved = ["facets", "aggregations", "distinct", "vector"];
 
     private static readonly string[] NodeTypes =
-        ["matchAll", "text", "strict", "filter", "term", "phrase", "prefix", "fuzzy", "regex", "range", "exists", "multiFieldTerm", "geoRadius", "geoBoundingBox", "bool", "functionScore", "knn"];
+        ["matchAll", "text", "strict", "filter", "term", "phrase", "prefix", "fuzzy", "regex", "range", "exists", "multiFieldTerm", "geoRadius", "geoBoundingBox", "bool", "functionScore", "knn", "hybrid"];
 
     private readonly Schema _schema;
     private readonly UserTextCompiler _userText;
@@ -583,9 +643,18 @@ internal sealed partial class QueryJsonReader
         }
 
         var scored = new List<Query>();
+        string? hybridQ = null;
         if (root.TryGetProperty("q", out JsonElement q))
         {
-            scored.Add(_userText.Compile(ReadString(q, "$.q")));
+            string qText = ReadString(q, "$.q");
+            if (root.TryGetProperty("hybrid", out _))
+            {
+                hybridQ = qText; // kept as text: it is searched by words and, embedded, by meaning
+            }
+            else
+            {
+                scored.Add(_userText.Compile(qText));
+            }
         }
 
         if (root.TryGetProperty("query", out JsonElement query))
@@ -608,6 +677,17 @@ internal sealed partial class QueryJsonReader
 
         bool exact = root.TryGetProperty("countExactly", out JsonElement c) && ReadBool(c, "$.countExactly");
         HighlightOptions? highlight = root.TryGetProperty("highlight", out JsonElement h) ? ReadHighlight(h) : null;
+
+        HybridRequest? hybrid = null;
+        if (root.TryGetProperty("hybrid", out JsonElement hybridElement))
+        {
+            if (hybridQ is null)
+            {
+                throw Err("$.hybrid", "hybrid searches by meaning the text of \"q\"; add a \"q\".");
+            }
+
+            hybrid = ReadHybridRequest(hybridElement, hybridQ);
+        }
 
         QuerySort? sort = root.TryGetProperty("sort", out JsonElement sortElement) ? ReadSort(sortElement) : null;
         string? after = null;
@@ -636,7 +716,7 @@ internal sealed partial class QueryJsonReader
             1 => scored[0],
             _ => new BooleanQuery(scored.ConvertAll(static x => new BooleanClause(x, Occur.Must))),
         };
-        return new QueryRequest { Query = main, Filter = filter, Limit = limit, Offset = offset, CountExactly = exact, Highlight = highlight, Sort = sort, SearchAfter = after };
+        return new QueryRequest { Query = main, Filter = filter, Limit = limit, Offset = offset, CountExactly = exact, Highlight = highlight, Sort = sort, SearchAfter = after, Hybrid = hybrid };
     }
 
     private static QueryParseException Err(string path, string detail, string? suggestion = null)
@@ -875,6 +955,8 @@ internal sealed partial class QueryJsonReader
                 return ReadFunctionScore(e, path, depth);
             case "knn":
                 return ReadKnn(e, path, depth);
+            case "hybrid":
+                return ReadHybrid(e, path, depth);
             default:
                 {
                     string? near = QuerySyntax.Nearest(type, NodeTypes);
@@ -920,6 +1002,65 @@ internal sealed partial class QueryJsonReader
         bool exact = e.TryGetProperty("exact", out JsonElement ex) && ReadBool(ex, Child(path, "exact"));
         Query? filter = e.TryGetProperty("filter", out JsonElement f) ? ReadNode(f, Child(path, "filter"), depth + 1) : null;
         return Boosted(new KnnQuery(name, vector, k) { Ef = ef, Exact = exact, Filter = filter }, e, path);
+    }
+
+    // {"type":"hybrid","text":<node>,"vector":<knn node>,"fusion":"rrf"|"linear","rankConstant":10,"semanticRatio":0.75,"window":100}
+    private Query ReadHybrid(JsonElement e, string path, int depth)
+    {
+        CheckProperties(e, path, ["type", "text", "vector", "fusion", "rankConstant", "semanticRatio", "window", "boost"]);
+        Query text = ReadNode(Require(e, path, "text"), Child(path, "text"), depth + 1);
+        string vp = Child(path, "vector");
+        Query vector = ReadNode(Require(e, path, "vector"), vp, depth + 1);
+        if (vector is not KnnQuery knn)
+        {
+            throw Err(vp, "The vector arm of a hybrid node is a knn node.");
+        }
+
+        (FusionMethod fusion, int rankConstant, double ratio, int window) = ReadHybridSettings(e, path);
+        return Boosted(new HybridQuery(text, knn) { Fusion = fusion, RankConstant = rankConstant, SemanticRatio = ratio, Window = window }, e, path);
+    }
+
+    private static (FusionMethod Fusion, int RankConstant, double Ratio, int Window) ReadHybridSettings(JsonElement e, string path)
+    {
+        FusionMethod fusion = FusionMethod.ReciprocalRank;
+        if (e.TryGetProperty("fusion", out JsonElement fe))
+        {
+            string name = ReadString(fe, Child(path, "fusion"));
+            fusion = name switch
+            {
+                "rrf" => FusionMethod.ReciprocalRank,
+                "linear" => FusionMethod.Linear,
+                _ => throw Err(Child(path, "fusion"), $"Unknown fusion \"{name}\". Fusions: rrf, linear."),
+            };
+        }
+
+        int rank = e.TryGetProperty("rankConstant", out JsonElement rc) ? ReadInt(rc, Child(path, "rankConstant"), 1, 1000) : HybridQuery.DefaultRankConstant;
+        double ratio = e.TryGetProperty("semanticRatio", out JsonElement sr) ? ReadNumber(sr, Child(path, "semanticRatio"), 0, 1) : HybridQuery.DefaultSemanticRatio;
+        int window = e.TryGetProperty("window", out JsonElement wi) ? ReadInt(wi, Child(path, "window"), 1, HybridQuery.MaxWindow) : 100;
+        return (fusion, rank, ratio, window);
+    }
+
+    private HybridRequest ReadHybridRequest(JsonElement h, string text)
+    {
+        const string path = "$.hybrid";
+        if (h.ValueKind != JsonValueKind.Object)
+        {
+            throw Err(path, "hybrid is an object such as {\"semanticRatio\":0.5}.");
+        }
+
+        CheckProperties(h, path, ["field", "fusion", "rankConstant", "semanticRatio", "window"]);
+        string? field = null;
+        if (h.TryGetProperty("field", out JsonElement fe))
+        {
+            field = ReadString(fe, Child(path, "field"));
+            if (!_schema.TryGetField(field, out FieldDefinition? def) || def.Type != FieldType.Vector || !def.Indexed)
+            {
+                throw Err(Child(path, "field"), $"\"{field}\" is not an indexed vector field.");
+            }
+        }
+
+        (FusionMethod fusion, int rank, double ratio, int window) = ReadHybridSettings(h, path);
+        return new HybridRequest(text, ratio, fusion, rank, window, field);
     }
 
     private string ReadGeoField(JsonElement obj, string path)

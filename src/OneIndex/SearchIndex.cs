@@ -7,6 +7,7 @@ using OneIndex.Linq;
 using OneIndex.Queries;
 using OneIndex.Search;
 using OneIndex.Storage;
+using OneIndex.Vectors;
 
 namespace OneIndex;
 
@@ -25,9 +26,19 @@ public static class SearchIndex
     /// <exception cref="CorruptIndexException">The newest commit or a file it lists is damaged.</exception>
     public static SearchIndex<T> Open<T>(string path)
         where T : class
+        => Open<T>(path, SearchEmbedders.Default);
+
+    /// <summary>Opens an index in a directory with an explicit embedder for <c>[Vector(From = ...)]</c> members (see <see cref="SearchEmbedders"/> and docs/auto-embedding.md).</summary>
+    /// <typeparam name="T">The attributed document type.</typeparam>
+    /// <param name="path">The directory, created if missing.</param>
+    /// <param name="embedder">The embedder, or <see langword="null"/> for none: vectors are then supplied by the application.</param>
+    /// <returns>The index.</returns>
+    /// <exception cref="InvalidOperationException">The embedder's dimension differs from a member's <c>Dimensions</c>, or the type has no generated mapping.</exception>
+    public static SearchIndex<T> Open<T>(string path, IEmbedder? embedder)
+        where T : class
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
-        return new SearchIndex<T>(new FileSystemStorage(path), SearchMappings.Require<T>());
+        return new SearchIndex<T>(new FileSystemStorage(path), SearchMappings.Require<T>(), embedder);
     }
 
     /// <summary>Creates an index that lives in memory only and disappears when disposed.</summary>
@@ -36,7 +47,15 @@ public static class SearchIndex
     /// <exception cref="InvalidOperationException">The type has no generated mapping or no <see cref="SearchIdAttribute"/> member.</exception>
     public static SearchIndex<T> InMemory<T>()
         where T : class
-        => new(new MemoryStorage(), SearchMappings.Require<T>());
+        => new(new MemoryStorage(), SearchMappings.Require<T>(), SearchEmbedders.Default);
+
+    /// <summary>Creates an in-memory index with an explicit embedder (see <see cref="Open{T}(string, IEmbedder)"/>).</summary>
+    /// <typeparam name="T">The attributed document type.</typeparam>
+    /// <param name="embedder">The embedder, or <see langword="null"/> for none.</param>
+    /// <returns>The index.</returns>
+    public static SearchIndex<T> InMemory<T>(IEmbedder? embedder)
+        where T : class
+        => new(new MemoryStorage(), SearchMappings.Require<T>(), embedder);
 }
 
 /// <summary>
@@ -60,11 +79,17 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     private readonly HashSet<string> _deletesPending = new(StringComparer.Ordinal);
     private Generation? _current;
     private volatile bool _disposed;
+    private readonly AutoEmbedding? _auto;
 
-    internal SearchIndex(IStorage storage, SearchMapping<T> mapping)
+    internal SearchIndex(IStorage storage, SearchMapping<T> mapping, IEmbedder? embedder = null)
     {
         _storage = storage;
         _mapping = mapping;
+        if (embedder is not null && mapping.Members.Any(static m => m.From is not null))
+        {
+            _auto = new AutoEmbedding(embedder, mapping.Members);
+        }
+
         var options = new IndexWriterOptions();
         _storesSource = options.Codecs.Any(static c => c.Parts.Contains(SegmentParts.Stored));
         _writer = IndexWriter.Open(storage, mapping.Schema, options);
@@ -97,51 +122,225 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
 
     internal SearchMapping<T> Mapping => _mapping;
 
+    internal AutoEmbedding? Auto => _auto;
+
     /// <summary>The schema of the index, which the strict query syntax, filter strings and query JSON are checked against.</summary>
     public Schema Schema => _mapping.Schema;
 
-    /// <summary>Adds a document, or replaces the one with the same identifier. It is searchable after the next commit.</summary>
+    /// <summary>The embedder that fills <c>[Vector(From = ...)]</c> members and embeds search text, or <see langword="null"/> when the index has none.</summary>
+    public IEmbedder? Embedder => _auto?.Embedder;
+
+    /// <summary>
+    /// Adds a document, or replaces the one with the same identifier. It is searchable after the next commit. A <c>[Vector(From = ...)]</c> member
+    /// that is left null is embedded from its source text first (reusing the stored vector when the text and model are unchanged); if the embedder fails
+    /// the call throws and the index is unchanged.
+    /// </summary>
     /// <param name="document">The document.</param>
-    /// <param name="cancellationToken">Cancels a flush this call triggers.</param>
+    /// <param name="cancellationToken">Cancels embedding, or a flush this call triggers.</param>
     /// <exception cref="ArgumentException">The document has no identifier or does not fit the schema.</exception>
+    /// <exception cref="EmbeddingException">The embedder failed or returned a non-finite value.</exception>
     public void Upsert(T document, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(document);
         Document doc = _mapping.ToDocument(document);
+        _auto?.Fill([doc], _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken);
+        Write(document, doc, cancellationToken);
+    }
+
+    private void Write(T? document, Document doc, CancellationToken cancellationToken)
+    {
         lock (_gate)
         {
             ThrowIfDisposed();
             _writer.Upsert(doc, cancellationToken);
             if (!_storesSource)
             {
-                string id = _mapping.GetId(document) ?? string.Empty;
+                string id = (document is null ? doc.Get(_mapping.Schema.IdField!).AsText() : _mapping.GetId(document)) ?? string.Empty;
                 _sourcePending[id] = doc;
                 _deletesPending.Remove(id);
             }
         }
     }
 
-    /// <summary>Adds or replaces several documents.</summary>
+    /// <summary>Adds or replaces several documents. Automatic embedding runs in batches, so this is much faster than one call per document.</summary>
     /// <param name="documents">The documents.</param>
-    /// <param name="cancellationToken">Cancels between documents.</param>
+    /// <param name="cancellationToken">Cancels between batches.</param>
     public void Upsert(IEnumerable<T> documents, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(documents);
+        var batch = new List<T>(UpsertBatch);
         foreach (T d in documents)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            Upsert(d, cancellationToken);
+            ArgumentNullException.ThrowIfNull(d);
+            batch.Add(d);
+            if (batch.Count == UpsertBatch)
+            {
+                UpsertBatchOf(batch, cancellationToken);
+                batch.Clear();
+            }
+        }
+
+        UpsertBatchOf(batch, cancellationToken);
+    }
+
+    private const int UpsertBatch = 64;
+
+    private void UpsertBatchOf(List<T> batch, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (batch.Count == 0)
+        {
+            return;
+        }
+
+        var docs = new List<Document>(batch.Count);
+        foreach (T d in batch)
+        {
+            docs.Add(_mapping.ToDocument(d));
+        }
+
+        _auto?.Fill(docs, _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken);
+        for (int i = 0; i < docs.Count; i++)
+        {
+            Write(batch[i], docs[i], cancellationToken);
         }
     }
 
-    /// <summary>Adds or replaces a document (see <see cref="Upsert(T, CancellationToken)"/>).</summary>
+    /// <summary>Adds or replaces a document, embedding with the embedder's asynchronous method (see <see cref="Upsert(T, CancellationToken)"/>).</summary>
     /// <param name="document">The document.</param>
-    /// <param name="cancellationToken">Cancels a flush this call triggers.</param>
+    /// <param name="cancellationToken">Cancels embedding or a flush.</param>
     /// <returns>A task that completes when the document is buffered.</returns>
-    public ValueTask UpsertAsync(T document, CancellationToken cancellationToken = default)
+    public async ValueTask UpsertAsync(T document, CancellationToken cancellationToken = default)
     {
-        Upsert(document, cancellationToken);
-        return ValueTask.CompletedTask;
+        ArgumentNullException.ThrowIfNull(document);
+        Document doc = _mapping.ToDocument(document);
+        if (_auto is not null)
+        {
+            await _auto.FillAsync([doc], _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken).ConfigureAwait(false);
+        }
+
+        Write(document, doc, cancellationToken);
+    }
+
+    /// <summary>
+    /// Embeds again every committed document whose stored vector was made by a different model or from different text, or is missing, then
+    /// buffers the changes for the next commit. Call it after changing the embedder (its <see cref="IEmbedder.ModelId"/>); unchanged documents
+    /// cost nothing. Documents upserted since the last commit are not touched.
+    /// </summary>
+    /// <param name="cancellationToken">Cancels between batches; what was already buffered stays.</param>
+    /// <returns>How many documents were embedded again.</returns>
+    /// <exception cref="InvalidOperationException">The index has no embedder.</exception>
+    public int ReembedStale(CancellationToken cancellationToken = default)
+    {
+        AutoEmbedding auto = _auto ?? throw new InvalidOperationException("The index has no embedder, so there is nothing to embed with.");
+        Generation? generation = Acquire();
+        if (generation is null)
+        {
+            return 0;
+        }
+
+        int total = 0;
+        try
+        {
+            var batch = new List<Document>(UpsertBatch);
+            foreach (LeafContext leaf in generation.Context.Leaves)
+            {
+                for (int local = 0; local < leaf.Reader.MaxDoc; local++)
+                {
+                    if (leaf.Reader.LiveDocs is { } live && !live.IsLive(local))
+                    {
+                        continue;
+                    }
+
+                    Document? stored = Source(generation, leaf, local, out _);
+                    if (stored is not null && auto.IsStale(stored))
+                    {
+                        batch.Add(stored);
+                        if (batch.Count == UpsertBatch)
+                        {
+                            total += Reembed(auto, batch, cancellationToken);
+                            batch.Clear();
+                        }
+                    }
+                }
+            }
+
+            total += Reembed(auto, batch, cancellationToken);
+        }
+        finally
+        {
+            generation.Release();
+        }
+
+        return total;
+    }
+
+    private int Reembed(AutoEmbedding auto, List<Document> batch, CancellationToken cancellationToken)
+    {
+        if (batch.Count == 0)
+        {
+            return 0;
+        }
+
+        // Copies, so a document being read by a search in flight is never changed.
+        var copies = new List<Document>(batch.Count);
+        foreach (Document d in batch)
+        {
+            var copy = new Document();
+            foreach (DocumentField f in d.Fields)
+            {
+                copy.Add(f.Name, f.Value);
+            }
+
+            copies.Add(copy);
+        }
+
+        auto.Fill(copies, _mapping.Schema.IdField!, static _ => null, replace: true, cancellationToken);
+        foreach (Document c in copies)
+        {
+            Write(null, c, cancellationToken);
+        }
+
+        return copies.Count;
+    }
+
+    /// <summary>The asynchronous twin of <see cref="ReembedStale"/>. The work runs on the calling thread.</summary>
+    /// <param name="cancellationToken">Cancels between batches.</param>
+    /// <returns>How many documents were embedded again.</returns>
+    public ValueTask<int> ReembedStaleAsync(CancellationToken cancellationToken = default) => ValueTask.FromResult(ReembedStale(cancellationToken));
+
+    // The document stored at the last commit under an identifier: the durable embedding cache (docs/auto-embedding.md).
+    private Document? CommittedSource(string id)
+    {
+        Generation? generation = Acquire();
+        if (generation is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            TopDocs top = generation.Searcher.Search(new TermQuery(_mapping.Schema.IdField!, id), 1);
+            if (top.Hits.Count == 0)
+            {
+                return null;
+            }
+
+            int global = top.Hits[0].DocId;
+            foreach (LeafContext leaf in generation.Context.Leaves)
+            {
+                if (global >= leaf.DocBase && global - leaf.DocBase < leaf.Reader.MaxDoc)
+                {
+                    return Source(generation, leaf, global - leaf.DocBase, out _);
+                }
+            }
+
+            return null;
+        }
+        finally
+        {
+            generation.Release();
+        }
     }
 
     /// <summary>Deletes the document with an identifier. The deletion is visible after the next commit.</summary>
@@ -312,7 +511,26 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     public SearchQuery<T> Parse(string queryJson)
     {
         QueryRequest request = QueryJson.Read(queryJson, Schema);
-        SearchQuery<T> search = SearchBy(request.ToQuery()).Take(request.Limit).Skip(request.Offset);
+        SearchQuery<T> search;
+        if (request.Hybrid is { } hybrid)
+        {
+            // The text of q is the text arm and, embedded, the vector arm (docs/hybrid.md).
+            Search.Query textArm = new UserTextCompiler(Schema).Compile(hybrid.Text);
+            Search.Query scored = request.Query is null ? textArm : new BooleanQuery([new BooleanClause(textArm, Occur.Must), new BooleanClause(request.Query, Occur.Must)]);
+            // The filter goes to both lists, so it is a filter of the search and not a clause of the text query.
+            search = SearchBy(scored).HybridCore(new HybridSpec(hybrid.SemanticRatio, hybrid.Fusion, hybrid.RankConstant, hybrid.Window, hybrid.Field, null, hybrid.Text));
+            if (request.Filter is { } requestFilter)
+            {
+                search = search.WhereQuery(requestFilter);
+            }
+
+            search = search.Take(request.Limit).Skip(request.Offset);
+        }
+        else
+        {
+            search = SearchBy(request.ToQuery()).Take(request.Limit).Skip(request.Offset);
+        }
+
         if (request.Sort is { } sort)
         {
             search = search.WithKeys([.. sort.Keys]);
@@ -751,6 +969,11 @@ public sealed partial class SearchQuery<T> : IEnumerable<SearchHit<T>>
     private Search.Query Build(out Search.Query textQuery)
     {
         textQuery = _query ?? new UserTextCompiler(_index.Mapping.Schema).Compile(_text);
+        if (EffectiveHybrid() is { } hybrid)
+        {
+            return BuildHybrid(textQuery, hybrid);
+        }
+
         return _extras is null && _filters.Length == 0 ? textQuery : WithExtras(textQuery);
     }
 }
