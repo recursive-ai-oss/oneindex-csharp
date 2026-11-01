@@ -113,3 +113,50 @@ Throughput, for information (worker, 8 threads, other jobs running, so not a ben
 
 The tokenizer is fuzzed (`fuzz/run.sh wordpiece`): 600 s, 3,767,141 executions, 2,912 coverage features, corpus 503 inputs, no
 findings.
+
+## Cross-encoder: ms-marco-MiniLM-L6-v2
+
+The default reranker (`MiniLmReranker`; the contract, the stage and the pair encoding are in `rerank.md`). cross-encoder/ms-marco-MiniLM-L6-v2, Apache-2.0,
+revision `233902d25c440f23af6f7d6e94d2946bac0bee0a`, trained on the MS MARCO passage ranking set (we did not train it; the data is not included). Weights
+are prepared like the embedder's (`prepare_cross_encoder.py`, `gate.sh setup-reranker`, `pack-weights.sh reranker`): fp32 as published (91 MB as OneModel file),
+weight-only int8 shipped (24 MB). They stay loadable from files (`MiniLmReranker.Open`).
+
+### Conformance
+
+- **Pair token ids** against the Hugging Face `tokenizers` package (0.23.3, black box, the model's `tokenizer.json`, truncation `longest_first` at 512), 4,528 pairs:
+  27 adversarial pairs (empty texts, special-token text, accents, CJK, emoji, lengths around the truncation boundary on both sides) and 1,500 per BEIR set
+  (SciFact, ArguAna, SCIDOCS) of a test query with a judged passage (half) or a random passage. **4,528 matched ids and segment ids; 0 differences**, 647 of them at the
+  512 limit. Two differences found on the way and fixed: which text is cut (the shorter keeps up to half the room, the longer the rest) and which counts as longer when
+  equal (the second).
+- **Scores** against ONNX Runtime 1.31.1 fp32, one pair at a time, graph optimizations off, 600 pairs (the 27 adversarial and every 7th other; reference logits -11.5 to 7.3):
+
+| Weights | max abs diff | mean abs diff | Spearman |
+|---|---|---|---|
+| fp32 | 0.00001 | 0.00000 | 1.00000 |
+| int8 (shipped) | 0.143 | 0.019 | 0.99998 |
+
+  Scoring all 600 pairs batched by query against scoring them one at a time: largest difference 0.00000.
+
+### BEIR reproduction
+
+BM25F top-100 (the relevance gate's first stage: English analyzer, title weight 3, k1 0.9, b 0.4), each hit read as title, a space, text, reranked by the shipped int8 model
+through the model tool (`gate.sh rerank-beir`: the same ordering rule as the stage: best score first, ties in first-stage order). nDCG@10 under the BEIR convention (a hit with the
+query's own id is skipped), cross-checked with `pytrec_eval` on the run files (equal to four decimals). The published figures are the **BEIR paper's Table 2, BM25+CE column**
+(Thakur et al. 2021): a 6-layer, 384-hidden MiniLM cross-encoder reranking the top 100 of Anserini BM25, linked there as cross-encoder/ms-marco-MiniLM-L-6-v2 (the hyphenated
+repository name; the model card of the repository used here lists no BEIR figures). The paper's first stage is Anserini BM25, ours is BM25F, and its ArguAna numbers predate the
+identical-id convention, so the last column drops no hit.
+
+| Set | Published BM25+CE | BM25F first stage | Reranked (shipped int8) | Difference | Reranked, own-id hit kept |
+|---|---|---|---|---|---|
+| SciFact | 0.688 | 0.6912 | 0.6890 | +0.1 point | 0.6890 |
+| ArguAna | 0.311 | 0.4333 | 0.4164 | +10.5 points under the BEIR convention | 0.3112 (+0.0) |
+| SCIDOCS | 0.166 | 0.1531 | 0.1646 | -0.1 point | 0.1646 |
+
+ArguAna's gap is the convention, not the model: its queries are documents of the corpus, so the paper counted the query's own copy as a (never relevant) top hit; the same run scored
+that way gives 0.3112 against the published 0.311 (first stage 0.3253 against the paper's BM25 0.315). All three sets are within 1 point of the published figures. NQ (published 0.533)
+was not run: 3,452 queries x 100 pairs at the measured rate is about four hours of the shared queue plus an index of 2.68 million passages.
+
+Information, SciFact: the default hybrid list (docs/hybrid.md; 0.7257) reranked gives 0.6894. On this set the cross-encoder does not improve on the hybrid first stage.
+
+Throughput, for information: 22 to 25 (query, passage) pairs per second with 8 threads on the shared x64 worker (AVX-512 kernels), 100 passages of 150 to 400 tokens per query.
+The model tool's rate on pairs is the limit of the BEIR runs above (about 45 minutes for SciFact, five hours for ArguAna).

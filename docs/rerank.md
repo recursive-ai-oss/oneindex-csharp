@@ -81,4 +81,4 @@ Trained on the MS MARCO passage ranking set (provenance only; the weights are th
 
 ### Conformance and quality
 
-See the tables in `docs/models.md` ("Cross-encoder").
+Pair token ids (4,528 of 4,528), scores against ONNX Runtime and the BEIR reproduction (all three sets within 1 point of the published BM25+CE figures) are in `models.md` ("Cross-encoder").
