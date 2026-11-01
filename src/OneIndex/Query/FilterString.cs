@@ -89,6 +89,12 @@ public static class FilterString
             case RangeQuery r:
                 PrintRange(r, schema, sb);
                 return;
+            case GeoRadiusQuery g:
+                sb.Append("_geoRadius(").Append(Name(g.Field)).Append(", ").Append(Num(g.Latitude)).Append(", ").Append(Num(g.Longitude)).Append(", ").Append(Num(g.RadiusMeters)).Append(')');
+                return;
+            case GeoBoundingBoxQuery x:
+                sb.Append("_geoBoundingBox(").Append(Name(x.Field)).Append(", [").Append(Num(x.North)).Append(", ").Append(Num(x.East)).Append("], [").Append(Num(x.South)).Append(", ").Append(Num(x.West)).Append("])");
+                return;
             case BooleanQuery b:
                 PrintBoolean(b, schema, sb, root);
                 return;
@@ -145,7 +151,7 @@ public static class FilterString
 
     private static void PrintRange(RangeQuery r, Schema schema, StringBuilder sb)
     {
-        if (!schema.TryGetField(r.Field, out FieldDefinition? def))
+        if (!schema.TryGetField(r.Field, out FieldDefinition? def) && !schema.TryGetPath(r.Field, out def))
         {
             throw new ArgumentException($"The schema has no field '{r.Field}'.", nameof(r));
         }
@@ -194,6 +200,8 @@ public static class FilterString
         FieldValueKind.Date => Quote(ValueBinder.FormatDate(v)),
         _ => throw new ArgumentException($"A {v.Kind} value has no filter string."),
     };
+
+    private static string Num(double d) => d.ToString("R", CultureInfo.InvariantCulture);
 
     private static string Name(string field) => IsPlainWord(field) && !IsKeyword(field) ? field : Quote(field);
 
@@ -378,6 +386,11 @@ public static class FilterString
                 throw QueryParseException.At(_s, fieldTok.Start, fieldTok.End - fieldTok.Start, $"The filter has more than {MaxConditions} conditions.");
             }
 
+            if (fieldTok.Kind == Tk.Word && (fieldTok.Text.Equals("_geoRadius", StringComparison.OrdinalIgnoreCase) || fieldTok.Text.Equals("_geoBoundingBox", StringComparison.OrdinalIgnoreCase)))
+            {
+                return ParseGeo(fieldTok);
+            }
+
             FieldDefinition def = Resolve(fieldTok);
             Advance();
             Tok op = _tok;
@@ -429,6 +442,106 @@ public static class FilterString
             }
 
             throw Expected("an operator (=, !=, >, >=, <, <=, TO, IN, EXISTS, IS NULL, IS EMPTY) or a value before TO");
+        }
+
+        // _geoRadius([field,] lat, lng, meters) and _geoBoundingBox([field,] [topRightLat, topRightLng], [bottomLeftLat, bottomLeftLng]),
+        // after Meilisearch's documented filters. The geo field is named first when the schema has several; otherwise it is the only one.
+        private Query ParseGeo(Tok nameTok)
+        {
+            bool radius = nameTok.Text.Equals("_geoRadius", StringComparison.OrdinalIgnoreCase);
+            Advance();
+            Take(Tk.LParen, "'(' after " + nameTok.Text);
+            string? field = null;
+            Tok fieldAt = _tok;
+            if (_tok.Kind == Tk.Quoted || (_tok.Kind == Tk.Word && !double.TryParse(_tok.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out _)))
+            {
+                field = _tok.Text;
+                Advance();
+                Take(Tk.Comma, "',' after the geo field name");
+            }
+
+            string name = GeoField(field, fieldAt);
+            if (radius)
+            {
+                double lat = Number("a latitude", -90, 90);
+                Take(Tk.Comma, "','");
+                double lng = Number("a longitude", -180, 180);
+                Take(Tk.Comma, "','");
+                double meters = Number("a radius in metres", 0, double.MaxValue);
+                Take(Tk.RParen, "')' to close " + nameTok.Text);
+                return new GeoRadiusQuery(name, lat, lng, meters);
+            }
+
+            Take(Tk.LBracket, "'[' before the top right corner");
+            double north = Number("the top right latitude", -90, 90);
+            Take(Tk.Comma, "','");
+            double east = Number("the top right longitude", -180, 180);
+            Take(Tk.RBracket, "']'");
+            Take(Tk.Comma, "',' between the corners");
+            Take(Tk.LBracket, "'[' before the bottom left corner");
+            Tok southAt = _tok;
+            double south = Number("the bottom left latitude", -90, 90);
+            Take(Tk.Comma, "','");
+            double west = Number("the bottom left longitude", -180, 180);
+            Take(Tk.RBracket, "']'");
+            Take(Tk.RParen, "')' to close " + nameTok.Text);
+            if (south > north)
+            {
+                throw QueryParseException.At(_s, southAt.Start, southAt.End - southAt.Start, "The bottom left latitude is above the top right latitude.");
+            }
+
+            return new GeoBoundingBoxQuery(name, north, south, west, east);
+        }
+
+        private string GeoField(string? named, Tok at)
+        {
+            if (named is not null)
+            {
+                if (!_schema.TryGetField(named, out FieldDefinition? def) || def.Type != FieldType.GeoPoint)
+                {
+                    throw QueryParseException.At(_s, at.Start, at.End - at.Start, $"{QuerySyntax.Q(named)} is not a geo point field.", "a geo point field name");
+                }
+
+                return IsGeoSearchable(def) ? def.Name : throw QueryParseException.At(_s, at.Start, at.End - at.Start, $"Geo field '{named}' cannot be searched: mark it [Geo].");
+            }
+
+            string[] fields = [.. _schema.Fields.Where(IsGeoSearchable).Select(static f => f.Name)];
+            if (fields.Length == 1)
+            {
+                return fields[0];
+            }
+
+            string detail = fields.Length == 0 ? "The schema has no searchable geo field (mark a GeoPoint property [Geo])." : "The schema has several geo fields; name one first: " + string.Join(", ", fields) + ".";
+            throw QueryParseException.At(_s, at.Start, Math.Max(0, at.End - at.Start), detail);
+        }
+
+        private static bool IsGeoSearchable(FieldDefinition f) => f.Type == FieldType.GeoPoint && f.Indexed && f.Column;
+
+        private void Take(Tk kind, string what)
+        {
+            if (_tok.Kind != kind)
+            {
+                throw Expected(what);
+            }
+
+            Advance();
+        }
+
+        private double Number(string what, double min, double max)
+        {
+            Tok t = _tok;
+            if (t.Kind is not (Tk.Word or Tk.Quoted) || !double.TryParse(t.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) || !double.IsFinite(value))
+            {
+                throw Expected(what);
+            }
+
+            if (value < min || value > max)
+            {
+                throw QueryParseException.At(_s, t.Start, t.End - t.Start, $"{what} must be between {min.ToString(CultureInfo.InvariantCulture)} and {(max == double.MaxValue ? "a finite number" : max.ToString(CultureInfo.InvariantCulture))}; got {t.Text}.");
+            }
+
+            Advance();
+            return value;
         }
 
         // IN [...], EXISTS, IS [NOT] NULL, IS [NOT] EMPTY. The current token is the keyword.
@@ -533,7 +646,7 @@ public static class FilterString
         private FieldDefinition Resolve(Tok fieldTok)
         {
             string name = fieldTok.Text;
-            if (!_schema.TryGetField(name, out FieldDefinition? def))
+            if (!_schema.TryGetField(name, out FieldDefinition? def) && !_schema.TryGetPath(name, out def))
             {
                 string? near = QuerySyntax.Nearest(name, _schema.Fields.Where(IsFilterable).Select(static f => f.Name));
                 string hint = near is null ? string.Empty : $" Did you mean '{near}'?";
@@ -555,7 +668,7 @@ public static class FilterString
         }
 
         private static bool IsFilterable(FieldDefinition f)
-            => f.Indexed && f.Type is FieldType.Keyword or FieldType.Integral or FieldType.Fractional or FieldType.Date or FieldType.Bool;
+            => f.Indexed && f.Type is FieldType.Keyword or FieldType.Integral or FieldType.Fractional or FieldType.Date or FieldType.Bool or FieldType.Json;
 
         private Query EqualTo(FieldDefinition def, Tok value)
         {
@@ -565,6 +678,11 @@ public static class FilterString
             }
 
             FieldValue v = Bind(def, value, BoundRole.Equal, out _, out bool nothing);
+            if (v.Kind == FieldValueKind.Text)
+            {
+                return new TermQuery(def.Name, v.AsText()); // a string at a JSON path
+            }
+
             return nothing ? None() : new RangeQuery(def.Name, v, v);
         }
 

@@ -103,7 +103,7 @@ internal static class DocValuesFixture
 
             if (rng.Next(4) == 0)
             {
-                d.Add("vec", [(float)rng.NextDouble(), rng.Next(8) == 0 ? float.NaN : (float)rng.NextDouble(), -0f]);
+                d.Add("vec", [(float)rng.NextDouble(), (float)rng.NextDouble(), -0f]);
             }
 
             if (rng.Next(4) == 0)

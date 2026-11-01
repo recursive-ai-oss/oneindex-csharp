@@ -17,7 +17,9 @@ CRC-32C is the Castagnoli polynomial (reflected 0x82F63B78), initial value and f
 
 The footer checksum doubles as the file's identity: a commit records it for each file it lists, so a file replaced by different bytes of the same length is noticed from 12 bytes at the end.
 
-## Commit file, version 1
+## Commit file, versions 1 and 2
+
+A commit is written as version 1 unless the index has been through a schema change that needed its segments rebuilt (see schema-evolution.md), in which case it is written as version 2, which adds the epoch fields and the pending-rebuild section marked below. Both versions are read. A version 2 commit whose epochs are all 0 and that has no pending rebuild is refused: version 1 is its canonical form.
 
 File name `commit-<generation as 16 lowercase hex digits>.oic`. Body:
 
@@ -27,6 +29,7 @@ File name `commit-<generation as 16 lowercase hex digits>.oic`. Body:
     bytes  schema              the serialized schema (below), at most 4 MiB; empty if none
     varint user data count     at most 1,024
       string key, string value     keys strictly ascending by ordinal byte order
+    varint schema epoch        version 2 only: 0 until a schema change needed segments rebuilt, then one more per such change
     varint segment count       at most 100,000
       string  segment name
       varint  document count   including deleted documents
@@ -39,17 +42,30 @@ File name `commit-<generation as 16 lowercase hex digits>.oic`. Body:
         varint codec version
         varint file length
         u32    file checksum    the footer checksum of that file
+      varint  schema epoch     version 2 only: the epoch the segment was written under; at most the commit's
 
-Segment names are unique within a commit. A parsed commit that is serialized again gives the same bytes: the format is canonical, which the fuzz target checks.
+Version 2 then ends with the pending-rebuild section (schema-evolution.md):
+
+    varint  pending flag    0 or 1
+    (when 1)
+      bytes   pending schema   the schema served after the swap
+      varint  rebuilt count    may be 0
+        segment record         as above, with an epoch of exactly the commit's plus one
+        string  source         the name of a segment listed above that it was rebuilt from; each source at most once
+        varint  source deleted the source's deleted count when it was rebuilt
+
+The segments listed first are the served ones; rebuilt segments are never read until a later commit makes them the served set.
+
+Segment names are unique within a commit (rebuilt segments and all file names included). A parsed commit that is serialized again gives the same bytes: the format is canonical, which the fuzz target checks.
 
 ### Codec registry
 
 The codecs this build reads are a fixed list in `CodecRegistry`, each with the newest version it understands. A commit that names an unknown codec, or a newer version than listed, is refused as `UnsupportedFormatException`. The codec's owner raises the number when its on-disk format changes; reading older versions stays supported until a release says otherwise.
 
-## Schema, version 1
+## Schema, versions 1 and 2
 
     4 bytes   "OIXS"
-    u32       version (1)
+    u32       version (1; 2 when the schema holds fields derived from JSON paths or text settings)
     varint    field count   at most 4,096
       string  name
       u8      type          1 text, 2 keyword, 3 integral, 4 fractional, 5 date, 6 bool, 7 geo point, 8 bytes, 9 vector, 10 json
@@ -59,6 +75,23 @@ The codecs this build reads are a fixed list in `CodecRegistry`, each with the n
       u8      index options 0 none, 1 docs, 2 freqs, 3 positions, 4 offsets
       varint  dimensions    vector fields only
     string    identifier field name, empty when none
+    version 2 only:
+    varint    section count
+      varint  section id    strictly ascending; 1 = derived fields, 2 = text settings
+      bytes   section body
+
+Sections with ids this build does not define are skipped on reading (their length is checked and they are dropped when the schema is written again). Section 1 lists the fields derived from the paths of JSON fields (dynamic.md): a varint count of at least 1, then for each, in ascending order, the varint field id of the derived field and the varint field id of the JSON field it belongs to (always an earlier field). Section 2 holds the text settings (query-time; they never change what is indexed):
+
+        u8    flags         1 typo tolerance off, 2 no typos on numbers, 4 prefix search off
+        varint word size for one typo, varint word size for two typos   0 to 255, one <= two
+        list  words that never get typos       list = varint count, then strings
+        list  fields without typos
+        list  stop words
+        varint synonym rule count
+          list from (a group's members, or the one-way word)
+          list to (empty for a group)
+
+A schema whose text settings are all defaults and that has no derived fields is written as version 1, byte for byte as before. Opening a writer with a schema that has the committed fields but different text settings is allowed: the new settings are used at once and the next commit records them; they never trigger a rebuild.
 
 Fields keep declaration order; a field's position is its field id. The reader runs the same validation as the schema builder (unique names, types and options that make sense together, a stored single-valued keyword for the identifier).
 

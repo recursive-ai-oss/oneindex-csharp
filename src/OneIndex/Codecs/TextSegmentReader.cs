@@ -451,6 +451,35 @@ internal sealed class TextFieldReader : ITextFieldReader
         return postings;
     }
 
+    public void AddDocuments(in TermInfo term, ulong[] bits, ref PostingsIterator? scratch)
+    {
+        if (bits.Length < (_maxDoc + 63) >> 6)
+        {
+            throw new ArgumentException("The bit set is too short for the segment.", nameof(bits));
+        }
+
+        var postings = scratch as TermPostings;
+        if (postings is null)
+        {
+            postings = new TermPostings(_postings, _maxDoc, (IndexedFeatures & PostingsFeatures.Positions) == PostingsFeatures.Positions, (IndexedFeatures & PostingsFeatures.Offsets) == PostingsFeatures.Offsets);
+            scratch = postings;
+        }
+
+        postings.Reset(term, PostingsFeatures.None);
+        postings.AddDocumentsTo(bits);
+    }
+
+    public PostingsIterator GetPostings(in TermInfo term, PostingsFeatures features, PostingsIterator? reuse)
+    {
+        if (reuse is not TermPostings postings)
+        {
+            return GetPostings(term, features);
+        }
+
+        postings.Reset(term, features);
+        return postings;
+    }
+
     public int GetFieldLength(int docId)
     {
         if ((uint)docId >= (uint)_maxDoc)

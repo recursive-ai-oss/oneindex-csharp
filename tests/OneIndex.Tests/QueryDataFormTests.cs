@@ -297,7 +297,7 @@ public class QueryDataFormTests
         Case("""{"v":2}""", "$.v", "not supported");
         Case("""{"v":1.5}""", "$.v", "whole number");
         Case("""{"v":1,"limt":3}""", "$.limt", "Did you mean \"limit\"?", "limit");
-        Case("""{"v":1,"sort":["a"]}""", "$.sort", "reserved");
+        Case("""{"v":1,"facets":["a"]}""", "$.facets", "reserved");
         Case("""{"v":1,"v":1}""", "$.v", "twice");
         Case("""{"v":1,"limit":-1}""", "$.limit", "from 0 to 10000");
         Case("""{"v":1,"limit":9000,"offset":2000}""", "$.limit", "largest window");

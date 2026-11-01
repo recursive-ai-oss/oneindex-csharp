@@ -124,8 +124,11 @@ public class GeneratorTests
     }
 
     [Theory]
-    [InlineData("[Vector] public float[] V { get; set; } = [];", "OI0002")]
-    [InlineData("[Dynamic] public System.Text.Json.JsonElement V { get; set; }", "OI0002")]
+    [InlineData("[Vector] public float[] V { get; set; } = [];", "OI0007")]
+    [InlineData("[Vector(Dimensions = 4)] public string V { get; set; } = \"\";", "OI0001")]
+    [InlineData("[Vector(Dimensions = 4), Keyword] public float[] V { get; set; } = [];", "OI0003")]
+    [InlineData("[Dynamic] public string V { get; set; } = \"\";", "OI0001")]
+    [InlineData("[Dynamic, Filterable] public System.Text.Json.JsonElement V { get; set; }", "OI0003")]
     [InlineData("[FullText] public int V { get; set; }", "OI0001")]
     [InlineData("[Keyword] public System.Collections.Generic.List<int> V { get; set; } = new();", "OI0001")]
     [InlineData("[Filterable] public decimal V { get; set; }", "OI0001")]

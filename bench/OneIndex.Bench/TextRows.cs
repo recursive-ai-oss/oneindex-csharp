@@ -70,6 +70,10 @@ public class TextRows
 
     [Benchmark(OperationsPerInvoke = Queries)] public long Fuzzy2() => Row(RowKind.Fuzzy2);
 
+    [Benchmark(OperationsPerInvoke = Queries)] public long Typo() => Row(RowKind.Typo);
+
+    [Benchmark(OperationsPerInvoke = Queries)] public long TypoAsYouType() => Row(RowKind.TypoAsYouType);
+
     [Benchmark(OperationsPerInvoke = Queries)] public long Filtered() => Row(RowKind.Filtered);
 
     [Benchmark(OperationsPerInvoke = Queries)] public long Facets() => Row(RowKind.Facets);
@@ -77,6 +81,8 @@ public class TextRows
     [Benchmark(OperationsPerInvoke = Queries)] public long Stats() => Row(RowKind.Stats);
 
     [Benchmark(OperationsPerInvoke = Queries)] public long Sort() => Row(RowKind.Sort);
+
+    [Benchmark(OperationsPerInvoke = Queries)] public long FunctionScore() => Row(RowKind.FunctionScore);
 }
 
 /// <summary>A starting benchmark: the checksum every index file carries.</summary>

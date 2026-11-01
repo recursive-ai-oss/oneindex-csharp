@@ -33,6 +33,7 @@ internal static class QueryTextTargets
                 Body = string.Join(' ', Enumerable.Range(0, 6).Select(k => words[(i + (k * 5)) % words.Length])),
                 Tag = words[i % 4],
                 Number = i,
+                Place = i % 5 == 0 ? null : new GeoPoint(((i * 37) % 180) - 90, ((i * 53) % 360) - 180),
             });
         }
 
@@ -158,6 +159,22 @@ internal static class QueryTextTargets
         Require(request.Equals(again), "json round trip");
         Require(QueryJson.Write(again) == json, "json canonical");
         Run(request.ToQuery());
+        if (request.Sort is not null)
+        {
+            // The sorted path end to end, and a second page from the cursor of the first.
+            try
+            {
+                SearchResults<FuzzDocument> first = Index.Parse(json).Execute();
+                if (request.SearchAfter is null && first.NextCursor is { } cursor)
+                {
+                    SearchResults<FuzzDocument> second = Index.Parse(QueryJson.Write(request with { SearchAfter = cursor.ToToken(), Offset = 0 })).Execute();
+                    Require(second.Count <= Math.Max(request.Limit, 0), "second page size");
+                }
+            }
+            catch (TooManyTermsException)
+            {
+            }
+        }
     }
 
     private static void Run(Query q)
@@ -195,6 +212,7 @@ internal static class QueryTextTargets
         string[] filter =
         [
             "Number > 3 AND (Tag = cat OR Tag = 'dog')", "NOT Number 2 TO 8", "Tag IN [cat, dog] AND Number EXISTS", "Number != 2.5", "Tag = \"unterminated", "Number IS NULL OR Tag IS NOT EMPTY",
+            "_geoRadius(Place, 10.5, -170, 2500000) AND Number > 3", "_geoBoundingBox([60, -170], [-20, 150])", "NOT _geoRadius(0, 0, 1e7)", "_geoRadius(Place, 91, 0, 1)", "_geoBoundingBox(Place, [1, 2], [3, 4])",
         ];
         string[] json =
         [
@@ -205,6 +223,17 @@ internal static class QueryTextTargets
             "{\"v\":1,\"query\":{\"type\":\"bool\",\"should\":[{\"type\":\"phrase\",\"field\":\"Body\",\"terms\":[\"acme\",\"corp\"],\"slop\":2},{\"type\":\"prefix\",\"field\":\"Tag\",\"prefix\":\"ca\"},{\"type\":\"regex\",\"field\":\"Tag\",\"pattern\":\"d.*\"},{\"type\":\"exists\",\"field\":\"Number\"}],\"minimumShouldMatch\":2,\"boost\":1.5},\"offset\":3}",
             "{\"v\":1,\"query\":{\"type\":\"multiFieldTerm\",\"fields\":[\"Title\",\"Body\"],\"term\":\"cat\"},\"filter\":{\"type\":\"range\",\"field\":\"Number\",\"gt\":2.5}}",
             "{\"v\":1,\"query\":{\"type\":\"text\",\"text\":\"cat OR dog\"},\"filter\":{\"type\":\"term\",\"field\":\"Number\",\"value\":4}}",
+            "{\"v\":1,\"filter\":{\"type\":\"geoRadius\",\"field\":\"Place\",\"lat\":10,\"lng\":-170,\"meters\":3000000},\"sort\":[\"Number:desc:first\",\"_geoPoint(Place, 1, 2):asc\"],\"limit\":3}",
+            "{\"v\":1,\"query\":{\"type\":\"geoBoundingBox\",\"field\":\"Place\",\"north\":50,\"south\":-50,\"west\":150,\"east\":-150},\"sort\":[\"_score\",\"Id\"],\"limit\":2}",
+            "{\"v\":1,\"sort\":[\"Number\"],\"searchAfter\":\"AQAAAAAB\"}",
+            "{\"v\":1,\"query\":{\"type\":\"functionScore\",\"query\":{\"type\":\"text\",\"text\":\"cat\"},\"functions\":[{\"type\":\"fieldValueFactor\",\"field\":\"Number\",\"factor\":2,\"modifier\":\"log1p\",\"missing\":1},{\"type\":\"gauss\",\"field\":\"Number\",\"origin\":5,\"scale\":3,\"offset\":1,\"decay\":0.3,\"weight\":2}],\"scoreMode\":\"avg\",\"boostMode\":\"sum\",\"maxBoost\":8,\"minScore\":0.2,\"boost\":1.5},\"limit\":3}",
+            "{\"v\":1,\"query\":{\"type\":\"functionScore\",\"functions\":[{\"type\":\"exp\",\"field\":\"Place\",\"origin\":{\"lat\":10,\"lng\":-170},\"scale\":2000000,\"filter\":\"Number > 2\"},{\"type\":\"linear\",\"field\":\"Number\",\"origin\":0,\"scale\":100},{\"type\":\"weight\",\"weight\":0.5,\"filter\":{\"type\":\"exists\",\"field\":\"Number\"}}],\"scoreMode\":\"first\",\"boostMode\":\"max\"}}",
+            "{\"v\":1,\"query\":{\"type\":\"functionScore\",\"query\":{\"type\":\"functionScore\",\"functions\":[{\"type\":\"weight\",\"weight\":2}]},\"functions\":[{\"type\":\"fieldValueFactor\",\"field\":\"Number\",\"modifier\":\"reciprocal\"}],\"boostMode\":\"replace\"}}",
+            "{\"v\":1,\"query\":{\"type\":\"functionScore\",\"functions\":[{\"type\":\"gauss\",\"field\":\"Number\",\"origin\":0,\"scale\":0}]}}",
+            "{\"v\":1,\"q\":\"cat dog\",\"hybrid\":{\"semanticRatio\":0.4,\"fusion\":\"linear\",\"window\":20,\"field\":\"Vec\"},\"filter\":\"Number > 1\",\"limit\":4}",
+            "{\"v\":1,\"q\":\"cat\",\"hybrid\":{\"rankConstant\":30}}",
+            "{\"v\":1,\"query\":{\"type\":\"hybrid\",\"text\":{\"type\":\"text\",\"text\":\"cat\"},\"vector\":{\"type\":\"knn\",\"field\":\"Vec\",\"vector\":[1,0,0.5],\"k\":5,\"filter\":{\"type\":\"exists\",\"field\":\"Number\"}},\"semanticRatio\":0.9,\"window\":50,\"boost\":2}}",
+            "{\"v\":1,\"hybrid\":{}}",
             "{\"v\":2}",
         ];
         string[] seeds = kind == 0 ? strict : kind == 1 ? filter : json;

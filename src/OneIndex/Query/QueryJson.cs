@@ -34,6 +34,19 @@ public sealed record QueryRequest
     /// <summary>Snippet settings, or <see langword="null"/> for the defaults.</summary>
     public HighlightOptions? Highlight { get; init; }
 
+    /// <summary>The ordering of the hits, or <see langword="null"/> for relevance order.</summary>
+    public QuerySort? Sort { get; init; }
+
+    /// <summary>A <see cref="SortCursor.ToToken"/> token to continue after (search-after); needs <see cref="Sort"/>. <see langword="null"/> for the first page.</summary>
+    public string? SearchAfter { get; init; }
+
+    /// <summary>
+    /// Fuses a text search of the request's <c>q</c> with a vector search over its embedding, or <see langword="null"/> for plain search. With it,
+    /// <c>q</c> is held here and not in <see cref="Query"/>. It needs an index with an embedder: <c>SearchIndex.Parse</c> applies it
+    /// (<see cref="ToQuery"/> does not, because embedding is not the data form's job, and leaves the text out).
+    /// </summary>
+    public HybridRequest? Hybrid { get; init; }
+
     /// <summary>The query the engine runs: <see cref="Query"/> (every document when absent) with <see cref="Filter"/> as a non-scoring restriction.</summary>
     /// <returns>The combined query.</returns>
     public Query ToQuery()
@@ -43,12 +56,44 @@ public sealed record QueryRequest
     }
 }
 
+/// <summary>The <c>hybrid</c> setting of a query JSON request (docs/hybrid.md).</summary>
+/// <param name="Text">The request's <c>q</c>: the text searched by words and, embedded, by meaning.</param>
+/// <param name="SemanticRatio">How much the vector arm counts, 0 to 1. Default 0.75.</param>
+/// <param name="Fusion">How the lists combine. Default reciprocal rank fusion.</param>
+/// <param name="RankConstant">The reciprocal rank constant, 1 to 1,000. Default 10.</param>
+/// <param name="Window">How many documents each arm contributes. Default 100.</param>
+/// <param name="Field">The vector property to search, or <see langword="null"/> for the schema's only automatically embedded one.</param>
+public sealed record HybridRequest(string Text, double SemanticRatio = HybridQuery.DefaultSemanticRatio, FusionMethod Fusion = FusionMethod.ReciprocalRank, int RankConstant = HybridQuery.DefaultRankConstant, int Window = 100, string? Field = null);
+
+/// <summary>The sort keys of a query JSON document. Equal when the keys are equal in order.</summary>
+/// <param name="Keys">The keys, 1 to 16.</param>
+public sealed record QuerySort(IReadOnlyList<SortCriterion> Keys)
+{
+    /// <summary>Compares the keys one by one.</summary>
+    /// <param name="other">The other sort.</param>
+    /// <returns><see langword="true"/> when equal.</returns>
+    public bool Equals(QuerySort? other) => other is not null && Keys.SequenceEqual(other.Keys);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        // In-process hash tables only; never persisted.
+        var hash = default(HashCode);
+        foreach (SortCriterion k in Keys)
+        {
+            hash.Add(k);
+        }
+
+        return hash.ToHashCode();
+    }
+}
+
 /// <summary>
 /// Versioned query JSON: a document with <c>"v": 1</c> that describes a search, checked against a schema as it is read. Unknown
 /// properties, wrong types and unknown fields are errors that name the JSON path. Reading uses <see cref="JsonDocument"/> and writing
 /// uses <see cref="Utf8JsonWriter"/>, with no reflection. The format is in <c>docs/query-json.md</c>.
 /// </summary>
-public static class QueryJson
+public static partial class QueryJson
 {
     /// <summary>The format version this build reads and writes.</summary>
     public const int Version = 1;
@@ -218,6 +263,19 @@ public static class QueryJson
                 WriteNode(w, request.Filter);
             }
 
+            if (request.Hybrid is { } hy)
+            {
+                w.WriteString("q", hy.Text);
+                w.WriteStartObject("hybrid");
+                if (hy.Field is not null)
+                {
+                    w.WriteString("field", hy.Field);
+                }
+
+                WriteHybridSettings(w, hy.Fusion, hy.RankConstant, hy.SemanticRatio, hy.Window);
+                w.WriteEndObject();
+            }
+
             if (request.Limit != 20)
             {
                 w.WriteNumber("limit", request.Limit);
@@ -241,10 +299,49 @@ public static class QueryJson
                 w.WriteEndObject();
             }
 
+            if (request.Sort is { } sort)
+            {
+                w.WriteStartArray("sort");
+                foreach (SortCriterion key in sort.Keys)
+                {
+                    w.WriteStringValue(SortText.Write(key));
+                }
+
+                w.WriteEndArray();
+            }
+
+            if (request.SearchAfter is { } after)
+            {
+                w.WriteString("searchAfter", after);
+            }
+
             w.WriteEndObject();
         }
 
         return Encoding.UTF8.GetString(buffer.WrittenSpan);
+    }
+
+    private static void WriteHybridSettings(Utf8JsonWriter w, FusionMethod fusion, int rankConstant, double ratio, int window)
+    {
+        if (fusion != FusionMethod.ReciprocalRank)
+        {
+            w.WriteString("fusion", "linear");
+        }
+
+        if (rankConstant != HybridQuery.DefaultRankConstant)
+        {
+            w.WriteNumber("rankConstant", rankConstant);
+        }
+
+        if (ratio != HybridQuery.DefaultSemanticRatio)
+        {
+            w.WriteNumber("semanticRatio", ratio);
+        }
+
+        if (window != 100)
+        {
+            w.WriteNumber("window", window);
+        }
     }
 
     /// <summary>Writes one query as a canonical query node object.</summary>
@@ -296,6 +393,11 @@ public static class QueryJson
                 w.WriteString("type", "prefix");
                 w.WriteString("field", p.Field);
                 w.WriteString("prefix", p.Prefix);
+                if (p.ScoreTerms)
+                {
+                    w.WriteBoolean("scoreTerms", true);
+                }
+
                 break;
             case FuzzyQuery f:
                 w.WriteString("type", "fuzzy");
@@ -314,6 +416,11 @@ public static class QueryJson
                 if (!f.Transpositions)
                 {
                     w.WriteBoolean("transpositions", false);
+                }
+
+                if (f.MaxExpansions != 50)
+                {
+                    w.WriteNumber("maxExpansions", f.MaxExpansions);
                 }
 
                 break;
@@ -366,8 +473,94 @@ public static class QueryJson
                 w.WriteEndArray();
                 w.WriteString("term", m.Term);
                 break;
+            case TypoTermQuery ty:
+                w.WriteString("type", "typoTerm");
+                w.WriteStartArray("fields");
+                foreach (string f in ty.Fields)
+                {
+                    w.WriteStringValue(f);
+                }
+
+                w.WriteEndArray();
+                w.WriteString("term", ty.Term);
+                if (ty.MaxTypos != 2)
+                {
+                    w.WriteNumber("maxTypos", ty.MaxTypos);
+                }
+
+                if (ty.Prefix)
+                {
+                    w.WriteBoolean("prefix", true);
+                }
+
+                if (ty.ExactFields.Count > 0)
+                {
+                    w.WriteStartArray("exactFields");
+                    foreach (string f in ty.ExactFields)
+                    {
+                        w.WriteStringValue(f);
+                    }
+
+                    w.WriteEndArray();
+                }
+
+                break;
+            case GeoRadiusQuery g:
+                w.WriteString("type", "geoRadius");
+                w.WriteString("field", g.Field);
+                w.WriteNumber("lat", g.Latitude);
+                w.WriteNumber("lng", g.Longitude);
+                w.WriteNumber("meters", g.RadiusMeters);
+                break;
+            case GeoBoundingBoxQuery x:
+                w.WriteString("type", "geoBoundingBox");
+                w.WriteString("field", x.Field);
+                w.WriteNumber("north", x.North);
+                w.WriteNumber("south", x.South);
+                w.WriteNumber("west", x.West);
+                w.WriteNumber("east", x.East);
+                break;
             case BooleanQuery b:
                 WriteBoolean(w, b);
+                break;
+            case FunctionScoreQuery fs:
+                WriteFunctionScore(w, fs);
+                break;
+            case HybridQuery hq:
+                w.WriteString("type", "hybrid");
+                w.WritePropertyName("text");
+                WriteNode(w, hq.Text);
+                w.WritePropertyName("vector");
+                WriteNode(w, hq.Vector);
+                WriteHybridSettings(w, hq.Fusion, hq.RankConstant, hq.SemanticRatio, hq.Window);
+                break;
+            case KnnQuery knn:
+                w.WriteString("type", "knn");
+                w.WriteString("field", knn.Field);
+                w.WriteStartArray("vector");
+                foreach (float x in knn.Vector)
+                {
+                    w.WriteNumberValue(x);
+                }
+
+                w.WriteEndArray();
+                w.WriteNumber("k", knn.K);
+                if (knn.Ef != 0)
+                {
+                    w.WriteNumber("ef", knn.Ef);
+                }
+
+                if (knn.Exact)
+                {
+                    w.WriteBoolean("exact", true);
+                }
+
+                if (knn.Filter is not null)
+                {
+                    w.WritePropertyName("filter");
+                    WriteNode(w, knn.Filter);
+                }
+
                 break;
             default:
                 throw new ArgumentException($"A {q.GetType().Name} cannot be written as query JSON.", nameof(q));
@@ -447,15 +640,15 @@ public static class QueryJson
 }
 
 /// <summary>Reads query JSON into query objects. One instance reads one document.</summary>
-internal sealed class QueryJsonReader
+internal sealed partial class QueryJsonReader
 {
-    private static readonly string[] RequestProperties = ["v", "q", "query", "filter", "limit", "offset", "countExactly", "highlight"];
+    private static readonly string[] RequestProperties = ["v", "q", "query", "filter", "limit", "offset", "countExactly", "highlight", "sort", "searchAfter", "hybrid"];
 
     // Names of features the format keeps room for. They are rejected with a message of their own, not as typos.
-    private static readonly string[] Reserved = ["sort", "facets", "aggregations", "distinct", "hybrid", "vector", "searchAfter"];
+    private static readonly string[] Reserved = ["facets", "aggregations", "distinct", "vector"];
 
     private static readonly string[] NodeTypes =
-        ["matchAll", "text", "strict", "filter", "term", "phrase", "prefix", "fuzzy", "regex", "range", "exists", "multiFieldTerm", "bool"];
+        ["matchAll", "text", "strict", "filter", "term", "phrase", "prefix", "fuzzy", "regex", "range", "exists", "multiFieldTerm", "typoTerm", "geoRadius", "geoBoundingBox", "bool", "functionScore", "knn", "hybrid"];
 
     private readonly Schema _schema;
     private readonly UserTextCompiler _userText;
@@ -492,9 +685,18 @@ internal sealed class QueryJsonReader
         }
 
         var scored = new List<Query>();
+        string? hybridQ = null;
         if (root.TryGetProperty("q", out JsonElement q))
         {
-            scored.Add(_userText.Compile(ReadString(q, "$.q")));
+            string qText = ReadString(q, "$.q");
+            if (root.TryGetProperty("hybrid", out _))
+            {
+                hybridQ = qText; // kept as text: it is searched by words and, embedded, by meaning
+            }
+            else
+            {
+                scored.Add(_userText.Compile(qText));
+            }
         }
 
         if (root.TryGetProperty("query", out JsonElement query))
@@ -518,13 +720,45 @@ internal sealed class QueryJsonReader
         bool exact = root.TryGetProperty("countExactly", out JsonElement c) && ReadBool(c, "$.countExactly");
         HighlightOptions? highlight = root.TryGetProperty("highlight", out JsonElement h) ? ReadHighlight(h) : null;
 
+        HybridRequest? hybrid = null;
+        if (root.TryGetProperty("hybrid", out JsonElement hybridElement))
+        {
+            if (hybridQ is null)
+            {
+                throw Err("$.hybrid", "hybrid searches by meaning the text of \"q\"; add a \"q\".");
+            }
+
+            hybrid = ReadHybridRequest(hybridElement, hybridQ);
+        }
+
+        QuerySort? sort = root.TryGetProperty("sort", out JsonElement sortElement) ? ReadSort(sortElement) : null;
+        string? after = null;
+        if (root.TryGetProperty("searchAfter", out JsonElement afterElement))
+        {
+            after = ReadString(afterElement, "$.searchAfter");
+            if (sort is null)
+            {
+                throw Err("$.searchAfter", "searchAfter continues a sorted search; add a \"sort\".");
+            }
+
+            if (!SortCursor.TryParse(after, out SortCursor? cursor) || cursor!.Fingerprint != SortSpec.Fingerprint(sort.Keys) || cursor.Values.Count != sort.Keys.Count)
+            {
+                throw Err("$.searchAfter", "This is not a cursor made by the same sort. Use the cursor token of the last hit of the previous page.");
+            }
+
+            if (offset != 0)
+            {
+                throw Err("$.offset", "offset cannot be combined with searchAfter.");
+            }
+        }
+
         Query? main = scored.Count switch
         {
             0 => null,
             1 => scored[0],
             _ => new BooleanQuery(scored.ConvertAll(static x => new BooleanClause(x, Occur.Must))),
         };
-        return new QueryRequest { Query = main, Filter = filter, Limit = limit, Offset = offset, CountExactly = exact, Highlight = highlight };
+        return new QueryRequest { Query = main, Filter = filter, Limit = limit, Offset = offset, CountExactly = exact, Highlight = highlight, Sort = sort, SearchAfter = after, Hybrid = hybrid };
     }
 
     private static QueryParseException Err(string path, string detail, string? suggestion = null)
@@ -711,9 +945,10 @@ internal sealed class QueryJsonReader
                 return ReadPhrase(e, path);
             case "prefix":
                 {
-                    CheckProperties(e, path, ["type", "field", "prefix", "boost"]);
+                    CheckProperties(e, path, ["type", "field", "prefix", "scoreTerms", "boost"]);
                     FieldDefinition def = ReadField(e, path, FieldKinds.TextOrKeyword);
-                    return Boosted(new PrefixQuery(def.Name, ReadString(Require(e, path, "prefix"), Child(path, "prefix"))), e, path);
+                    bool scoreTerms = e.TryGetProperty("scoreTerms", out JsonElement st) && ReadBool(st, Child(path, "scoreTerms"));
+                    return Boosted(new PrefixQuery(def.Name, ReadString(Require(e, path, "prefix"), Child(path, "prefix"))) { ScoreTerms = scoreTerms }, e, path);
                 }
 
             case "fuzzy":
@@ -731,8 +966,42 @@ internal sealed class QueryJsonReader
 
             case "multiFieldTerm":
                 return ReadMultiFieldTerm(e, path);
+            case "typoTerm":
+                return ReadTypoTerm(e, path);
+            case "geoRadius":
+                {
+                    CheckProperties(e, path, ["type", "field", "lat", "lng", "meters", "boost"]);
+                    string field = ReadGeoField(e, path);
+                    double lat = ReadNumber(Require(e, path, "lat"), Child(path, "lat"), -90, 90);
+                    double lng = ReadNumber(Require(e, path, "lng"), Child(path, "lng"), -180, 180);
+                    double meters = ReadNumber(Require(e, path, "meters"), Child(path, "meters"), 0, double.MaxValue);
+                    return Boosted(new GeoRadiusQuery(field, lat, lng, meters), e, path);
+                }
+
+            case "geoBoundingBox":
+                {
+                    CheckProperties(e, path, ["type", "field", "north", "south", "west", "east", "boost"]);
+                    string field = ReadGeoField(e, path);
+                    double north = ReadNumber(Require(e, path, "north"), Child(path, "north"), -90, 90);
+                    double south = ReadNumber(Require(e, path, "south"), Child(path, "south"), -90, 90);
+                    double west = ReadNumber(Require(e, path, "west"), Child(path, "west"), -180, 180);
+                    double east = ReadNumber(Require(e, path, "east"), Child(path, "east"), -180, 180);
+                    if (south > north)
+                    {
+                        throw Err(Child(path, "south"), "south is above north.");
+                    }
+
+                    return Boosted(new GeoBoundingBoxQuery(field, north, south, west, east), e, path);
+                }
+
             case "bool":
                 return ReadBoolQuery(e, path, depth);
+            case "functionScore":
+                return ReadFunctionScore(e, path, depth);
+            case "knn":
+                return ReadKnn(e, path, depth);
+            case "hybrid":
+                return ReadHybrid(e, path, depth);
             default:
                 {
                     string? near = QuerySyntax.Nearest(type, NodeTypes);
@@ -740,6 +1009,144 @@ internal sealed class QueryJsonReader
                     throw Err(Child(path, "type"), $"Unknown query type \"{type}\".{hint} Types: {string.Join(", ", NodeTypes)}.", near);
                 }
         }
+    }
+
+    // A nearest-neighbour node: {"type":"knn","field":"Embedding","vector":[...],"k":10,"ef":100,"exact":false,"filter":{...}}.
+    private Query ReadKnn(JsonElement e, string path, int depth)
+    {
+        CheckProperties(e, path, ["type", "field", "vector", "k", "ef", "exact", "filter", "boost"]);
+        string fp = Child(path, "field");
+        string name = ReadString(Require(e, path, "field"), fp);
+        if (!_schema.TryGetField(name, out FieldDefinition? def) || def.Type != FieldType.Vector || !def.Indexed)
+        {
+            throw Err(fp, $"\"{name}\" is not an indexed vector field.");
+        }
+
+        string vp = Child(path, "vector");
+        JsonElement array = Require(e, path, "vector");
+        if (array.ValueKind != JsonValueKind.Array || array.GetArrayLength() != def.Dimensions)
+        {
+            throw Err(vp, $"vector is an array of exactly {def.Dimensions.ToString(CultureInfo.InvariantCulture)} numbers.");
+        }
+
+        var vector = new float[def.Dimensions];
+        int i = 0;
+        foreach (JsonElement item in array.EnumerateArray())
+        {
+            vector[i] = (float)ReadNumber(item, Index(vp, i), -float.MaxValue, float.MaxValue);
+            if (!float.IsFinite(vector[i]))
+            {
+                throw Err(Index(vp, i), "The number does not fit a 32-bit float.");
+            }
+
+            i++;
+        }
+
+        int k = e.TryGetProperty("k", out JsonElement kk) ? ReadInt(kk, Child(path, "k"), 1, KnnQuery.MaxK) : 10;
+        int ef = e.TryGetProperty("ef", out JsonElement ee) ? ReadInt(ee, Child(path, "ef"), k, KnnQuery.MaxK) : 0;
+        bool exact = e.TryGetProperty("exact", out JsonElement ex) && ReadBool(ex, Child(path, "exact"));
+        Query? filter = e.TryGetProperty("filter", out JsonElement f) ? ReadNode(f, Child(path, "filter"), depth + 1) : null;
+        return Boosted(new KnnQuery(name, vector, k) { Ef = ef, Exact = exact, Filter = filter }, e, path);
+    }
+
+    // {"type":"hybrid","text":<node>,"vector":<knn node>,"fusion":"rrf"|"linear","rankConstant":10,"semanticRatio":0.75,"window":100}
+    private Query ReadHybrid(JsonElement e, string path, int depth)
+    {
+        CheckProperties(e, path, ["type", "text", "vector", "fusion", "rankConstant", "semanticRatio", "window", "boost"]);
+        Query text = ReadNode(Require(e, path, "text"), Child(path, "text"), depth + 1);
+        string vp = Child(path, "vector");
+        Query vector = ReadNode(Require(e, path, "vector"), vp, depth + 1);
+        if (vector is not KnnQuery knn)
+        {
+            throw Err(vp, "The vector arm of a hybrid node is a knn node.");
+        }
+
+        (FusionMethod fusion, int rankConstant, double ratio, int window) = ReadHybridSettings(e, path);
+        return Boosted(new HybridQuery(text, knn) { Fusion = fusion, RankConstant = rankConstant, SemanticRatio = ratio, Window = window }, e, path);
+    }
+
+    private static (FusionMethod Fusion, int RankConstant, double Ratio, int Window) ReadHybridSettings(JsonElement e, string path)
+    {
+        FusionMethod fusion = FusionMethod.ReciprocalRank;
+        if (e.TryGetProperty("fusion", out JsonElement fe))
+        {
+            string name = ReadString(fe, Child(path, "fusion"));
+            fusion = name switch
+            {
+                "rrf" => FusionMethod.ReciprocalRank,
+                "linear" => FusionMethod.Linear,
+                _ => throw Err(Child(path, "fusion"), $"Unknown fusion \"{name}\". Fusions: rrf, linear."),
+            };
+        }
+
+        int rank = e.TryGetProperty("rankConstant", out JsonElement rc) ? ReadInt(rc, Child(path, "rankConstant"), 1, 1000) : HybridQuery.DefaultRankConstant;
+        double ratio = e.TryGetProperty("semanticRatio", out JsonElement sr) ? ReadNumber(sr, Child(path, "semanticRatio"), 0, 1) : HybridQuery.DefaultSemanticRatio;
+        int window = e.TryGetProperty("window", out JsonElement wi) ? ReadInt(wi, Child(path, "window"), 1, HybridQuery.MaxWindow) : 100;
+        return (fusion, rank, ratio, window);
+    }
+
+    private HybridRequest ReadHybridRequest(JsonElement h, string text)
+    {
+        const string path = "$.hybrid";
+        if (h.ValueKind != JsonValueKind.Object)
+        {
+            throw Err(path, "hybrid is an object such as {\"semanticRatio\":0.5}.");
+        }
+
+        CheckProperties(h, path, ["field", "fusion", "rankConstant", "semanticRatio", "window"]);
+        string? field = null;
+        if (h.TryGetProperty("field", out JsonElement fe))
+        {
+            field = ReadString(fe, Child(path, "field"));
+            if (!_schema.TryGetField(field, out FieldDefinition? def) || def.Type != FieldType.Vector || !def.Indexed)
+            {
+                throw Err(Child(path, "field"), $"\"{field}\" is not an indexed vector field.");
+            }
+        }
+
+        (FusionMethod fusion, int rank, double ratio, int window) = ReadHybridSettings(h, path);
+        return new HybridRequest(text, ratio, fusion, rank, window, field);
+    }
+
+    private string ReadGeoField(JsonElement obj, string path)
+    {
+        string fp = Child(path, "field");
+        string name = ReadString(Require(obj, path, "field"), fp);
+        return SortText.GeoFieldOrThrow(_schema, name, fp);
+    }
+
+    private static double ReadNumber(JsonElement e, string path, double min, double max)
+    {
+        if (e.ValueKind != JsonValueKind.Number || !e.TryGetDouble(out double v) || !double.IsFinite(v))
+        {
+            throw Err(path, "Expected a finite number.");
+        }
+
+        if (v < min || v > max)
+        {
+            throw Err(path, $"Expected a number from {min.ToString(CultureInfo.InvariantCulture)} to {(max == double.MaxValue ? "a finite maximum" : max.ToString(CultureInfo.InvariantCulture))}, got {v.ToString(CultureInfo.InvariantCulture)}.");
+        }
+
+        return v;
+    }
+
+    private QuerySort ReadSort(JsonElement e)
+    {
+        const string path = "$.sort";
+        if (e.ValueKind != JsonValueKind.Array || e.GetArrayLength() is < 1 or > 16)
+        {
+            throw Err(path, "sort is an array of 1 to 16 strings such as \"Modified:desc\", \"_score\" or \"_geoPoint(48.85, 2.29):asc\".");
+        }
+
+        var keys = new List<SortCriterion>();
+        int i = 0;
+        foreach (JsonElement item in e.EnumerateArray())
+        {
+            string ip = Index(path, i++);
+            keys.Add(SortText.Read(ReadString(item, ip), _schema, ip));
+        }
+
+        return new QuerySort(keys);
     }
 
     private static JsonElement Require(JsonElement obj, string path, string name)
@@ -767,7 +1174,7 @@ internal sealed class QueryJsonReader
 
     private FieldDefinition CheckField(string name, string fp, FieldKinds kinds)
     {
-        if (!_schema.TryGetField(name, out FieldDefinition? def))
+        if (!_schema.TryGetField(name, out FieldDefinition? def) && !_schema.TryGetPath(name, out def))
         {
             string? near = QuerySyntax.Nearest(name, _schema.Fields.Select(static f => f.Name));
             string hint = near is null ? string.Empty : $" Did you mean \"{near}\"?";
@@ -781,9 +1188,9 @@ internal sealed class QueryJsonReader
 
         bool ok = kinds switch
         {
-            FieldKinds.TextOrKeyword => def.Type is FieldType.Text or FieldType.Keyword,
-            FieldKinds.NotText => def.Type is FieldType.Keyword or FieldType.Integral or FieldType.Fractional or FieldType.Date or FieldType.Bool,
-            _ => def.Type is FieldType.Text or FieldType.Keyword or FieldType.Integral or FieldType.Fractional or FieldType.Date or FieldType.Bool,
+            FieldKinds.TextOrKeyword => def.Type is FieldType.Text or FieldType.Keyword or FieldType.Json,
+            FieldKinds.NotText => def.Type is FieldType.Keyword or FieldType.Integral or FieldType.Fractional or FieldType.Date or FieldType.Bool or FieldType.Json,
+            _ => def.Type is FieldType.Text or FieldType.Keyword or FieldType.Integral or FieldType.Fractional or FieldType.Date or FieldType.Bool or FieldType.Json,
         };
         if (!ok)
         {
@@ -838,6 +1245,11 @@ internal sealed class QueryJsonReader
         }
 
         FieldValue v = BindValue(def, value, vp, BoundRole.Equal, out _, out bool nothing);
+        if (v.Kind == FieldValueKind.Text)
+        {
+            return Boosted(new TermQuery(def.Name, v.AsText()), e, path); // a string at a JSON path
+        }
+
         return Boosted(nothing ? new BooleanQuery([]) : new RangeQuery(def.Name, v, v), e, path);
     }
 
@@ -871,13 +1283,14 @@ internal sealed class QueryJsonReader
 
     private Query ReadFuzzy(JsonElement e, string path)
     {
-        CheckProperties(e, path, ["type", "field", "term", "maxEdits", "prefixLength", "transpositions", "boost"]);
+        CheckProperties(e, path, ["type", "field", "term", "maxEdits", "prefixLength", "transpositions", "maxExpansions", "boost"]);
         FieldDefinition def = ReadField(e, path, FieldKinds.TextOrKeyword);
         string term = ReadString(Require(e, path, "term"), Child(path, "term"));
         int edits = e.TryGetProperty("maxEdits", out JsonElement m) ? ReadInt(m, Child(path, "maxEdits"), 0, 2) : 2;
         int prefix = e.TryGetProperty("prefixLength", out JsonElement p) ? ReadInt(p, Child(path, "prefixLength"), 0, 1024) : 0;
         bool transpositions = !e.TryGetProperty("transpositions", out JsonElement t) || ReadBool(t, Child(path, "transpositions"));
-        return Boosted(new FuzzyQuery(def.Name, term) { MaxEdits = edits, PrefixLength = prefix, Transpositions = transpositions }, e, path);
+        int expansions = e.TryGetProperty("maxExpansions", out JsonElement x) ? ReadInt(x, Child(path, "maxExpansions"), 1, 1024) : 50;
+        return Boosted(new FuzzyQuery(def.Name, term) { MaxEdits = edits, PrefixLength = prefix, Transpositions = transpositions, MaxExpansions = expansions }, e, path);
     }
 
     private Query ReadRegex(JsonElement e, string path)
@@ -968,6 +1381,42 @@ internal sealed class QueryJsonReader
 
         string term = ReadString(Require(e, path, "term"), Child(path, "term"));
         return Boosted(new MultiFieldTermQuery(names, term), e, path);
+    }
+
+    private Query ReadTypoTerm(JsonElement e, string path)
+    {
+        CheckProperties(e, path, ["type", "fields", "term", "maxTypos", "prefix", "exactFields", "boost"]);
+        List<string> names = ReadFieldNames(e, path, "fields", required: true);
+        string term = ReadString(Require(e, path, "term"), Child(path, "term"));
+        int typos = e.TryGetProperty("maxTypos", out JsonElement m) ? ReadInt(m, Child(path, "maxTypos"), 0, 2) : 2;
+        bool prefix = e.TryGetProperty("prefix", out JsonElement p) && ReadBool(p, Child(path, "prefix"));
+        List<string> exact = ReadFieldNames(e, path, "exactFields", required: false);
+        return Boosted(new TypoTermQuery(names, term) { MaxTypos = typos, Prefix = prefix, ExactFields = exact }, e, path);
+    }
+
+    private List<string> ReadFieldNames(JsonElement e, string path, string property, bool required)
+    {
+        var names = new List<string>();
+        if (!required && !e.TryGetProperty(property, out _))
+        {
+            return names;
+        }
+
+        string fp = Child(path, property);
+        JsonElement fields = Require(e, path, property);
+        if (fields.ValueKind != JsonValueKind.Array || fields.GetArrayLength() > 64 || (required && fields.GetArrayLength() < 1))
+        {
+            throw Err(fp, "Expected an array of up to 64 full-text field names.");
+        }
+
+        int i = 0;
+        foreach (JsonElement f in fields.EnumerateArray())
+        {
+            string ip = Index(fp, i++);
+            names.Add(CheckField(ReadString(f, ip), ip, FieldKinds.TextOrKeyword).Name);
+        }
+
+        return names;
     }
 
     private Query ReadBoolQuery(JsonElement e, string path, int depth)

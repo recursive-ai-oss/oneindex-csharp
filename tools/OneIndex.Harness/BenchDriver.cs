@@ -144,7 +144,8 @@ public static class BenchDriver
         loads.Add(MachineRecord.LoadAverage());
 
         engine.OpenSearcher();
-        var wanted = o.Rows?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        // ONEINDEX_ROWS is an alternative to the Rows option.
+        var wanted = o.Rows?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? Environment.GetEnvironmentVariable("ONEINDEX_ROWS")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         foreach (var (kind, set) in queries)
         {
             if (wanted is not null && !wanted.Contains(kind.ToString(), StringComparer.OrdinalIgnoreCase))

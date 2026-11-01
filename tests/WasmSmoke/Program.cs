@@ -5,6 +5,7 @@ using OneIndex.Storage;
 SmokeScenario.Run(new MemoryStorage());
 AnalysisScenario.Run();
 QueryFormsLowLevelScenario.Run();
+VectorScenario.RunLowLevel();
 SmokeScenario.RunWriter(new MemoryStorage(), threadedMerges: false);
 
 string directory = Path.Combine(Path.GetTempPath(), "oneindex-wasm-smoke");

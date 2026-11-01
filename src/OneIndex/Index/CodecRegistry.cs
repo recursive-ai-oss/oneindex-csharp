@@ -28,6 +28,12 @@ public static class SegmentParts
     /// <summary>Stored source documents.</summary>
     public const string Stored = "stored";
 
+    /// <summary>Full-precision vectors of the vector fields, the source quantized copies rerank from.</summary>
+    public const string Vectors = "vectors";
+
+    /// <summary>The HNSW graphs of the vector fields.</summary>
+    public const string Graph = "hnsw";
+
     /// <summary>The delete bitmap of one generation.</summary>
     public const string Deletes = "deletes";
 
@@ -53,9 +59,13 @@ public static class CodecRegistry
 
         new(SegmentParts.Columns, 1),
 
-        new(SegmentParts.Points, 1),
+        new(SegmentParts.Points, 2),
 
         new(SegmentParts.Stored, 1),
+
+        new(SegmentParts.Vectors, 1),
+
+        new(SegmentParts.Graph, 1),
 
         new(SegmentParts.Deletes, 1),
 

@@ -105,7 +105,7 @@ public interface ITextFieldReader
     /// <returns>An enumerator the caller disposes.</returns>
     ITermEnumerator GetTerms(ReadOnlySpan<byte> prefix);
 
-    /// <summary>What the field was indexed with: frequencies always, plus positions and offsets when the schema asked for them. <see cref="GetPostings"/> cannot return more than this.</summary>
+    /// <summary>What the field was indexed with: frequencies always, plus positions and offsets when the schema asked for them. <see cref="GetPostings(in TermInfo, PostingsFeatures)"/> cannot return more than this.</summary>
     PostingsFeatures IndexedFeatures { get; }
 
     /// <summary>Walks the terms that a code-point automaton (fuzzy or regular expression) accepts, in byte order, without visiting the dictionary branches it rules out.</summary>
@@ -119,6 +119,28 @@ public interface ITextFieldReader
     /// <param name="features">What the caller will read.</param>
     /// <returns>A new enumeration positioned before the first document.</returns>
     PostingsIterator GetPostings(in TermInfo term, PostingsFeatures features);
+
+    /// <summary>Opens a term's postings, reusing an iterator this reader returned earlier when the implementation can (a union over many terms walks them one after another).</summary>
+    /// <param name="term">The term as returned by <see cref="TryGetTerm"/> or an enumerator.</param>
+    /// <param name="features">What the caller will read.</param>
+    /// <param name="reuse">An iterator from this reader that the caller has finished with, or <see langword="null"/>. It must not be used again by the caller.</param>
+    /// <returns>An enumeration positioned before the first document: <paramref name="reuse"/> reset, or a new one.</returns>
+    PostingsIterator GetPostings(in TermInfo term, PostingsFeatures features, PostingsIterator? reuse) => GetPostings(term, features);
+
+    /// <summary>Sets the bit of every document that contains the term (a union over many terms), without iterating one document at a time where the implementation can avoid it.</summary>
+    /// <param name="term">The term as returned by <see cref="TryGetTerm"/> or an enumerator.</param>
+    /// <param name="bits">One bit per segment-local document, at least <c>(maxDoc + 63) / 64</c> words; bits already set stay set.</param>
+    /// <param name="scratch">State the caller keeps between calls on this reader so that a union allocates once; start with <see langword="null"/>.</param>
+    void AddDocuments(in TermInfo term, ulong[] bits, ref PostingsIterator? scratch)
+    {
+        PostingsIterator it = GetPostings(term, PostingsFeatures.None, scratch);
+        scratch = it;
+        int doc;
+        while ((doc = it.NextDoc()) != DocIdSetIterator.NoMoreDocs)
+        {
+            bits[doc >> 6] |= 1UL << (doc & 63);
+        }
+    }
 
     /// <summary>The number of terms the field has in a document (its length for scoring).</summary>
     /// <param name="docId">The segment-local document id.</param>
@@ -187,6 +209,22 @@ public interface IPointIndexReader
     /// <param name="upper">The inclusive upper bound.</param>
     /// <returns>A new iterator.</returns>
     DocIdSetIterator GetRange(long lower, long upper);
+}
+
+/// <summary>The point index of a geo point field: a lookup of the documents with a point in a latitude and longitude rectangle.</summary>
+public interface IGeoPointIndexReader : IPointIndexReader
+{
+    /// <summary>
+    /// Iterates the documents that may have a point in a rectangle, in increasing document order. The answer is a superset that never misses a
+    /// point inside the rectangle and may include points within a few millimetres outside it, so the caller confirms each candidate against the exact
+    /// coordinates in the column.
+    /// </summary>
+    /// <param name="south">The southern edge in degrees.</param>
+    /// <param name="north">The northern edge in degrees.</param>
+    /// <param name="west">The western edge in degrees; greater than <paramref name="east"/> when the rectangle crosses the antimeridian.</param>
+    /// <param name="east">The eastern edge in degrees.</param>
+    /// <returns>A new iterator.</returns>
+    DocIdSetIterator GetCandidates(double south, double north, double west, double east);
 }
 
 /// <summary>Maps doubles to 64-bit integers that compare in the same order, so one integer index serves both kinds.</summary>
@@ -267,4 +305,9 @@ public interface ISegmentReader : IDisposable
     /// <param name="field">The field name.</param>
     /// <returns>The reader, or <see langword="null"/> if the segment has no points for the field.</returns>
     IPointIndexReader? GetPoints(string field);
+
+    /// <summary>The vectors of a field.</summary>
+    /// <param name="field">The field name.</param>
+    /// <returns>The reader, or <see langword="null"/> if the segment has no vectors for the field.</returns>
+    IVectorFieldReader? GetVectors(string field) => null;
 }

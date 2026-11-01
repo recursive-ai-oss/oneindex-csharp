@@ -157,7 +157,9 @@ public sealed class TopScoreCollector : Collector
                 if (!owner._countExactly)
                 {
                     owner._thresholdSent = true;
-                    _scorer.SetMinCompetitiveScore(_threshold);
+
+                    // Documents arrive in increasing id and a tie with the worst kept hit loses to the lower id, so only a higher score can still compete.
+                    _scorer.SetMinCompetitiveScore(MathF.BitIncrement(_threshold));
                 }
             }
         }

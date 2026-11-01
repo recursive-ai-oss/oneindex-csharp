@@ -118,6 +118,17 @@ public sealed class HighlightTerms
             return 0;
         }
 
+        // Only the query word itself is located; words matched through typos or as longer words are not highlighted.
+        public override int VisitTypoTerm(TypoTermQuery query)
+        {
+            foreach (string field in query.Fields)
+            {
+                owner.For(field).Words.Add(query.Term);
+            }
+
+            return 0;
+        }
+
         public override int VisitPhrase(PhraseQuery query)
         {
             if (query.Terms.Count == 1)
@@ -154,6 +165,24 @@ public sealed class HighlightTerms
         public override int VisitMatchAll(MatchAllQuery query) => 0;
 
         public override int VisitRegex(RegexQuery query) => 0;
+
+        public override int VisitGeoRadius(GeoRadiusQuery query) => 0;
+
+        public override int VisitGeoBoundingBox(GeoBoundingBoxQuery query) => 0;
+
+        public override int VisitKnn(KnnQuery query) => 0;
+
+        public override int VisitHybrid(HybridQuery query)
+        {
+            query.Text.Accept(this);
+            return 0;
+        }
+
+        public override int VisitFunctionScore(FunctionScoreQuery query)
+        {
+            query.Inner.Accept(this);
+            return 0;
+        }
     }
 }
 

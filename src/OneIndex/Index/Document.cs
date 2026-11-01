@@ -210,6 +210,8 @@ public sealed class Document
         return this;
     }
 
+    internal void Remove(string name) => _fields.RemoveAll(f => string.Equals(f.Name, name, StringComparison.Ordinal));
+
     /// <summary>Adds a text value.</summary>
     /// <param name="name">The field name.</param>
     /// <param name="value">The text.</param>

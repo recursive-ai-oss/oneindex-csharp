@@ -53,7 +53,7 @@ public sealed class LuceneEngine : ITextEngine
     }
 
     /// <inheritdoc/>
-    public bool Supports(Type queryType) => true;
+    public bool Supports(Type queryType) => queryType != typeof(GeoQuery); // no spatial module in the matched comparator setup
 
     /// <inheritdoc/>
     public void Create(EngineSettings settings)
@@ -145,6 +145,27 @@ public sealed class LuceneEngine : ITextEngine
 
                 all.Add(new LucenePrefixQuery(new Term("text", px.Prefix)), Occur.MUST);
                 return Run(searcher.Search(all, k));
+            case TypoQuery ty:
+                // Lucene has no Levenshtein over word beginnings: a typed word is matched as a beginning or as a whole word with typos
+                // (the first character fixed, which is the one-typo case of the first-character rule). An approximation, reported as such.
+                int edits = ty.Word.Length >= 9 ? 2 : ty.Word.Length >= 5 ? 1 : 0;
+                Query typo = edits == 0 ? new TermQuery(new Term("text", ty.Word)) : new LuceneFuzzyQuery(new Term("text", ty.Word), edits, 1);
+                if (ty.Prefix)
+                {
+                    var either = new BooleanQuery();
+                    either.Add(new LucenePrefixQuery(new Term("text", ty.Word)), Occur.SHOULD);
+                    either.Add(typo, Occur.SHOULD);
+                    typo = either;
+                }
+
+                var withRequired = new BooleanQuery();
+                foreach (var term in ty.Required)
+                {
+                    withRequired.Add(new TermQuery(new Term("text", term)), Occur.MUST);
+                }
+
+                withRequired.Add(typo, Occur.MUST);
+                return Run(searcher.Search(withRequired, k));
             case FuzzyQuery f:
                 return Run(searcher.Search(new LuceneFuzzyQuery(new Term("text", f.Term), f.MaxEdits), k));
             case FilteredQuery fq:
@@ -175,6 +196,10 @@ public sealed class LuceneEngine : ITextEngine
                 return new SearchResult([], stats.Count, null, (stats.Count, stats.Count == 0 ? 0 : stats.Min, stats.Count == 0 ? 0 : stats.Max, stats.Sum));
             case SortedQuery so:
                 return Run(searcher.Search(Terms(so.Terms), k, new Sort(new SortField("lenDV", SortFieldType.INT64, true))));
+            case DecayedQuery dq:
+                var decayed = new DecayCollector(k, dq.Origin, dq.Scale);
+                searcher.Search(Terms(dq.Terms), decayed);
+                return Run(decayed.GetTopDocs());
             default:
                 throw new NotSupportedException(query.GetType().Name);
         }
@@ -280,6 +305,90 @@ public sealed class LuceneEngine : ITextEngine
                 sum.Add(Field("title"), Occur.SHOULD);
                 sum.Add(Field("text"), Occur.SHOULD);
                 return sum;
+        }
+    }
+
+    // Score times a Gaussian decay of the doc-values column, the top k by that product (ties to the lower document), every match visited.
+    private sealed class DecayCollector(int k, long origin, long scale) : ICollector
+    {
+        private readonly List<ScoreDoc> _heap = new(k + 1);
+        private readonly double _twoSigma2 = 2 * (-(double)scale * scale / (2 * Math.Log(0.5)));
+        private NumericDocValues? _values;
+        private Scorer? _scorer;
+        private int _docBase;
+        private int _total;
+
+        public bool AcceptsDocsOutOfOrder => false;
+
+        public void SetScorer(Scorer scorer) => _scorer = scorer;
+
+        public void SetNextReader(AtomicReaderContext context)
+        {
+            _values = context.AtomicReader.GetNumericDocValues("lenDV");
+            _docBase = context.DocBase;
+        }
+
+        // Worse first: lower score, then higher document.
+        private static bool Worse(ScoreDoc a, ScoreDoc b) => a.Score < b.Score || (a.Score == b.Score && a.Doc > b.Doc);
+
+        public void Collect(int doc)
+        {
+            _total++;
+            double d = Math.Abs(_values!.Get(doc) - (double)origin);
+            float score = _scorer!.GetScore() * (float)Math.Exp(-(d * d) / _twoSigma2);
+            var candidate = new ScoreDoc(_docBase + doc, score);
+            if (_heap.Count == k && !Worse(_heap[0], candidate))
+            {
+                return;
+            }
+
+            if (_heap.Count == k)
+            {
+                _heap[0] = candidate;
+                Down(0);
+                return;
+            }
+
+            _heap.Add(candidate);
+            int i = _heap.Count - 1;
+            while (i > 0 && Worse(_heap[i], _heap[(i - 1) / 2]))
+            {
+                (_heap[i], _heap[(i - 1) / 2]) = (_heap[(i - 1) / 2], _heap[i]);
+                i = (i - 1) / 2;
+            }
+        }
+
+        private void Down(int i)
+        {
+            while (true)
+            {
+                int l = (2 * i) + 1;
+                int r = l + 1;
+                int w = i;
+                if (l < _heap.Count && Worse(_heap[l], _heap[w]))
+                {
+                    w = l;
+                }
+
+                if (r < _heap.Count && Worse(_heap[r], _heap[w]))
+                {
+                    w = r;
+                }
+
+                if (w == i)
+                {
+                    return;
+                }
+
+                (_heap[i], _heap[w]) = (_heap[w], _heap[i]);
+                i = w;
+            }
+        }
+
+        public TopDocs GetTopDocs()
+        {
+            ScoreDoc[] ordered = [.. _heap.OrderBy(h => h, Comparer<ScoreDoc>.Create((a, b) => Worse(a, b) ? 1 : Worse(b, a) ? -1 : 0))];
+            return new TopDocs(_total, ordered, ordered.Length == 0 ? float.NaN : ordered[0].Score);
         }
     }
 

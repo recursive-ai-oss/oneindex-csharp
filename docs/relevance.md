@@ -158,3 +158,9 @@ At matched layout and parameters OneIndex's BM25 scores equal Lucene.NET's withi
   the 3,452 queries take 12 to 25 s per setting.
 - The runner takes `ONEINDEX_PHASE=index|search` (build and commit in one job, search in another), `ONEINDEX_LAYOUTS`, `ONEINDEX_WORK` and the
   OneIndex adapter `ONEINDEX_TITLE_WEIGHT`.
+
+## Typo tolerance on (information)
+
+`ONEINDEX_TYPO=on` makes the OneIndex adapter match the Bm25F layout with `TypoTermQuery` (default typo budgets on the analyzed word, the
+typo and exactness factors, no prefix matching). It is information only; the gated runs leave it off, where queries are exactly the plain
+BM25F term queries.

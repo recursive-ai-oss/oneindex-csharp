@@ -48,4 +48,19 @@ public sealed class IndexLimits
 
     /// <summary>The largest term-dictionary or field-length file a reader loads into memory, in bytes. Default 1 GiB.</summary>
     public int MaxResidentFileBytes { get; init; } = 1 << 30;
+
+    /// <summary>How deep inside a JSON field a leaf may sit and still be indexed by path; deeper leaves stay in the stored source only. Default 16.</summary>
+    public int MaxDynamicDepth { get; init; } = 16;
+
+    /// <summary>The most indexed paths (field and value kind pairs) the index keeps per JSON field; leaves of further paths stay in the stored source only. Default 1,000.</summary>
+    public int MaxDynamicPaths { get; init; } = 1_000;
+
+    /// <summary>The longest path of a JSON leaf, in UTF-8 bytes, that is indexed. Default 256.</summary>
+    public int MaxDynamicPathBytes { get; init; } = 256;
+
+    /// <summary>The most leaf values of one JSON field of one document that are indexed; further leaves stay in the stored source only. Default 10,000.</summary>
+    public int MaxDynamicValues { get; init; } = 10_000;
+
+    /// <summary>The longest string leaf, in UTF-8 bytes, that is indexed as a keyword. Default 1,024.</summary>
+    public int MaxDynamicKeywordBytes { get; init; } = 1_024;
 }

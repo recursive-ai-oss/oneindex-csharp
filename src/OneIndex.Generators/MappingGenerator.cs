@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
 using System.Text;
@@ -63,6 +64,9 @@ public sealed class MappingGenerator : IIncrementalGenerator
         Bool,
         DateTime,
         DateTimeOffset,
+        Json,
+        Geo,
+        Vector,
     }
 
     private sealed class Result
@@ -84,9 +88,18 @@ public sealed class MappingGenerator : IIncrementalGenerator
         public bool Filterable;
         public bool Sortable;
         public bool Facet;
+        public bool Dynamic;
+        public bool GeoAttr;
         public double Boost = 1;
         public string? Language;
         public string? Analyzer;
+        public bool VectorAttr;
+        public int Dimensions;
+        public string? From;
+        public int Metric;
+        public int HnswM = 16;
+        public int EfConstruction = 100;
+        public int FlatThreshold = 1000;
 
         public bool Multi => Shape is Shape.TextArray or Shape.TextList or Shape.TextInterface;
     }
@@ -170,10 +183,97 @@ public sealed class MappingGenerator : IIncrementalGenerator
         result.HintName = safe + ".Mapping.g.cs";
         if (result.Diagnostics.Count == 0)
         {
-            result.Source = Emit(type, safe, members);
+            result.Source = Emit(type, safe, members, DescribeSettings(type));
         }
 
         return result;
+    }
+
+    // Class-level settings attributes become an object initializer over the runtime TextSettings, so the generated code holds plain
+    // literals and nothing is discovered by reflection at run time.
+    private static string? DescribeSettings(INamedTypeSymbol type)
+    {
+        string? typo = null;
+        string? prefix = null;
+        var synonyms = new List<string>();
+        var stop = new List<string>();
+        foreach (AttributeData a in type.GetAttributes())
+        {
+            if (!IsOurs(a))
+            {
+                continue;
+            }
+
+            switch (a.AttributeClass!.Name)
+            {
+                case "TypoToleranceAttribute":
+                    var parts = new List<string>();
+                    foreach (KeyValuePair<string, TypedConstant> n in a.NamedArguments)
+                    {
+                        string? value = n.Value.Kind == TypedConstantKind.Array ? StringArray(n.Value) : n.Value.Value is bool b ? (b ? "true" : "false") : n.Value.Value is int i ? i.ToString(CultureInfo.InvariantCulture) : null;
+                        if (value is not null)
+                        {
+                            parts.Add(n.Key + " = " + value);
+                        }
+                    }
+
+                    typo = "new global::OneIndex.Index.TypoSettings { " + string.Join(", ", parts) + " }";
+                    break;
+                case "PrefixSearchAttribute":
+                    prefix = a.ConstructorArguments.Length == 0 || a.ConstructorArguments[0].Value is not false ? "true" : "false";
+                    break;
+                case "SynonymsAttribute":
+                    synonyms.Add("new global::OneIndex.Index.SynonymRule(" + ParamsArray(a, 0) + ", global::System.Array.Empty<string>())");
+                    break;
+                case "OneWaySynonymsAttribute":
+                    synonyms.Add("new global::OneIndex.Index.SynonymRule(new string[] { " + Lit(a.ConstructorArguments[0].Value as string ?? string.Empty) + " }, " + ParamsArray(a, 1) + ")");
+                    break;
+                case "StopWordsAttribute":
+                    stop.AddRange(ParamsItems(a, 0));
+                    break;
+            }
+        }
+
+        if (typo is null && prefix is null && synonyms.Count == 0 && stop.Count == 0)
+        {
+            return null;
+        }
+
+        var init = new List<string>();
+        if (typo is not null)
+        {
+            init.Add("Typo = " + typo);
+        }
+
+        if (prefix is not null)
+        {
+            init.Add("PrefixSearch = " + prefix);
+        }
+
+        if (synonyms.Count > 0)
+        {
+            init.Add("Synonyms = new global::System.Collections.Generic.List<global::OneIndex.Index.SynonymRule> { " + string.Join(", ", synonyms) + " }");
+        }
+
+        if (stop.Count > 0)
+        {
+            init.Add("StopWords = new string[] { " + string.Join(", ", stop) + " }");
+        }
+
+        return "new global::OneIndex.Index.TextSettings { " + string.Join(", ", init) + " }";
+    }
+
+    private static string StringArray(TypedConstant c)
+        => "new string[] { " + string.Join(", ", c.Values.Select(v => Lit(v.Value as string ?? string.Empty))) + " }";
+
+    // The arguments of a params string[] constructor parameter starting at the given index, as an array expression.
+    private static string ParamsArray(AttributeData a, int from) => "new string[] { " + string.Join(", ", ParamsItems(a, from)) + " }";
+
+    private static List<string> ParamsItems(AttributeData a, int from)
+    {
+        ImmutableArray<TypedConstant> args = a.ConstructorArguments;
+        IEnumerable<TypedConstant> items = args.Length == from + 1 && args[from].Kind == TypedConstantKind.Array ? args[from].Values : args.Skip(from);
+        return items.Select(v => Lit(v.Value as string ?? string.Empty)).ToList();
     }
 
     private static List<string> ContainingChain(INamedTypeSymbol type)
@@ -238,12 +338,46 @@ public sealed class MappingGenerator : IIncrementalGenerator
                 case "FacetAttribute":
                     m.Facet = true;
                     break;
+                case "GeoAttribute":
+                    m.GeoAttr = true;
+                    break;
                 case "DynamicAttribute":
-                    diagnostics.Add(Diagnostic.Create(NotYetSupported, location, property.Name, "Dynamic"));
-                    return null;
+                    m.Dynamic = true;
+                    break;
                 case "VectorAttribute":
-                    diagnostics.Add(Diagnostic.Create(NotYetSupported, location, property.Name, "Vector"));
-                    return null;
+                    m.VectorAttr = true;
+                    foreach (KeyValuePair<string, TypedConstant> arg in attribute.NamedArguments)
+                    {
+                        if (arg.Key == "From" && arg.Value.Value is string fromName)
+                        {
+                            m.From = fromName;
+                        }
+
+                        if (arg.Value.Value is not null and not string and IConvertible convertible)
+                        {
+                            int number = convertible.ToInt32(CultureInfo.InvariantCulture);
+                            switch (arg.Key)
+                            {
+                                case "Dimensions":
+                                    m.Dimensions = number;
+                                    break;
+                                case "Metric":
+                                    m.Metric = number;
+                                    break;
+                                case "M":
+                                    m.HnswM = number;
+                                    break;
+                                case "EfConstruction":
+                                    m.EfConstruction = number;
+                                    break;
+                                case "FlatThreshold":
+                                    m.FlatThreshold = number;
+                                    break;
+                            }
+                        }
+                    }
+
+                    break;
             }
         }
 
@@ -252,7 +386,19 @@ public sealed class MappingGenerator : IIncrementalGenerator
             return null;
         }
 
-        if (!TryClassify(property.Type, m))
+        if (m.VectorAttr)
+        {
+            if (property.Type is IArrayTypeSymbol { Rank: 1 } floats && floats.ElementType.SpecialType == SpecialType.System_Single)
+            {
+                m.Shape = Shape.Vector;
+            }
+            else
+            {
+                diagnostics.Add(Diagnostic.Create(UnsupportedType, location, property.Name, property.Type.ToDisplayString(), "[Vector]"));
+                return null;
+            }
+        }
+        else if (!TryClassify(property.Type, m))
         {
             if (declared)
             {
@@ -275,6 +421,29 @@ public sealed class MappingGenerator : IIncrementalGenerator
             return null;
         }
 
+        if (m.VectorAttr)
+        {
+            if (m.FullText || m.Keyword || m.Filterable || m.Sortable || m.Facet || m.GeoAttr || m.IsId)
+            {
+                diagnostics.Add(Diagnostic.Create(Conflict, location, property.Name, "a [Vector] member cannot also be [FullText], [Keyword], [Filterable], [Sortable], [Facet], [Geo] or [SearchId]"));
+            }
+
+            if (m.Dimensions < 1 || m.Dimensions > 65536 || m.Metric < 0 || m.Metric > 2 || m.HnswM < 2 || m.HnswM > 256 || m.EfConstruction < m.HnswM || m.EfConstruction > 4096 || m.FlatThreshold < 0 || m.FlatThreshold > 100000000)
+            {
+                diagnostics.Add(Diagnostic.Create(BadAttributeValue, location, property.Name, "[Vector] needs Dimensions from 1 to 65536, a known Metric, M from 2 to 256, EfConstruction from M to 4096 and FlatThreshold from 0 to 100 million"));
+            }
+        }
+
+        if (m.Dynamic && m.Shape != Shape.Json)
+        {
+            diagnostics.Add(Diagnostic.Create(UnsupportedType, location, property.Name, property.Type.ToDisplayString(), "[Dynamic] (use System.Text.Json.JsonElement)"));
+        }
+
+        if (m.Dynamic && (m.FullText || m.Keyword || m.IsId || m.Filterable || m.Sortable || m.Facet))
+        {
+            diagnostics.Add(Diagnostic.Create(Conflict, location, property.Name, "a [Dynamic] member is indexed by path and cannot carry other search attributes"));
+        }
+
         if (m.FullText && m.Keyword)
         {
             diagnostics.Add(Diagnostic.Create(Conflict, location, property.Name, "[FullText] and [Keyword] cannot be combined; use two properties for both behaviours"));
@@ -289,6 +458,16 @@ public sealed class MappingGenerator : IIncrementalGenerator
         if (m.FullText && !textual)
         {
             diagnostics.Add(Diagnostic.Create(UnsupportedType, location, property.Name, property.Type.ToDisplayString(), "[FullText]"));
+        }
+
+        if (m.GeoAttr && m.Shape != Shape.Geo)
+        {
+            diagnostics.Add(Diagnostic.Create(UnsupportedType, location, property.Name, property.Type.ToDisplayString(), "[Geo]"));
+        }
+
+        if (m.Facet && m.Shape == Shape.Geo)
+        {
+            diagnostics.Add(Diagnostic.Create(Conflict, location, property.Name, "a geo point cannot be a [Facet]"));
         }
 
         if (m.Keyword && !textual)
@@ -355,9 +534,21 @@ public sealed class MappingGenerator : IIncrementalGenerator
         }
 
         string display = type.ToDisplayString();
+        if (display == "System.Text.Json.JsonElement")
+        {
+            m.Shape = Shape.Json;
+            return m.Dynamic; // a JSON value is only mapped when marked [Dynamic]
+        }
+
         if (display == "System.DateTimeOffset")
         {
             m.Shape = Shape.DateTimeOffset;
+            return true;
+        }
+
+        if (display == "OneIndex.GeoPoint")
+        {
+            m.Shape = Shape.Geo;
             return true;
         }
 
@@ -418,7 +609,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
         return sb.Append('"').ToString();
     }
 
-    private static string Emit(INamedTypeSymbol type, string safe, List<Member> members)
+    private static string Emit(INamedTypeSymbol type, string safe, List<Member> members, string? settings)
     {
         string t = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
         var sb = new StringBuilder();
@@ -442,6 +633,12 @@ public sealed class MappingGenerator : IIncrementalGenerator
         sb.AppendLine("        {");
         sb.AppendLine("        }");
         sb.AppendLine();
+        if (settings is not null)
+        {
+            sb.AppendLine("        protected override global::OneIndex.Index.TextSettings CreateSettings() => " + settings + ";");
+            sb.AppendLine();
+        }
+
         sb.AppendLine("        public override string? GetId(" + t + " value) => " + (members.FirstOrDefault(m => m.IsId) is { } id ? "value." + id.Name : "null") + ";");
         sb.AppendLine();
         sb.AppendLine("        public override global::OneIndex.Index.Document ToDocument(" + t + " value)");
@@ -503,17 +700,27 @@ public sealed class MappingGenerator : IIncrementalGenerator
             Shape.Integral => "Integral",
             Shape.Fractional => "Fractional",
             Shape.Bool => "Bool",
+            Shape.Json => "Json",
+            Shape.Geo => "GeoPoint",
+            Shape.Vector => "Vector",
             _ => "Date",
         };
-        // Text fields are searched when [FullText]; everything else is searchable by value only when marked for filtering.
-        bool indexed = m.FullText || m.IsId || m.Keyword || m.Filterable || m.Facet;
-        bool column = m.Filterable || m.Sortable || m.Facet || m.IsId;
+        // Text fields are searched when [FullText]; everything else is searched by value only when marked for filtering.
+        bool indexed = m.FullText || m.IsId || m.Keyword || m.Filterable || m.Facet || m.Dynamic || m.GeoAttr;
+        bool column = m.Filterable || m.Sortable || m.Facet || m.IsId || m.GeoAttr;
         string boost = m.Boost.ToString("R", CultureInfo.InvariantCulture) + "f";
         string? analyzerName = m.FullText ? (m.Analyzer ?? m.Language) : null;
         string analyzer = analyzerName is null ? "null" : Lit(analyzerName);
 
+        string vector = m.Shape == Shape.Vector
+            ? ", dimensions: " + m.Dimensions.ToString(CultureInfo.InvariantCulture) + ", metric: (global::OneIndex.Vectors.VectorMetric)" + m.Metric.ToString(CultureInfo.InvariantCulture)
+              + ", hnswM: " + m.HnswM.ToString(CultureInfo.InvariantCulture) + ", efConstruction: " + m.EfConstruction.ToString(CultureInfo.InvariantCulture) + ", flatThreshold: " + m.FlatThreshold.ToString(CultureInfo.InvariantCulture)
+              + (m.From is null ? string.Empty : ", from: " + Lit(m.From))
+            : string.Empty;
+        indexed |= m.Shape == Shape.Vector;
+
         return "new global::OneIndex.MappedMember(" + Lit(m.Name) + ", global::OneIndex.Index.FieldType." + kind + ", multi: " + Bool(m.Multi) + ", indexed: " + Bool(indexed) + ", column: " + Bool(column)
-            + ", facet: " + Bool(m.Facet) + ", fullText: " + Bool(m.FullText) + ", isId: " + Bool(m.IsId) + ", boost: " + boost + ", analyzer: " + analyzer + ")";
+            + ", facet: " + Bool(m.Facet) + ", fullText: " + Bool(m.FullText) + ", isId: " + Bool(m.IsId) + ", boost: " + boost + ", analyzer: " + analyzer + vector + ")";
     }
 
     private static string Bool(bool b) => b ? "true" : "false";
@@ -527,10 +734,18 @@ public sealed class MappingGenerator : IIncrementalGenerator
             case Shape.Text:
                 sb.AppendLine("            if (" + p + " is { } s_" + m.Name + ") { document.Add(" + n + ", s_" + m.Name + "); }");
                 break;
+            case Shape.Vector:
+                sb.AppendLine("            if (" + p + " is { } v_" + m.Name + ") { document.Add(" + n + ", v_" + m.Name + "); }");
+                break;
             case Shape.TextArray:
             case Shape.TextList:
             case Shape.TextInterface:
                 sb.AppendLine("            if (" + p + " is { } c_" + m.Name + ") { foreach (string? e in c_" + m.Name + ") { if (e is not null) { document.Add(" + n + ", e); } } }");
+                break;
+            case Shape.Json:
+                sb.AppendLine(m.Nullable
+                    ? "            if (" + p + " is { } j_" + m.Name + " && j_" + m.Name + ".ValueKind != global::System.Text.Json.JsonValueKind.Undefined) { document.Add(" + n + ", global::OneIndex.Index.FieldValue.FromJson(j_" + m.Name + ")); }"
+                    : "            if (" + p + ".ValueKind != global::System.Text.Json.JsonValueKind.Undefined) { document.Add(" + n + ", global::OneIndex.Index.FieldValue.FromJson(" + p + ")); }");
                 break;
             default:
                 string v = m.Nullable ? "n_" + m.Name : p;
@@ -540,6 +755,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
                     Shape.Fractional => "document.Add(" + n + ", (double)" + v + ");",
                     Shape.Bool => "document.Add(" + n + ", " + v + ");",
                     Shape.DateTime => "document.Add(" + n + ", global::OneIndex.SearchMapping.ToDate(" + v + "));",
+                    Shape.Geo => "document.Add(" + n + ", global::OneIndex.Index.FieldValue.FromGeoPoint(" + v + ".Latitude, " + v + ".Longitude));",
                     _ => "document.Add(" + n + ", " + v + ");",
                 };
                 sb.AppendLine(m.Nullable ? "            if (" + p + " is { } n_" + m.Name + ") { " + add + " }" : "            " + add);
@@ -557,7 +773,10 @@ public sealed class MappingGenerator : IIncrementalGenerator
             Shape.Integral => "result." + name + " = unchecked((" + IntegralType(m) + ")field.Value.AsInt64());",
             Shape.Fractional => "result." + name + " = (" + FractionalType(m) + ")field.Value.AsFloat64();",
             Shape.Bool => "result." + name + " = field.Value.AsBool();",
+            Shape.Json => "result." + name + " = field.Value.AsJson();",
             Shape.DateTime => "result." + name + " = global::OneIndex.SearchMapping.FromDate(field.Value);",
+            Shape.Vector => "result." + name + " = field.Value.AsVector().ToArray();",
+            Shape.Geo => "{ (double la, double lo) = field.Value.AsGeoPoint(); result." + name + " = new global::OneIndex.GeoPoint(la, lo); }",
             _ => "result." + name + " = global::System.DateTimeOffset.FromUnixTimeMilliseconds(field.Value.AsInt64());",
         };
     }

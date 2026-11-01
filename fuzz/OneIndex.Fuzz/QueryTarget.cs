@@ -244,7 +244,7 @@ internal static class QueryTarget
             case 5:
                 return new PhraseQuery(c.Pick(["title", "body"]), [.. Enumerable.Range(0, 1 + c.Next(3)).Select(_ => PickTerm(c))]) { Slop = c.Chance(2) ? 0 : c.Next(4), Boost = PickBoost(c) };
             case 6:
-                return new PrefixQuery(c.Pick(["title", "body"]), c.Pick(["r", "ru", "run", "ap", "a", "z", "gam", "q"])) { Boost = PickBoost(c) };
+                return new PrefixQuery(c.Pick(["title", "body"]), c.Pick(["r", "ru", "run", "ap", "a", "z", "gam", "q"])) { Boost = PickBoost(c), ScoreTerms = c.Chance(2) };
             case 7:
                 return new FuzzyQuery(c.Pick(["title", "body"]), c.Pick(["runn", "aple", "gama", "run", "bta", "zta", "alpah", "runnig"])) { MaxEdits = c.Next(3), PrefixLength = c.Chance(3) ? 1 + c.Next(2) : 0, Transpositions = !c.Chance(3), Boost = PickBoost(c) };
             case 8:
@@ -520,7 +520,10 @@ internal static class QueryTarget
                 case PhraseQuery p:
                     return PhraseScore(p, d);
                 case PrefixQuery p:
-                    return Expansion(p.Field, p.Boost, d, t => t.StartsWith(p.Prefix, StringComparison.Ordinal));
+                    {
+                        double? terms = Expansion(p.Field, p.Boost, d, t => t.StartsWith(p.Prefix, StringComparison.Ordinal));
+                        return p.ScoreTerms || terms is null ? terms : p.Boost; // a constant score unless the terms are scored
+                    }
                 case FuzzyQuery f:
                     return Expansion(f.Field, f.Boost, d, t => Fuzzy(f, t));
                 case RegexQuery r:

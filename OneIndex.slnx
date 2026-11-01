@@ -21,11 +21,14 @@
   <Folder Name="/tools/">
     <Project Path="tools/OneIndex.Harness/OneIndex.Harness.csproj" />
     <Project Path="tools/OneIndex.Harness.Cli/OneIndex.Harness.Cli.csproj" />
+    <Project Path="tools/OneIndex.Models.Tool/OneIndex.Models.Tool.csproj" />
     <Project Path="tools/UcdTables/UcdTables.csproj" />
     <Project Path="tools/SnowballGen/SnowballGen.csproj" />
   </Folder>
   <Folder Name="/bench/">
     <Project Path="bench/OneIndex.Bench/OneIndex.Bench.csproj" />
+    <Project Path="bench/OneIndex.VectorBench/OneIndex.VectorBench.csproj" />
+    <Project Path="bench/OneIndex.VectorBench.Curiosity/OneIndex.VectorBench.Curiosity.csproj" />
   </Folder>
   <Folder Name="/fuzz/">
     <Project Path="fuzz/OneIndex.Fuzz/OneIndex.Fuzz.csproj" />
