@@ -210,7 +210,7 @@ public sealed class RankingRulesAttribute : Attribute
 }
 
 /// <summary>
-/// Sets the weight of the term-proximity bonus that user text with two or more words adds to its BM25F score (docs/scoring.md). The default is 0.5; 0
+/// Sets the weight of the term-proximity bonus that user text with two or more words adds to its BM25F score (docs/scoring.md). The default is 0.1; 0
 /// turns the bonus off. It is recorded in the index and applies to the next query.
 /// </summary>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]

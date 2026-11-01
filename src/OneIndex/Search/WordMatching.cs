@@ -255,6 +255,7 @@ internal sealed class LeafWordMatcher
     private readonly WordFields _fields;
     private readonly bool _positions;
     private readonly Entry[][] _entries; // per word, the postings of its terms in this segment
+    private readonly ITextFieldReader?[] _fieldReaders; // per field, for the length of the loaded document
     private int[][][] _pos; // [word][field] merged ascending positions
     private readonly int[][] _count; // [word][field]
     private readonly int[] _bestTypos;
@@ -281,6 +282,12 @@ internal sealed class LeafWordMatcher
         _fields = fields;
         _positions = positions;
         _entries = new Entry[_words.Length][];
+        _fieldReaders = new ITextFieldReader?[fields.Count];
+        for (int f = 0; f < _fieldReaders.Length; f++)
+        {
+            _fieldReaders[f] = leaf.Reader.GetTextField(fields.Names[f]);
+        }
+
         for (int w = 0; w < _words.Length; w++)
         {
             var list = new List<Entry>();
@@ -321,6 +328,9 @@ internal sealed class LeafWordMatcher
     }
 
     public int WordCount => _words.Length;
+
+    /// <summary>The token count of the loaded document in a field (0 when the segment has no such field).</summary>
+    public int FieldLength(int field) => _fieldReaders[field] is { } r && _doc >= 0 ? r.GetFieldLength(_doc) : 0;
 
     public int FieldCount => _fields.Count;
 
@@ -444,13 +454,13 @@ internal sealed class LeafWordMatcher
 internal static class Proximity
 {
     /// <summary>The weight of the proximity bonus relative to the word scores. See docs/scoring.md for the choice.</summary>
-    public const float DefaultWeight = 0.5f;
+    public const float DefaultWeight = 0.1f;
 
     /// <summary>
-    /// The proximity of the words in one field: sum over words of idf * acc / (k1 + acc). <paramref name="acc"/> is scratch of one value per word.
+    /// The proximity of the words in one field: sum over words of min(1, idf) * acc * (k1 + 1) / (acc + K), with K = k1 * (1 - b + b * length / average length) passed as <paramref name="norm"/>. <paramref name="acc"/> is scratch of one value per word.
     /// Positions of one word are ascending; the pairs come from the merged ascending order of all words' positions.
     /// </summary>
-    public static float FieldBonus(LeafWordMatcher m, int field, ReadOnlySpan<float> idf, float k1, Span<float> acc, Span<int> cursor)
+    public static float FieldBonus(LeafWordMatcher m, int field, ReadOnlySpan<float> idf, ReadOnlySpan<float> cap, float k1, float norm, Span<float> acc, Span<int> cursor)
     {
         int words = m.WordCount;
         acc[..words].Clear();
@@ -495,7 +505,8 @@ internal static class Proximity
         {
             if (acc[w] > 0f)
             {
-                sum += idf[w] * (acc[w] / (k1 + acc[w]));
+                // Buttcher et al. section 2: min(1, idf) * acc * (k1 + 1) / (acc + K), K the document's BM25 length normalisation.
+                sum += cap[w] * ((k1 + 1f) * acc[w] / (acc[w] + norm));
             }
         }
 

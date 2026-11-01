@@ -93,7 +93,7 @@ public sealed class RankingTests
     }
 
     // The proximity bonus from the tokens alone: pairs of occurrences of two different query words with no query word between them.
-    private static double Bonus(string[] tokens, string[] words, double[] idf, double k1)
+    private static double Bonus(string[] tokens, string[] words, double[] idf, double k1, double b, double averageLength)
     {
         var acc = new double[words.Length];
         var at = new List<int>();
@@ -119,12 +119,13 @@ public sealed class RankingTests
             acc[wb] += idf[wa] / (d * d);
         }
 
+        double norm = k1 * (1 - b + (b * tokens.Length / averageLength)); // K of the paper
         double sum = 0;
         for (int w = 0; w < words.Length; w++)
         {
             if (acc[w] > 0)
             {
-                sum += idf[w] * (acc[w] / (k1 + acc[w]));
+                sum += Math.Min(1.0, idf[w]) * ((k1 + 1) * acc[w] / (acc[w] + norm));
             }
         }
 
@@ -145,6 +146,7 @@ public sealed class RankingTests
         }
 
         using var index = new LowLevel(docs, 97);
+        double averageLength = docs.Average(d => (double)d.Length);
         for (int q = 0; q < 40; q++)
         {
             string[] words = [.. Vocabulary.OrderBy(_ => rng.Next()).Take(rng.Next(2, 5))];
@@ -162,7 +164,7 @@ public sealed class RankingTests
             var baseScore = plain.Hits.ToDictionary(h => h.DocId, h => h.Score);
             foreach (ScoreDoc hit in with.Hits)
             {
-                double expected = baseScore[hit.DocId] + (weight * Bonus(docs[hit.DocId], words, idf, 0.9));
+                double expected = baseScore[hit.DocId] + (weight * Bonus(docs[hit.DocId], words, idf, 0.9, 0.4, averageLength));
                 Assert.True(Math.Abs(expected - hit.Score) <= 1e-4 * Math.Max(1, expected), $"seed {seed} query {string.Join(' ', words)} doc {hit.DocId}: {hit.Score} vs {expected}");
                 // The explanation is the score, bit for bit.
                 Assert.Equal(hit.Score, index.Searcher.Explain(prox, hit.DocId)!.Value);

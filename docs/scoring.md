@@ -76,21 +76,22 @@ Büttcher, Clarke and Lushman, "Term proximity scoring for ad-hoc retrieval on v
 the document, take the occurrences of the query words in position order. Every two neighbours in that order that are occurrences of
 *different* words (no other query word occurrence between them) at distance *d* add `idf(other) / d²` to the accumulator of each word:
 
-    acc_t   = sum over adjacent pairs (t, u) at distance d of  idf(u) / d²        (d >= 1; two words at one position count as 1)
-    bonus_f = sum over query words t of  idf(t) * acc_t / (k1 + acc_t)            for field f
+    acc_t   = sum over adjacent pairs (t, u) at distance d of  idf(u) / d^2        (d >= 1; two words at one position count as 1)
+    K       = k1 * (1 - b + b * len_f / avglen_f)                                   the BM25 length normalisation of field f
+    bonus_f = sum over query words t of  min(1, idf(t)) * acc_t * (k1 + 1) / (acc_t + K)
     score   = bm25f(d) + weight * max over fields f of bonus_f
 
-- `idf(t)` is the word's own idf, as in the BM25F term; `k1` is the BM25F `k1`. A word with typo or prefix expansions uses the positions of
-  all its matched terms (up to the 32 best terms per word) and the idf of the closest one.
-- **Deviations from the paper**, each deliberate: the paper adds the bonus per word with `min(1, idf)` and BM25's `(k1 + 1)` numerator; here the
-  bonus has the shape of this engine's term score (`idf * x / (k1 + x)`, so it is below `idf`), which makes its bound simple. The bonus of a
-  document is its best field, because a query word pair split across title and body is not close. Positions are compared inside a field only.
-- **The bound.** `acc / (k1 + acc) < 1`, so the bonus is below `weight * sum of the words' idf` (at most 32 words). A scorer reports its
-  inner bound plus that, and the inner scorer is told the threshold minus that, so block-max WAND skips only what cannot reach the top k; the
-  returned top k and scores equal exhaustive scoring (a test checks 120 random queries, pruned against exhaustive, bit for bit).
+- `idf(t)` is the word's own idf, as in the BM25F term; `k1` and `b` are the BM25F parameters; `len_f` and `avglen_f` are the field's length in
+  the document and its average. A word with typo or prefix expansions uses the positions of all its matched terms (up to the 32 best terms per
+  word) and the idf of the closest one.
+- **Deviations from the paper**, each deliberate: the bonus of a document is its best field, because a query word pair split across title and
+  body is not close, and positions are compared inside a field only. The paper has one text field; `weight` is ours (the paper's weight is 1).
+- **The bound.** `acc * (k1 + 1) / (acc + K) < k1 + 1`, so the bonus is below `weight * (k1 + 1) * sum of min(1, idf)` (at most 32 words). A
+  scorer reports its inner bound plus that, and the inner scorer is told the threshold minus that, so block-max WAND skips only what cannot
+  reach the top k; the returned top k and scores equal exhaustive scoring (a test checks 120 random queries, pruned against exhaustive, bit for bit).
 - A document in which fewer than two query words occur gets no bonus and its positions are not read.
 - At most 32 words are compared (the rarest), and a repeated word counts once.
-- `weight` is `TextSettings.ProximityWeight` / `[Proximity(w)]`, default {WEIGHT}, 0 to 4; 0 removes the bonus. In query objects it is
+- `weight` is `TextSettings.ProximityWeight` / `[Proximity(w)]`, default 0.1, 0 to 4; 0 removes the bonus. In query objects it is
   `ProximityQuery`; query JSON `{"type":"proximity",...}` (a user-text query compiles to it, so it appears in written query JSON).
 - Not applied: with ranking rules (they have a `proximity` rule), to one-word queries, to phrases, to typed query objects unless wrapped.
 

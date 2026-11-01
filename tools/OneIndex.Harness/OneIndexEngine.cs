@@ -307,7 +307,8 @@ public sealed class OneIndexEngine : ITextEngine
     // Information runs: ONEINDEX_PROXIMITY=<weight> keeps positions in the title and text fields and adds the term-proximity bonus of that weight to the Bm25F layout.
     private static readonly float ProximityWeight = float.TryParse(Environment.GetEnvironmentVariable("ONEINDEX_PROXIMITY"), System.Globalization.CultureInfo.InvariantCulture, out float pw) ? pw : 0f;
 
-    private static IndexOptions ProximityIndexOptions => ProximityWeight > 0f ? IndexOptions.Positions : IndexOptions.Freqs;
+    // Positions whenever the variable is set (also at 0, the baseline of a sweep over one index).
+    private static IndexOptions ProximityIndexOptions => Environment.GetEnvironmentVariable("ONEINDEX_PROXIMITY") is not null ? IndexOptions.Positions : IndexOptions.Freqs;
 
     private static global::OneIndex.Search.Query Match(MatchQuery m)
     {

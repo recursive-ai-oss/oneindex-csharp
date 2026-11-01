@@ -435,7 +435,7 @@ public sealed class QueryEngine : IWeightFactory
                 }
 
                 QueryWord[] chosen = words.Count <= ProximityWeight.MaxWords ? [.. words] : [.. words.OrderByDescending(static x => x.Idf).Take(ProximityWeight.MaxWords)];
-                return new ProximityWeight(inner, context, fields, chosen, options.Bm25.K1, query.Weight, query.Boost);
+                return new ProximityWeight(inner, context, fields, chosen, options.Bm25.K1, options.Bm25.B, query.Weight, query.Boost);
             }
             finally
             {
