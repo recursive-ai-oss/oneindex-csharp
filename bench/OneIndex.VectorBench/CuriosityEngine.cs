@@ -27,6 +27,8 @@ internal sealed class CuriosityEngine(int m, int efConstruction) : IEngine
 
     public int Search(float[] query, int k, int ef, int[] ids)
     {
+        // The documented parameter object is shared with the graph; whether a later change reaches it is observed from recall.
+        _parameters!.EfSearch = ef;
         int n = 0;
         foreach (var r in _graph!.KNNSearch(query, k))
         {

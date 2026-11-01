@@ -21,7 +21,7 @@ internal interface IEngine : IDisposable
 
 internal static class Program
 {
-    private static readonly int[] EfGrid = [10, 14, 20, 28, 40, 56, 80, 110, 160, 220, 320, 450, 640, 900, 1300, 1800];
+    private static readonly int[] EfGrid = [10, 14, 20, 28, 40, 56, 80, 110, 140, 180, 220, 270, 320, 380, 450, 540, 640, 760, 900, 1100, 1300, 1800];
 
     private static int Main(string[] args)
     {

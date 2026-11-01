@@ -131,3 +131,50 @@ unreferenced files that are reclaimed.
 * Durability: `tests/Durability` carries a vector field (flat threshold 3, so merges of tiny segments build and continue graphs); every
   recovered snapshot is checked for the vector of every live document and for exact nearest neighbours against brute force.
 * Fuzz: `fuzz` target `vectors`.
+
+## Measured
+
+Indicative runs, one machine, single-threaded build and search, M=16, efConstruction=100, recall@10 against exact search, `ef` on a grid of
+22 values (the smallest `ef` that reaches the target is reported, so rows are quantized by the grid). The host was shared with other jobs
+(load 3 to 16), so timings are only indicative.
+
+Embedding sets (BAAI/bge-small-en-v1.5 at 384 dimensions, 150,000 base vectors; BAAI/bge-base-en-v1.5 at 768 dimensions, 75,000 base
+vectors; 1,000 held-out title queries; the first abstracts of the Wikipedia dump; manifests with SHA-256 are written by `tools/embeddings.py`).
+The sets are generated, never committed.
+
+| Set | Engine | Build | Peak RSS | @0.90 (ef, qps) | @0.95 | @0.99 |
+|---|---|---|---|---|---|---|
+| 384 | OneIndex (in memory) | 61 s | 507 MB | 270, 877 | 640, 413 | not reached (0.976 at ef 1300) |
+| 384 | OneIndex (segment files) | 77 s | 915 MB | 270, 642 | 640, 347 | not reached |
+| 384 | Hnsw.Net 0.1.4 | 123 s | 591 MB | 180, 1166 | 540, 449 | not reached (0.981) |
+| 384 | curiosity-ai HNSW 26.9.5494 | 68 s | 626 MB | 760, 179 | not reached | not reached |
+| 384 | hnswlib 0.8.0 (information) | 60 s | 506 MB | 270, 1098 | 640, 386 | not reached |
+| 384 | faiss-cpu 1.15.1 (information) | 61 s | 506 MB | 270, 924 | 540, 536 | not reached |
+| 768 | OneIndex (in memory) | 43 s | 502 MB | 180, 1078 | 450, 422 | 1800, 137 |
+| 768 | OneIndex (segment files) | 53 s | 844 MB | 180, 667 | 450, 306 | 1800, 102 |
+| 768 | Hnsw.Net 0.1.4 | 91 s | 573 MB | 140, 1094 | 320, 516 | 1300, 156 |
+| 768 | curiosity-ai HNSW | 53 s | 677 MB | 450, 267 | 1300, 78 | not reached |
+| 768 | hnswlib 0.8.0 (information) | 44 s | 490 MB | 180, 895 | 450, 370 | 1800, 134 |
+| 768 | faiss-cpu 1.15.1 (information) | 33 s | 497 MB | 180, 1203 | 380, 593 | 1800, 158 |
+
+Index files: 250.6 MB (384 d) and 240.5 MB (768 d) for the vectors file plus the graph; Hnsw.Net's saved index is 253.4 MB and 241.9 MB.
+Against the faster managed comparator (Hnsw.Net) our in-memory search reaches 0.75x, 0.92x (384 d) and 0.99x, 0.82x, 0.88x (768 d) of its
+throughput at 0.90, 0.95, 0.99, and builds 2.0x faster. At equal `ef` OneIndex and hnswlib reach the same recall (the same algorithm and
+parameters), Hnsw.Net reaches a given recall at a smaller `ef`. Tuning the search is left for the stage's benchmark rows.
+On a 50,000-vector prefix, topping connections up with pruned candidates (`HnswBuilder.KeepPruned`) raised recall at a fixed small `ef`
+(0.681 against 0.657 at ef 20) but lowered throughput at matched recall (0.90: 1540 against 1756 qps; 0.95: 853 against 1048), so it stays off.
+
+Kernels (BenchmarkDotNet, in-process short job, mean per call, one pair of vectors, 0 bytes allocated):
+
+| Machine | Dimensions | Dot scalar | Vector128 | Vector256 | Vector512 | Int8 dot scalar | Vector128 | Vector256 | Vector512 |
+|---|---|---|---|---|---|---|---|---|---|
+| Ryzen 9 7950X3D | 384 | 231 ns | 43 ns | 28 ns | 28 ns | 198 ns | 32 ns | 18 ns | 17 ns |
+| Ryzen 9 7950X3D | 768 | 371 ns | 78 ns | 51 ns | 58 ns | 405 ns | 65 ns | 34 ns | 35 ns |
+| Apple M2 (AdvSimd) | 384 | 228 ns | 36 ns | n/a | n/a | 125 ns | 25 ns | n/a | n/a |
+| Apple M2 (AdvSimd) | 768 | 399 ns | 65 ns | n/a | n/a | 244 ns | 49 ns | n/a | n/a |
+
+All widths give bit-identical results; `VectorKernelTests` passes on both machines.
+
+Code that uses `unsafe`-class APIs (`Unsafe.`, `MemoryMarshal`, `stackalloc`) is limited to `Kernels/VectorKernels.cs` (the SIMD kernels),
+`Codecs/VectorPartReader.cs` and `Codecs/VectorFiles.cs` (bulk conversion of file blocks to floats and integers) and
+`Codecs/VectorSegmentCodec.cs` (the same conversions at merge time); each states its bounds where it is used.
