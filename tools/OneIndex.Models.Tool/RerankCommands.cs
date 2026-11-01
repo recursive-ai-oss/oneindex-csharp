@@ -308,8 +308,14 @@ internal static class RerankCommands
                 continue;
             }
 
-            double Eval(Dictionary<string, List<(string Doc, double Score)>> run)
+            double Eval(Dictionary<string, List<(string Doc, double Score)>> run, bool dropSelf = true)
             {
+                if (!dropSelf)
+                {
+                    // The BEIR paper's own convention: a document with the query's id is an ordinary hit (it counts as not relevant).
+                    return TrecEval.NdcgAt(10, data.Qrels, run.ToDictionary(static kv => kv.Key, static kv => kv.Value.Take(10).ToList(), StringComparer.Ordinal)).Mean;
+                }
+
                 var cut = new Dictionary<string, List<(string Doc, double Score)>>(StringComparer.Ordinal);
                 foreach ((string qid, var hits) in run)
                 {
@@ -332,7 +338,7 @@ internal static class RerankCommands
                 }
             }
 
-            Console.WriteLine($"set {data.Name} arm {arm} queries {queries.Count} window {window} nDCG@10 first stage {Eval(first):F4} reranked {Eval(reranked):F4} (scored this run: {scoredPairs} pairs in {scoreSeconds:F1} s = {scoredPairs / Math.Max(scoreSeconds, 1e-9):F1} pairs/s) kernel {reranker.KernelPath}");
+            Console.WriteLine($"set {data.Name} arm {arm} queries {queries.Count} window {window} nDCG@10 first stage {Eval(first):F4} reranked {Eval(reranked):F4}; without dropping a hit that has the query's own id: first stage {Eval(first, false):F4} reranked {Eval(reranked, false):F4} (scored this run: {scoredPairs} pairs in {scoreSeconds:F1} s = {scoredPairs / Math.Max(scoreSeconds, 1e-9):F1} pairs/s) kernel {reranker.KernelPath}");
         }
 
         return exit;
