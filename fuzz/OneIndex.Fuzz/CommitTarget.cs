@@ -75,9 +75,17 @@ internal static class CommitTarget
 
     private static void CheckSchema(ReadOnlySpan<byte> data)
     {
-        if (Schema.TryDeserialize(data, Limits, out Schema? schema, out _) && !schema.Serialize().AsSpan().SequenceEqual(data))
+        if (!Schema.TryDeserialize(data, Limits, out Schema? schema, out _))
         {
-            throw new InvalidOperationException("a schema that parsed did not serialize back to the same bytes");
+            return;
+        }
+
+        // Sections this build does not know are dropped when a schema is written again, so the first write need not equal the input;
+        // what it writes must read back to a schema that writes the same bytes.
+        byte[] written = schema.Serialize();
+        if (!Schema.TryDeserialize(written, Limits, out Schema? again, out _) || !again.Serialize().AsSpan().SequenceEqual(written))
+        {
+            throw new InvalidOperationException("a schema that parsed did not serialize to bytes that read back to the same schema");
         }
     }
 

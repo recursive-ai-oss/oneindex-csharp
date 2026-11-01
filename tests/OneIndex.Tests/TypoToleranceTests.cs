@@ -300,6 +300,21 @@ public sealed class TypoToleranceTests
         Assert.True(snapshot.Schema.HasSameFields(first)); // settings never change the fields, so nothing is rebuilt
     }
 
+    [Fact]
+    public void ASchemaWithAnUnknownSectionWritesWithoutItAndReadsBackToTheSame()
+    {
+        // Found by the commit fuzz target: sections this build does not define are skipped when read and dropped when written.
+        string path = Path.Combine(Path.GetDirectoryName(ThisFile())!, "..", "..", "testdata", "fuzz", "commit-schema-skipped-section.bin");
+        byte[] data = File.ReadAllBytes(path);
+        Assert.True(Schema.TryDeserialize(data.AsSpan(1), IndexLimits.Default, out Schema? schema, out _)); // the first byte is the fuzz target's mode
+        byte[] written = schema.Serialize();
+        Assert.True(Schema.TryDeserialize(written, IndexLimits.Default, out Schema? again, out _));
+        Assert.True(again.Serialize().AsSpan().SequenceEqual(written));
+        Assert.False(written.AsSpan().SequenceEqual(data.AsSpan(1))); // the unknown sections are gone
+    }
+
+    private static string ThisFile([System.Runtime.CompilerServices.CallerFilePath] string path = "") => path;
+
     private static List<string> Titles<T>(SearchIndex<T> index, string text, Func<T, string> title)
         where T : class
         => index.Search(text).Take(20).ToList().Select(h => title(h.Document)).ToList();
