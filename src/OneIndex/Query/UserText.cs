@@ -173,12 +173,16 @@ public sealed class UserTextCompiler
 {
     private readonly List<(string Analyzer, List<string> Fields)> _groups = [];
     private readonly Dictionary<string, Analyzer> _analyzers = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, SynonymMap> _synonyms = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, HashSet<string>> _stopWords = new(StringComparer.Ordinal);
+    private readonly TextSettings _settings;
 
     /// <summary>Creates a compiler for a schema.</summary>
     /// <param name="schema">The schema; its indexed text fields with positions are searched.</param>
     public UserTextCompiler(Schema schema)
     {
         ArgumentNullException.ThrowIfNull(schema);
+        _settings = schema.Settings;
         foreach (FieldDefinition f in schema.Fields)
         {
             if (f.Type != FieldType.Text || !f.Indexed || f.IndexOptions == IndexOptions.None)
@@ -198,10 +202,50 @@ public sealed class UserTextCompiler
                 _groups[g].Fields.Add(f.Name);
             }
         }
+
+        PrepareSettings();
+    }
+
+    private void PrepareSettings()
+    {
+        // Synonyms and stop words are analyzed with each field group's own analyzer, so that they meet the terms the index holds.
+        if (_settings.Synonyms.Count == 0 && _settings.StopWords.Count == 0)
+        {
+            return;
+        }
+
+        foreach ((string name, Analyzer analyzer) in _analyzers)
+        {
+            if (_settings.Synonyms.Count > 0)
+            {
+                var rules = new SynonymRules();
+                foreach (SynonymRule r in _settings.Synonyms)
+                {
+                    _ = r.IsGroup ? rules.AddGroup([.. r.From]) : rules.AddOneWay(r.From[0], [.. r.To]);
+                }
+
+                _synonyms[name] = rules.Build(analyzer);
+            }
+
+            var stop = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string w in _settings.StopWords)
+            {
+                foreach (AnalyzedToken t in analyzer.Analyze(w))
+                {
+                    stop.Add(t.Term);
+                }
+            }
+
+            _stopWords[name] = stop;
+        }
     }
 
     /// <summary>Whether the schema has any field that user text can search.</summary>
     public bool HasSearchableFields => _groups.Count > 0;
+
+    // The last word of the text is the one being typed, unless the text ends in a space or a quote.
+    private static bool EndsInWord(string input, UserTextOperand last)
+        => !last.IsPhrase && last.Text.Length > 0 && input.TrimEnd().EndsWith(last.Text, StringComparison.Ordinal) && input.Length > 0 && !char.IsWhiteSpace(input[^1]);
 
     /// <summary>Compiles user text.</summary>
     /// <param name="input">The text; <see langword="null"/> or blank matches every document.</param>
@@ -217,13 +261,26 @@ public sealed class UserTextCompiler
             return new MatchAllQuery();
         }
 
-        var clauses = new List<BooleanClause>();
-        foreach (IReadOnlyList<UserTextOperand> group in parsed.Required)
+        // As-you-type applies to the last operand of the text, when it is a plain word still being typed.
+        UserTextOperand? typed = null;
+        if (_settings.PrefixSearch && parsed.Required.Count > 0 && parsed.Required[^1].Count > 0)
         {
-            var alternatives = new List<Search.Query>();
-            foreach (UserTextOperand operand in group)
+            UserTextOperand last = parsed.Required[^1][^1];
+            if (EndsInWord(input ?? string.Empty, last))
             {
-                if (CompileOperand(operand) is { } q)
+                typed = last;
+            }
+        }
+
+        var clauses = new List<BooleanClause>();
+        for (int g = 0; g < parsed.Required.Count; g++)
+        {
+            IReadOnlyList<UserTextOperand> group = parsed.Required[g];
+            var alternatives = new List<Search.Query>();
+            for (int o = 0; o < group.Count; o++)
+            {
+                bool isTyped = typed is not null && g == parsed.Required.Count - 1 && o == group.Count - 1;
+                if (CompileOperand(group[o], isTyped, exact: false) is { } q)
                 {
                     alternatives.Add(q);
                 }
@@ -238,7 +295,7 @@ public sealed class UserTextCompiler
         int required = clauses.Count;
         foreach (UserTextOperand operand in parsed.Excluded)
         {
-            if (CompileOperand(operand) is { } q)
+            if (CompileOperand(operand, false, exact: true) is { } q)
             {
                 clauses.Add(new BooleanClause(q, Occur.MustNot));
             }
@@ -261,42 +318,152 @@ public sealed class UserTextCompiler
     private static Search.Query AnyOf(List<Search.Query> alternatives)
         => alternatives.Count == 1 ? alternatives[0] : new BooleanQuery(alternatives.ConvertAll(static q => new BooleanClause(q, Occur.Should))) { MinimumShouldMatch = 1 };
 
-    internal Search.Query? CompileOperand(UserTextOperand operand)
+    // Strict-syntax terms are matched as written, like an excluded word.
+    internal Search.Query? CompileOperand(UserTextOperand operand) => CompileOperand(operand, false, exact: true);
+
+    // exact: the operand is excluded (-word), so it is matched as written, without typos, synonyms or as-you-type.
+    private Search.Query? CompileOperand(UserTextOperand operand, bool typing, bool exact)
     {
         var perGroup = new List<Search.Query>();
         foreach ((string analyzerName, List<string> fields) in _groups)
         {
-            IReadOnlyList<AnalyzedToken> tokens = _analyzers[analyzerName].Analyze(operand.Text);
-            if (tokens.Count == 0)
+            IReadOnlyList<AnalyzedToken> analyzed = _analyzers[analyzerName].Analyze(operand.Text);
+            if (analyzed.Count == 0)
             {
                 continue;
             }
 
+            // Stop words are dropped where they stand; the positions of the rest stay, so a phrase keeps the gap.
+            IReadOnlyList<AnalyzedToken> tokens = analyzed;
+            if (!exact && _stopWords.TryGetValue(analyzerName, out HashSet<string>? stop) && stop.Count > 0)
+            {
+                var kept = new List<AnalyzedToken>(analyzed.Count);
+                foreach (AnalyzedToken t in analyzed)
+                {
+                    if (!stop.Contains(t.Term))
+                    {
+                        kept.Add(t);
+                    }
+                }
+
+                if (kept.Count == 0)
+                {
+                    continue;
+                }
+
+                tokens = kept;
+            }
+
+            var readings = new List<Search.Query>();
             if (tokens.Count == 1)
             {
-                perGroup.Add(fields.Count == 1 ? new TermQuery(fields[0], tokens[0].Term) : new MultiFieldTermQuery(fields.ToArray(), tokens[0].Term));
-                continue;
+                readings.Add(WordQuery(fields, tokens[0].Term, operand, typing && !exact, exact));
             }
-
-            // Several terms from one word ("acme.corp", "state-of-the-art") or a quoted phrase: adjacent, in order. Positions the
-            // analyzer skipped (stop words) widen the slop by as much so that the phrase still matches the text it came from.
-            var terms = new string[tokens.Count];
-            int slop = 0;
-            for (int t = 0; t < tokens.Count; t++)
+            else
             {
-                terms[t] = tokens[t].Term;
-                if (t > 0)
+                // Several terms from one word ("acme.corp", "state-of-the-art") or a quoted phrase: adjacent, in order. Positions the
+                // analyzer skipped (stop words) widen the slop by as much so that the phrase still matches the text it came from.
+                var terms = new string[tokens.Count];
+                int slop = 0;
+                for (int t = 0; t < tokens.Count; t++)
                 {
-                    slop += Math.Max(0, tokens[t].Position - tokens[t - 1].Position - 1);
+                    terms[t] = tokens[t].Term;
+                    if (t > 0)
+                    {
+                        slop += Math.Max(0, tokens[t].Position - tokens[t - 1].Position - 1);
+                    }
+                }
+
+                foreach (string field in fields)
+                {
+                    readings.Add(new PhraseQuery(field, terms) { Slop = slop });
                 }
             }
 
-            foreach (string field in fields)
+            if (!exact && _synonyms.TryGetValue(analyzerName, out SynonymMap? map) && map.KeyCount > 0)
             {
-                perGroup.Add(new PhraseQuery(field, terms) { Slop = slop });
+                var key = new string[tokens.Count];
+                for (int t = 0; t < key.Length; t++)
+                {
+                    key[t] = tokens[t].Term;
+                }
+
+                foreach (IReadOnlyList<string> alternative in map.GetSynonyms(key))
+                {
+                    if (alternative.Count == 1)
+                    {
+                        readings.Add(WordQuery(fields, alternative[0], operand, typing: false, exact: true, TokenGraphQueries.DefaultSynonymBoost));
+                    }
+                    else
+                    {
+                        foreach (string field in fields)
+                        {
+                            readings.Add(new PhraseQuery(field, [.. alternative]) { Boost = TokenGraphQueries.DefaultSynonymBoost });
+                        }
+                    }
+                }
             }
+
+            perGroup.AddRange(readings);
         }
 
         return perGroup.Count == 0 ? null : AnyOf(perGroup);
+    }
+
+    // One analyzed word in the fields of one analyzer group: a plain term, or a typo-tolerant one when the settings allow typos or the
+    // word is the one being typed.
+    private Search.Query WordQuery(List<string> fields, string term, UserTextOperand operand, bool typing, bool exact, float boost = 1f)
+    {
+        TypoSettings typo = _settings.Typo;
+        int budget = exact || operand.IsPhrase ? 0 : typo.Budget(CountCodePoints(term));
+        if (budget > 0 && ((typo.DisableOnNumbers && IsNumber(term)) || IsListed(typo.DisableOnWords, term, operand.Text)))
+        {
+            budget = 0;
+        }
+
+        bool prefix = typing && !operand.IsPhrase;
+        if (budget == 0 && !prefix)
+        {
+            return fields.Count == 1 ? new TermQuery(fields[0], term) { Boost = boost } : new MultiFieldTermQuery(fields.ToArray(), term) { Boost = boost };
+        }
+
+        return new TypoTermQuery(fields.ToArray(), term) { MaxTypos = budget, Prefix = prefix, ExactFields = typo.DisableOnFields.Count == 0 ? [] : fields.Where(typo.DisableOnFields.Contains).ToArray(), Boost = boost };
+    }
+
+    private static int CountCodePoints(string s)
+    {
+        int n = 0;
+        foreach (Rune _ in s.EnumerateRunes())
+        {
+            n++;
+        }
+
+        return n;
+    }
+
+    private static bool IsNumber(string term)
+    {
+        foreach (char c in term)
+        {
+            if (!char.IsDigit(c))
+            {
+                return false;
+            }
+        }
+
+        return term.Length > 0;
+    }
+
+    private static bool IsListed(IReadOnlyList<string> words, string term, string raw)
+    {
+        foreach (string w in words)
+        {
+            if (string.Equals(w, term, StringComparison.OrdinalIgnoreCase) || string.Equals(w, raw, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

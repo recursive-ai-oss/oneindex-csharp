@@ -34,7 +34,7 @@ At most **32 operands** are read (positive and excluded together); the rest are 
 
 Each operand is analyzed with the analyzer of every full-text field. Fields that share an analyzer are searched together as one BM25F term (the fields' boosts are the weights); fields with different analyzers are searched separately with their own terms and their scores add. So a title analyzed as `standard` and a body analyzed as `en` each see the word the way they indexed it.
 
-- A word that analyzes to one term is a `MultiFieldTermQuery` (one field: a `TermQuery`).
+- A word that analyzes to one term is a `MultiFieldTermQuery` (one field: a `TermQuery`), or a `TypoTermQuery` when typo tolerance or as-you-type applies to it.
 - A word that analyzes to several terms (`state-of-the-art`, `acme.corp`) and every phrase is a `PhraseQuery` per field. Positions that analysis skipped, such as stop words, widen the slop by as many positions, so `"state of the art"` matches the text it came from.
 - A word that analysis removes entirely (a stop word, punctuation) is dropped. In a group of alternatives the others still count.
 
@@ -48,9 +48,15 @@ The query is: each group of alternatives is a `Must` clause; each exclusion is a
 
 Scoring is BM25F as in [search-contracts.md](search-contracts.md); the filters from `Where` never change the score.
 
+## Typos, as-you-type and settings
+
+By default every unquoted word gets Meilisearch-style typo tolerance and the last word also matches words that begin with it; the
+attributes `[TypoTolerance]`, `[PrefixSearch]`, `[Synonyms]`, `[OneWaySynonyms]` and `[StopWords]` on the document type change that
+(`docs/typo-tolerance.md`). Quoted phrases and excluded words (`-word`) are matched as written.
+
 ## What is not here yet
 
-Typo tolerance, prefix matching of the last word (as-you-type), synonyms and field-qualified terms arrive with the app-search layer. The strict parser with positioned errors is a separate, opt-in grammar.
+Field-qualified terms arrive with the app-search layer. The strict parser with positioned errors is a separate, opt-in grammar.
 
 ## Highlighting
 

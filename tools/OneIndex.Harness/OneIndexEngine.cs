@@ -37,7 +37,7 @@ public sealed class OneIndexEngine : ITextEngine
     }
 
     /// <inheritdoc/>
-    public bool Supports(Type queryType) => queryType == typeof(MatchQuery) || queryType == typeof(TermsQuery) || queryType == typeof(FacetQuery) || queryType == typeof(StatsQuery) || queryType == typeof(SortedQuery) || queryType == typeof(DecayedQuery) || queryType == typeof(FilteredQuery) || (queryType == typeof(GeoQuery) && WithGeo);
+    public bool Supports(Type queryType) => queryType == typeof(MatchQuery) || queryType == typeof(PhraseQuery) || queryType == typeof(PrefixQuery) || queryType == typeof(FuzzyQuery) || queryType == typeof(TypoQuery) || queryType == typeof(TermsQuery) || queryType == typeof(FacetQuery) || queryType == typeof(StatsQuery) || queryType == typeof(SortedQuery) || queryType == typeof(DecayedQuery) || queryType == typeof(FilteredQuery) || (queryType == typeof(GeoQuery) && WithGeo);
 
     // The geo row indexes synthesized coordinates in a second field; it is opt-in so the other rows keep the matched index.
     private static bool WithGeo => Environment.GetEnvironmentVariable("ONEINDEX_BENCH_GEO") == "1";
@@ -53,7 +53,7 @@ public sealed class OneIndexEngine : ITextEngine
         {
             // The benchmark profile: body text, a numeric column and a keyword facet column, standard analysis.
             SchemaBuilder builder = new SchemaBuilder().Id("id")
-                .Add(new FieldDefinition("text", FieldType.Text) { Analyzer = "standard", IndexOptions = IndexOptions.Freqs, Stored = false })
+                .Add(new FieldDefinition("text", FieldType.Text) { Analyzer = "standard", IndexOptions = IndexOptions.Positions, Stored = false })
                 .Add(new FieldDefinition("len", FieldType.Integral) { Column = true, Stored = false })
                 .Add(new FieldDefinition("cat", FieldType.Keyword) { Facet = true, Stored = false });
             schema = (WithGeo ? builder.Add(new FieldDefinition("loc", FieldType.GeoPoint) { Column = true, Stored = false }) : builder).Build();
@@ -71,7 +71,7 @@ public sealed class OneIndexEngine : ITextEngine
         }
 
         _settings = settings;
-        _writer = IndexWriter.Open(_storage, schema, new IndexWriterOptions { MaxBufferedDocuments = 20_000 });
+        _writer = IndexWriter.Open(_storage, schema, new IndexWriterOptions { MergeScheduler = new ThreadedMergeScheduler(), AutoMerge = Environment.GetEnvironmentVariable("ONEINDEX_AUTOMERGE") != "0", MaxBufferedDocuments = int.TryParse(Environment.GetEnvironmentVariable("ONEINDEX_BUFFERED_DOCS"), out int buffered) ? buffered : 20_000 });
     }
 
     /// <inheritdoc/>
@@ -86,7 +86,8 @@ public sealed class OneIndexEngine : ITextEngine
                 d.Add("loc", FieldValue.FromGeoPoint(lat, lng));
             }
 
-            _writer!.Upsert(d);
+            // Identifiers are unique and the comparator appends without looking for a previous version, so the bulk path is the matched call.
+            _writer!.AddUnique(d);
         }
         else
         {
@@ -98,15 +99,36 @@ public sealed class OneIndexEngine : ITextEngine
     /// <inheritdoc/>
     public void Commit()
     {
+        // Like the comparator, a commit does not wait for the merges it may start: they run in the background.
         _writer!.Commit();
-        _writer.WaitForMerges();
+    }
+
+    private int SegmentsNow()
+    {
+        using IndexSnapshot s = _writer!.OpenSnapshot();
+        return s.SegmentCount;
     }
 
     /// <inheritdoc/>
     public void OpenSearcher()
     {
+        // Query rows run on a settled index, so pending merges finish first.
+        // A finished merge is installed by the next commit, so settle by committing until a round installs nothing new. Lucene.NET
+        // installs merges as they finish; this is the same settled state.
+        for (int round = 0; round < 8; round++)
+        {
+            _writer!.WaitForMerges();
+            int before = SegmentsNow();
+            _writer.Commit();
+            if (SegmentsNow() == before)
+            {
+                break;
+            }
+        }
+
         _snapshot?.Dispose();
         _snapshot = _writer!.OpenSnapshot();
+        Console.Error.WriteLine("segments: " + string.Join(",", Enumerable.Range(0, _snapshot.SegmentCount).Select(i => _snapshot.GetSegment(i).MaxDoc)));
         _context = SnapshotSearch.CreateContext(_snapshot);
         // Hits carry document numbers; the identifier of each comes from the stored source, so a reopened index needs no side table.
         _idOf = new string[_context.MaxDoc];
@@ -142,10 +164,15 @@ public sealed class OneIndexEngine : ITextEngine
             TermsQuery t => TermsOf(t.Terms),
             FacetQuery f => TermsOf(f.Terms),
             StatsQuery st => TermsOf(st.Terms),
+            PhraseQuery p => new global::OneIndex.Search.PhraseQuery("text", p.Terms),
             SortedQuery so => TermsOf(so.Terms),
             DecayedQuery dq => new FunctionScoreQuery(TermsOf(dq.Terms), [new DecayFunction(DecayShape.Gauss, "len", dq.Origin, dq.Scale)]),
             FilteredQuery fq => Filtered(fq),
             GeoQuery g => new GeoRadiusQuery("loc", g.Latitude, g.Longitude, g.RadiusMeters),
+            PrefixQuery px => With(px.Required, new global::OneIndex.Search.PrefixQuery("text", px.Prefix)),
+            FuzzyQuery fz => new global::OneIndex.Search.FuzzyQuery("text", fz.Term) { MaxEdits = fz.MaxEdits },
+            TypoQuery ty when TypoMatched && ty.Prefix => With(ty.Required, LuceneShaped(ty.Word)),
+            TypoQuery ty => With(ty.Required, new TypoTermQuery(["text"], ty.Word) { MaxTypos = new TypoSettings().Budget(ty.Word.Length), Prefix = ty.Prefix }),
             _ => throw new NotSupportedException(query.GetType().Name),
         };
         if (query is FacetQuery)
@@ -251,9 +278,27 @@ public sealed class OneIndexEngine : ITextEngine
         _writer?.Dispose();
     }
 
+    // The required terms must all appear; the last clause is the one whose expansion is being measured.
+    // Information row: ONEINDEX_TYPO_MATCHED=1 runs the as-you-type typo row with the match set of the comparator's query (the word as a
+    // prefix, or the word within its typo budget with the first character fixed), which has no typos in the beginning of longer words.
+    private static readonly bool TypoMatched = Environment.GetEnvironmentVariable("ONEINDEX_TYPO_MATCHED") == "1";
+
+    private static BooleanQuery LuceneShaped(string word)
+    {
+        int edits = new TypoSettings().Budget(word.Length);
+        Query fuzzy = edits == 0 ? new TermQuery("text", word) : new global::OneIndex.Search.FuzzyQuery("text", word) { MaxEdits = edits, PrefixLength = 1 };
+        return new BooleanQuery([new BooleanClause(new global::OneIndex.Search.PrefixQuery("text", word), Occur.Should), new BooleanClause(fuzzy, Occur.Should)]);
+    }
+
+    private static BooleanQuery With(string[] required, Query last)
+        => new([.. required.Select(t => new BooleanClause(new TermQuery("text", t), Occur.Must)), new BooleanClause(last, Occur.Must)]);
+
     private static BooleanQuery TermsOf(string[] terms) => new([.. terms.Select(x => new BooleanClause(new TermQuery("text", x), Occur.Should))]);
 
-    private QueryEngineOptions Engine() => new() { Bm25 = new Bm25Parameters(_k1, _b) };
+    private QueryEngineOptions Engine() => new() { Bm25 = new Bm25Parameters(_k1, _b), Overflow = ExpansionOverflow.KeepMostFrequent };
+
+    // Information runs only: ONEINDEX_TYPO=on matches the Bm25F layout's words with the default typo budgets and the typo factor.
+    private static readonly bool TypoTolerant = Environment.GetEnvironmentVariable("ONEINDEX_TYPO") == "on";
 
     private static BooleanQuery Match(MatchQuery m)
     {
@@ -269,6 +314,7 @@ public sealed class OneIndexEngine : ITextEngine
         IEnumerable<Query> perTerm = m.Layout switch
         {
             FieldLayout.Flat => terms.Select(t => new TermQuery("all", t)),
+            FieldLayout.Bm25F when TypoTolerant => terms.Select(t => (Query)new TypoTermQuery(["title", "text"], t) { MaxTypos = new TypoSettings().Budget(t.Length) }),
             FieldLayout.Bm25F => terms.Select(t => new MultiFieldTermQuery(["title", "text"], t)),
             FieldLayout.MultiFieldSum => terms.SelectMany(t => new Query[] { new TermQuery("title", t), new TermQuery("text", t) }),
             _ => throw new NotSupportedException($"{m.Layout} needs a dis-max query, which OneIndex does not have; its default is {FieldLayout.Bm25F}."),

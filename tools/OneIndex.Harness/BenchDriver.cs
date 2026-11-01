@@ -35,7 +35,8 @@ public static class Rows
 /// <param name="Reps">Timed passes per query row (the median is reported).</param>
 /// <param name="Threads">Indexing threads.</param>
 /// <param name="PageCache">Text recorded for the page-cache state.</param>
-public sealed record DriverOptions(string Engine, string Corpus, int Docs, string WorkDir, string OutFile, int Seed, int QueriesPerRow, int Reps, int Threads, string PageCache);
+/// <param name="Rows">Comma-separated query rows to run (for example <c>Terms1,Prefix</c>); null runs all. The index and commit rows always run.</param>
+public sealed record DriverOptions(string Engine, string Corpus, int Docs, string WorkDir, string OutFile, int Seed, int QueriesPerRow, int Reps, int Threads, string PageCache, string? Rows = null);
 
 /// <summary>
 /// The corpus driver: indexes the Wikipedia abstracts (Standard analysis: standard tokenization, lowercase, no stemming), times a
@@ -143,8 +144,15 @@ public static class BenchDriver
         loads.Add(MachineRecord.LoadAverage());
 
         engine.OpenSearcher();
+        // ONEINDEX_ROWS is an alternative to the Rows option.
+        var wanted = o.Rows?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? Environment.GetEnvironmentVariable("ONEINDEX_ROWS")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         foreach (var (kind, set) in queries)
         {
+            if (wanted is not null && !wanted.Contains(kind.ToString(), StringComparer.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             if (!engine.Supports(set[0].GetType()))
             {
                 rows.Add(new() { ["row"] = kind.ToString(), ["skipped"] = "unsupported by engine" });

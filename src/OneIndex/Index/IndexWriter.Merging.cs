@@ -80,7 +80,7 @@ public sealed partial class IndexWriter
             SegmentInfo? result = null;
             if (total > 0)
             {
-                sink = new SegmentFileSink(_storage, name, MakeThrottle(cancellationToken));
+                sink = new SegmentFileSink(_storage, name, MakeThrottle(cancellationToken)) { DeferSync = true };
                 foreach (ISegmentCodec codec in _codecs)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -111,6 +111,8 @@ public sealed partial class IndexWriter
 
                     IdsFormat.Write(sink, entries, cancellationToken);
                 }
+
+                sink.SyncPending(cancellationToken);
 
                 result = new SegmentInfo(name, total, 0, 0, sink.Files, _schemaEpoch);
             }
@@ -174,6 +176,7 @@ public sealed partial class IndexWriter
             return;
         }
 
+        sink.AbortPending();
         foreach (string n in sink.CreatedNames)
         {
             _refs.TryDelete(n);

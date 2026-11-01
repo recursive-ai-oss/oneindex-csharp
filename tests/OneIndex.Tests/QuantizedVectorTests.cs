@@ -397,4 +397,20 @@ public class QuantizedPassage
 
     [Vector(Dimensions = 16, FlatThreshold = 20, Quantization = VectorQuantization.Scalar4, Oversample = 4)]
     public float[] Embedding { get; set; } = [];
+
+    [Fact]
+    public void AllSchemaSectionsRoundTripTogether()
+    {
+        // Text settings (section 2), vector settings (3) and compressed copies (4) share one version-2 record in ascending order.
+        Schema schema = new SchemaBuilder { Settings = new TextSettings { PrefixSearch = false } }.Id("id").Text("t")
+            .Add(new FieldDefinition("v", FieldType.Vector) { Dimensions = 8, HnswM = 24, Quantization = VectorQuantization.Scalar4, Oversample = 4 }).Build();
+        byte[] bytes = schema.Serialize();
+        Schema back = Schema.Deserialize(bytes);
+        Assert.False(back.Settings.PrefixSearch);
+        FieldDefinition v = back.Fields.Single(f => f.Name == "v");
+        Assert.Equal(24, v.HnswM);
+        Assert.Equal(VectorQuantization.Scalar4, v.Quantization);
+        Assert.Equal(4f, v.Oversample);
+        Assert.Equal(bytes, back.Serialize());
+    }
 }

@@ -8,11 +8,11 @@ A name is 1 to 255 characters from `A-Z a-z 0-9 . _ -` and does not start with a
 
 ## Reading
 
-`OpenRead(name)` returns an `IRangeReader` with a fixed `Length`. `Read(offset, buffer)` fills the caller's buffer and returns the bytes read; it returns fewer than requested only when the range reaches the end of the file, and 0 at or past the end. `ReadExactly` turns a short read into `CorruptIndexException`. A reader is safe to use from several threads. The hot path (a cached range) neither awaits nor allocates; the async form exists for backends that really wait (HTTP).
+`OpenRead(name)` returns an `IRangeReader` with a fixed `Length`. `Read(offset, buffer)` fills the caller's buffer and returns the bytes read; it returns fewer than requested only when the range reaches the end of the file, and 0 at or past the end. `ReadExactly` turns a short read into `CorruptIndexException`. A reader is safe to use from several threads. The local-file backend serves files of 64 KiB or more on Unix from a read-only memory mapping, copying the requested range into the caller's buffer (no system call on a cached range); smaller files, Windows, the browser, and any file that cannot be mapped use positional reads. Every read still goes through `IRangeReader`, so the fault injector and the transform wrappers see the same calls, and the engine never holds a pointer into a mapping. Index files are immutable, so a mapping never sees a file change; a range past the length seen at open reads short like any other. The hot path (a cached range) neither awaits nor allocates; the async form exists for backends that really wait (HTTP).
 
 ## Writing
 
-`Create(name)` makes a new empty file (it fails if the name exists) and returns an append-only `IStorageWriter`. `Sync()` flushes and fsyncs the file; bytes are durable only after it returns. Disposing a writer without syncing hands bytes to the operating system but promises nothing about a crash.
+`Create(name)` makes a new empty file (it fails if the name exists) and returns an append-only `IStorageWriter`. `Sync()` flushes and fsyncs the file; bytes are durable only after it returns. Disposing a writer without syncing hands bytes to the operating system but promises nothing about a crash. A storage that reports `SupportsConcurrentSync` (the local-file backend, except in the browser) accepts `Sync()` calls on writers of different files from different threads at the same time; the index writer uses this to flush all files of a new segment together, because on a disk with an expensive cache flush the concurrent fsyncs complete in far less than the sum of their times. Storages that do not report it are synced one file after the other, with the same result.
 
 `Rename(source, destination)` atomically replaces the destination. `Delete(name)` ignores a missing file. `List()` returns names in ordinal order. `SyncDirectory()` makes creations, renames and deletions durable.
 
@@ -26,7 +26,7 @@ The commit protocol needs two promises: a synced file's bytes survive a crash, a
 
 | Platform | File data (`Sync`) | Names (`SyncDirectory`) |
 |---|---|---|
-| Linux (ext4, XFS, btrfs) | `fsync` on the file | .NET cannot open a directory to fsync it, so each file created or renamed into place since the last call is fsynced again. In practice these file systems commit the directory entry in the same journal transaction, which makes the entry durable (not a POSIX guarantee; see below). Deletions are not forced, which is harmless: a deleted file that returns after a crash is garbage no commit names. |
+| Linux (ext4, XFS, btrfs) | `fsync` on the file | .NET cannot open a directory to fsync it, so each file renamed into place, or created and not yet synced, since the last call is fsynced. A file that was synced after it was created is not synced a second time: that sync already committed its directory entry. In practice these file systems commit the directory entry in the same journal transaction, which makes the entry durable (not a POSIX guarantee; see below). Deletions are not forced, which is harmless: a deleted file that returns after a crash is garbage no commit names. |
 | macOS | full sync of the file (`F_FULLFSYNC`, as .NET does for `FlushToDisk`) | the same file flushes |
 | Windows (NTFS) | `FlushFileBuffers` | the same file flushes; NTFS journals metadata |
 | Memory | nothing is ever durable beyond the process | no effect |

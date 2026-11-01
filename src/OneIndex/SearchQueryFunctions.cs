@@ -8,7 +8,7 @@ using OneIndex.Search;
 namespace OneIndex;
 
 /// <summary>What a search carries beyond its text, filters and paging: filter strings, a function score, explain.</summary>
-internal sealed record QueryExtras(Search.Query[] FilterQueries, FunctionSpec? Function, bool Explain)
+internal sealed record QueryExtras(Search.Query[] FilterQueries, FunctionSpec? Function, bool Explain, HybridSpec? Hybrid = null)
 {
     public static readonly QueryExtras None = new([], null, false);
 }
@@ -191,9 +191,9 @@ public sealed partial class SearchQuery<T>
     private static FunctionScoreQuery Wrap(Search.Query scoring, FunctionSpec spec)
         => new FunctionScoreQuery(scoring, spec.Functions) { ScoreMode = spec.ScoreMode, BoostMode = spec.BoostMode, MaxBoost = spec.MaxBoost, MinScore = spec.MinScore };
 
-    private Search.Query WithExtras(Search.Query textQuery)
+    private Search.Query WithExtras(Search.Query textQuery, bool applyFunction = true)
     {
-        Search.Query scoring = _extras?.Function is { } spec ? Wrap(textQuery, spec) : textQuery;
+        Search.Query scoring = applyFunction && _extras?.Function is { } spec ? Wrap(textQuery, spec) : textQuery;
         if (_filters.Length == 0 && (_extras is null || _extras.FilterQueries.Length == 0))
         {
             return scoring;
@@ -223,7 +223,7 @@ public sealed partial class SearchQuery<T>
             }
 
             KnnQuery filtered = knn with { Filter = selected.Count == 1 ? selected[0].Query : new BooleanQuery(selected) };
-            return _extras?.Function is { } fn ? Wrap(filtered, fn) : filtered;
+            return applyFunction && _extras?.Function is { } fn ? Wrap(filtered, fn) : filtered;
         }
 
         var clauses = new List<BooleanClause>(_filters.Length + 1) { new(scoring, Occur.Must) };

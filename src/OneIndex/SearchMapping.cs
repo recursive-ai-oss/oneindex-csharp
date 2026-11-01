@@ -28,12 +28,14 @@ public sealed class MappedMember
     /// <param name="flatThreshold">The segment size below which a vector field is searched exactly.</param>
     /// <param name="quantization">The compressed copy of a vector field.</param>
     /// <param name="oversample">The oversample of a quantized vector field; 0 for the codec's default.</param>
+    /// <param name="from">The text member a vector field is embedded from automatically, or <see langword="null"/>.</param>
     public MappedMember(string name, FieldType type, bool multi, bool indexed, bool column, bool facet, bool fullText, bool isId, float boost, string? analyzer,
         int dimensions = 0, Vectors.VectorMetric metric = Vectors.VectorMetric.Cosine, int hnswM = FieldDefinition.DefaultHnswM, int efConstruction = FieldDefinition.DefaultEfConstruction, int flatThreshold = FieldDefinition.DefaultFlatThreshold,
-        Vectors.VectorQuantization quantization = Vectors.VectorQuantization.None, float oversample = 0)
+        Vectors.VectorQuantization quantization = Vectors.VectorQuantization.None, float oversample = 0, string? from = null)
     {
         Quantization = quantization;
         Oversample = oversample;
+        From = from;
         Dimensions = dimensions;
         Metric = metric;
         HnswM = hnswM;
@@ -80,6 +82,9 @@ public sealed class MappedMember
 
     /// <summary>The analyzer name of a full-text field, or <see langword="null"/>.</summary>
     public string? Analyzer { get; }
+
+    /// <summary>The text member a vector member is embedded from automatically, or null when the application supplies the vector.</summary>
+    public string? From { get; }
 
     /// <summary>The length of a vector field; 0 otherwise.</summary>
     public int Dimensions { get; }
@@ -155,6 +160,9 @@ public abstract class SearchMapping<T>
     /// <exception cref="InvalidOperationException">The type has no <see cref="SearchIdAttribute"/> member, or an analyzer is not registered.</exception>
     public Schema Schema => _schema ??= BuildSchema();
 
+    /// <summary>The text settings the type's class-level attributes declare. The generated mapping overrides this; the default is <see cref="TextSettings.Default"/>.</summary>
+    protected virtual TextSettings CreateSettings() => TextSettings.Default;
+
     /// <summary>Finds a member by property name.</summary>
     /// <param name="name">The property name.</param>
     /// <param name="member">The member when found.</param>
@@ -178,7 +186,7 @@ public abstract class SearchMapping<T>
 
     private Schema BuildSchema()
     {
-        var builder = new SchemaBuilder();
+        var builder = new SchemaBuilder { Settings = CreateSettings() };
         MappedMember? id = null;
         foreach (MappedMember m in _members)
         {
@@ -202,6 +210,16 @@ public abstract class SearchMapping<T>
             else
             {
                 builder.Add(m.ToDefinition());
+                if (m.From is not null)
+                {
+                    if (m.Type != FieldType.Vector || !_byName.TryGetValue(m.From, out MappedMember? source) || source.Type is not (FieldType.Text or FieldType.Keyword))
+                    {
+                        throw new InvalidOperationException($"Member '{m.Name}': [Vector(From = \"{m.From}\")] must name a text or keyword member of {typeof(T).Name}.");
+                    }
+
+                    // The cache key of the embedded text, kept in stored source beside the vector (docs/auto-embedding.md).
+                    builder.Add(new FieldDefinition(AutoEmbedding.KeyFieldName(m.Name), FieldType.Bytes));
+                }
             }
         }
 

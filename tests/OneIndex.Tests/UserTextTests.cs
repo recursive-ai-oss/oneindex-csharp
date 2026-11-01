@@ -90,16 +90,22 @@ public class UserTextTests
         Search.Query q = Compiler().Compile("Running");
         var shoulds = Assert.IsType<BooleanQuery>(q);
         Assert.Equal(Occur.Should, shoulds.Clauses[0].Occur);
-        Assert.Contains(shoulds.Clauses, c => c.Query is TermQuery { Field: "Title", Term: "running" });
-        Assert.Contains(shoulds.Clauses, c => c.Query is TermQuery { Field: "Body", Term: "run" });
+        Assert.Contains(shoulds.Clauses, c => c.Query is TypoTermQuery { Fields: ["Title"], Term: "running" });
+        Assert.Contains(shoulds.Clauses, c => c.Query is TypoTermQuery { Fields: ["Body"], Term: "run" });
     }
 
     [Fact]
     public void FieldsThatShareAnAnalyzerAreOneBm25fTerm()
     {
-        var q = Assert.IsType<MultiFieldTermQuery>(new UserTextCompiler(SearchMappings.Require<TwoStandardFields>().Schema).Compile("Word"));
+        var compiler = new UserTextCompiler(SearchMappings.Require<TwoStandardFields>().Schema);
+        // A finished short word has no typos and is not a beginning: the plain BM25F term. The word being typed is a typo-tolerant term.
+        var q = Assert.IsType<MultiFieldTermQuery>(compiler.Compile("Word "));
         Assert.Equal(["First", "Second"], q.Fields);
         Assert.Equal("word", q.Term);
+        var typing = Assert.IsType<TypoTermQuery>(compiler.Compile("Word"));
+        Assert.Equal(["First", "Second"], typing.Fields);
+        Assert.True(typing.Prefix);
+        Assert.Equal(0, typing.MaxTypos);
     }
 
     [Fact]

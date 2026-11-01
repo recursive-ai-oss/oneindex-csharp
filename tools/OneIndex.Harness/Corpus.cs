@@ -30,6 +30,12 @@ public enum RowKind
     /// <summary>Two edits.</summary>
     Fuzzy2,
 
+    /// <summary>One word with typo tolerance (default budgets).</summary>
+    Typo,
+
+    /// <summary>Full terms plus a partial last word with a typo in it, matched as a beginning.</summary>
+    TypoAsYouType,
+
     /// <summary>Terms with a numeric range and category filter.</summary>
     Filtered,
 
@@ -205,6 +211,21 @@ public static partial class QueryGenerator
                 var q = rng.Next(s.Length);
                 return new FuzzyQuery(s.Remove(q, 1), 2);
             }),
+            [RowKind.Typo] = Make(() =>
+            {
+                var w = LongTerm(6).ToCharArray();
+                var p = 1 + rng.Next(w.Length - 1); // not the first character: that would cost two typos
+                w[p] = Other(w[p]);
+                return new TypoQuery([], new string(w), false);
+            }),
+            [RowKind.TypoAsYouType] = Make(() =>
+            {
+                var req = PickTerms(1);
+                var w = LongTerm(7)[..6].ToCharArray();
+                var p = 1 + rng.Next(w.Length - 1);
+                w[p] = Other(w[p]);
+                return new TypoQuery(req, new string(w), true);
+            }),
             [RowKind.Filtered] = Make(() => new FilteredQuery(PickTerms(2), median / 2, median * 2, topCategories.OrderBy(_ => rng.Next()).Take(3).ToArray())),
             [RowKind.Facets] = Make(() => new FacetQuery(PickTerms(2))),
             [RowKind.Stats] = Make(() => new StatsQuery(PickTerms(2))),
@@ -238,6 +259,7 @@ public static partial class QueryGenerator
                     case PhraseQuery p: Strings(w, "terms", p.Terms); break;
                     case PrefixQuery px: Strings(w, "required", px.Required); w.WriteString("prefix", px.Prefix); break;
                     case FuzzyQuery f: w.WriteString("term", f.Term); w.WriteNumber("edits", f.MaxEdits); break;
+                    case TypoQuery ty: Strings(w, "required", ty.Required); w.WriteString("word", ty.Word); w.WriteBoolean("prefix", ty.Prefix); break;
                     case FilteredQuery fq: Strings(w, "terms", fq.Terms); w.WriteNumber("min", fq.MinLength); w.WriteNumber("max", fq.MaxLength); Strings(w, "categories", fq.Categories); break;
                     case FacetQuery fc: Strings(w, "terms", fc.Terms); break;
                     case StatsQuery sq: Strings(w, "terms", sq.Terms); break;

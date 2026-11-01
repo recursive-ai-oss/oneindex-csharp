@@ -34,9 +34,18 @@ internal sealed class FuzzMapping : SearchMapping<FuzzDocument>
             new MappedMember("Tag", FieldType.Keyword, multi: false, indexed: true, column: false, facet: false, fullText: false, isId: false, boost: 1f, analyzer: null),
             new MappedMember("Number", FieldType.Integral, multi: false, indexed: true, column: true, facet: false, fullText: false, isId: false, boost: 1f, analyzer: null),
             new MappedMember("Place", FieldType.GeoPoint, multi: false, indexed: true, column: true, facet: false, fullText: false, isId: false, boost: 1f, analyzer: null),
+            new MappedMember("Vec", FieldType.Vector, multi: false, indexed: true, column: false, facet: false, fullText: false, isId: false, boost: 1f, analyzer: null, dimensions: 3),
         ])
     {
     }
+
+    // Typo tolerance with low thresholds, a listed word, synonyms of both kinds and stop words, so that the settings paths are fuzzed too.
+    protected override TextSettings CreateSettings() => new()
+    {
+        Typo = new TypoSettings { MinWordSizeForOneTypo = 3, MinWordSizeForTwoTypos = 6, DisableOnWords = ["cat"], DisableOnFields = ["Title"] },
+        Synonyms = [new SynonymRule(["dog", "cat"], []), new SynonymRule(["acme corp"], ["overdue", "state of the art"])],
+        StopWords = ["the", "of"],
+    };
 
     public override string? GetId(FuzzDocument value) => value.Id;
 
@@ -101,7 +110,7 @@ internal static class UserTextTarget
 
     public static void WriteSeeds(string directory)
     {
-        string[] seeds = ["overdue \"acme corp\" -draft", "cat OR dog", "\"unterminated", "-", "state-of-the-art", "", "\ud83d\ude00 \ud800 x"];
+        string[] seeds = ["overdue \"acme corp\" -draft", "cat OR dog", "\"unterminated", "-", "state-of-the-art", "", "\ud83d\ude00 \ud800 x", "acmee cor", "overdu runnr", "the of", "acme corp state of the a"];
         for (int i = 0; i < seeds.Length; i++)
         {
             byte[] bytes = new byte[seeds[i].Length * 2];

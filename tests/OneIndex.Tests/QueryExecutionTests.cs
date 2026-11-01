@@ -133,7 +133,7 @@ public sealed class QueryExecutionTests
         var (snap, searcher) = Build(docs, new QueryEngineOptions { MaxExpandedTerms = 5 });
         using (snap)
         {
-            TooManyTermsException e = Assert.Throws<TooManyTermsException>(() => searcher.Search(new PrefixQuery("body", "w"), 3));
+            TooManyTermsException e = Assert.Throws<TooManyTermsException>(() => searcher.Search(new PrefixQuery("body", "w") { ScoreTerms = true }, 3));
             Assert.Equal("body", e.Field);
             Assert.Equal(5, e.Limit);
         }
@@ -142,7 +142,7 @@ public sealed class QueryExecutionTests
         using (snap2)
         {
             // w0 is the most frequent term (documents 0 to 7 and 20): only it is kept.
-            TopDocs top = searcher2.Search(new PrefixQuery("body", "w"), 100, countExactly: true);
+            TopDocs top = searcher2.Search(new PrefixQuery("body", "w") { ScoreTerms = true }, 100, countExactly: true);
             Assert.Equal(9, top.TotalHits);
         }
     }

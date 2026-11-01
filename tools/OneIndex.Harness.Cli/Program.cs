@@ -5,7 +5,7 @@ using OneIndex.Harness;
 //
 //   beir     --engine lucene --data <beir dir> --sets scifact,arguana --out <dir> --work <dir> [--threads N]
 //   ndcg     --qrels <test.tsv> <run files...>
-//   driver   --engine lucene --corpus <abstracts.jsonl> --docs N --work <dir> --out <result.json> [--seed 1] [--queries 200] [--reps 3] [--threads 1] [--page-cache text]
+//   driver   --engine lucene --corpus <abstracts.jsonl> --docs N --work <dir> --out <result.json> [--seed 1] [--queries 200] [--reps 3] [--threads 1] [--page-cache text] [--rows Terms1,Prefix]
 //   queries  --corpus <abstracts.jsonl> --docs N --out <queries.json> [--seed 1] [--queries 200]
 if (args.Length == 0)
 {
@@ -148,7 +148,83 @@ switch (args[0])
     case "driver":
         return BenchDriver.Run(new DriverOptions(
             Req("engine"), Req("corpus"), Int("docs", 50_000), Req("work"), Req("out"), Int("seed", 1), Int("queries", 200),
-            Int("reps", 3), Int("threads", 1), opts.GetValueOrDefault("page-cache", "warm: the index was written by this process")));
+            Int("reps", 3), Int("threads", 1), opts.GetValueOrDefault("page-cache", "warm: the index was written by this process"), opts.GetValueOrDefault("rows")));
+
+    case "count-diff":
+    {
+        // Finds the single terms of the benchmark's query sets on which the engines count different matches, and the documents involved.
+        var docs = WikiCorpus.Read(Req("corpus"), Int("docs", 50_000));
+        var sets = QueryGenerator.Generate(docs, Int("queries", 200), Int("seed", 1));
+        var terms = sets.Values.SelectMany(v => v).OfType<StatsQuery>().SelectMany(q => q.Terms).Distinct().ToArray();
+        using var a = Engines.Create("oneindex");
+        using var b = Engines.Create("lucene");
+        foreach (var (e, n) in new[] { (a, "o"), (b, "l") })
+        {
+            e.Create(new EngineSettings(Path.Combine(Req("work"), n), AnalysisKind.Standard, IndexProfile.Bench));
+            foreach (var d in docs) { e.Add(d); }
+            e.Commit();
+            e.OpenSearcher();
+        }
+
+        int bad = 0;
+        foreach (var t in terms)
+        {
+            var ra = a.Search(new TermsQuery([t]), docs.Count);
+            var rb = b.Search(new TermsQuery([t]), docs.Count);
+            var ia = ra.Hits.Select(h => h.Id).ToHashSet();
+            var ib = rb.Hits.Select(h => h.Id).ToHashSet();
+            if (ia.SetEquals(ib)) { continue; }
+            bad++;
+            Console.WriteLine($"term '{t}': oneindex {ia.Count} lucene {ib.Count}");
+            foreach (var id in ia.Except(ib).Concat(ib.Except(ia)).Take(5))
+            {
+                var doc = docs.First(x => x.Id == id);
+                int at = doc.Text.IndexOf(t, StringComparison.OrdinalIgnoreCase);
+                Console.WriteLine($"  {(ia.Contains(id) ? "only oneindex" : "only lucene")} {id} len={doc.Text.Length}: ...{doc.Text.Substring(Math.Max(0, at - 30), Math.Min(80, doc.Text.Length - Math.Max(0, at - 30)))}...");
+            }
+        }
+
+        foreach (var id in new[] { "4749992", "4959550" })
+        {
+            var same = docs.Where(x => x.Id == id).ToList();
+            Console.WriteLine($"id {id}: {same.Count} corpus docs; first at index {docs.FindIndex(x => x.Id == id)}");
+            foreach (var d in same.Take(1))
+            {
+                var words = System.Text.RegularExpressions.Regex.Split(d.Text.ToLowerInvariant(), "[^a-z0-9]+").Where(x => x.Length > 0).Distinct().Take(400).ToList();
+                int missing = 0;
+                foreach (var w in words)
+                {
+                    if (!a.Search(new TermsQuery([w]), docs.Count).Hits.Any(h => h.Id == id) && b.Search(new TermsQuery([w]), docs.Count).Hits.Any(h => h.Id == id)) { missing++; }
+                }
+
+                Console.WriteLine($"  terms lucene finds but oneindex does not: {missing} of {words.Count}");
+            }
+        }
+
+        Console.WriteLine($"{terms.Length} terms, {bad} differ");
+        return 0;
+    }
+
+    case "commit-profile":
+    {
+        // Runs the driver's commit sequence with marker probes (a stat of a missing file) between steps, so a system-call trace
+        // can be cut into the bulk commit and each small commit and the calls counted per commit.
+        var docs = WikiCorpus.Read(Req("corpus"), Int("docs", 30_000));
+        using var e = Engines.Create(Req("engine"));
+        e.Create(new EngineSettings(Path.Combine(Req("work"), "profile"), AnalysisKind.Standard, IndexProfile.Bench));
+        int bulk = docs.Count - 1000;
+        for (int i = 0; i < bulk; i++) { e.Add(docs[i]); }
+        e.Commit();
+        for (int c = 0; c < 5; c++)
+        {
+            for (int i = 0; i < 200; i++) { e.Add(docs[bulk + (c * 200) + i]); }
+            _ = File.Exists("/MARKER_BEFORE_COMMIT_" + c);
+            e.Commit();
+            _ = File.Exists("/MARKER_AFTER_COMMIT_" + c);
+        }
+
+        return 0;
+    }
 
     case "queries":
     {

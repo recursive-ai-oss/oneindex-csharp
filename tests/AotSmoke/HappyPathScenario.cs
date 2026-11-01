@@ -1,6 +1,9 @@
 namespace OneIndex.AotSmoke;
 
 /// <summary>The sample document of the getting-started guide, mapped by the source generator.</summary>
+[TypoTolerance(MinWordSizeForOneTypo = 4, DisableOnWords = ["acme"])]
+[Synonyms("overdue", "late")]
+[StopWords("the", "a")]
 public class Invoice
 {
     [SearchId]
@@ -39,6 +42,7 @@ internal static class HappyPathScenario
             .ToList();
         Require(hits.Count == 1 && hits[0].Id == "inv-1" && hits[0].Document.Title == "Overdue notice" && hits[0].Score > 0, "search");
         Require(hits[0].Highlights["Body"][0].Marked("[", "]") == "Payment from [Acme Corp] is [overdue].", "highlight");
+        Require(index.Search("noticee").Count() == 1 && index.Search("late").Count() == 3 && index.Search("overd").Count() == 3, "typo tolerance, synonyms and as-you-type");
         Require(index.Search("\"unterminated").Count() == 0 && index.Search(null).Count() == 3, "forgiving text");
 
         SearchResults<Invoice> faceted = index.Search().Facets(x => x.Tags, sortBy: Aggregations.FacetSort.Count).Distinct(x => x.Tags).Aggregate(a => a

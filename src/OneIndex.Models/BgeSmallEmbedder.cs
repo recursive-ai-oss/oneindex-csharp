@@ -53,6 +53,19 @@ public sealed class BgeSmallEmbedder : IEmbedder, IDisposable
         return new BgeSmallEmbedder(BertEmbedder.Open(model, vocabulary, Options(PackedVariant)));
     }
 
+    /// <summary>
+    /// Loads the packed embedder and makes it the one new indexes use for <c>[Vector(From = ...)]</c> members and hybrid search
+    /// (<see cref="SearchEmbedders.Default"/>). Call it once at startup, before opening indexes; there is no discovery, so referencing this package alone does nothing.
+    /// </summary>
+    /// <returns>The embedder, which stays loaded for the life of the process (dispose it only after every index using it is closed).</returns>
+    /// <exception cref="FileNotFoundException">The assembly was built without the packed weights.</exception>
+    public static BgeSmallEmbedder UseAsDefault()
+    {
+        BgeSmallEmbedder embedder = Load();
+        SearchEmbedders.Default = embedder;
+        return embedder;
+    }
+
     /// <summary>Opens the embedder from model files, for example a different quantization of the same model.</summary>
     /// <param name="modelPath">An ONNX or OneModel file of bge-small-en-v1.5.</param>
     /// <param name="vocabularyPath">The model's <c>vocab.txt</c>.</param>
