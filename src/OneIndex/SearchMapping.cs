@@ -125,6 +125,11 @@ public sealed class MappedMember
             return new FieldDefinition(Name, FieldType.Vector) { Dimensions = Dimensions, Metric = Metric, HnswM = HnswM, EfConstruction = EfConstruction, FlatThreshold = FlatThreshold, Quantization = Quantization, Oversample = Oversample };
         }
 
+        if (Type == FieldType.Sparse)
+        {
+            return new FieldDefinition(Name, FieldType.Sparse);
+        }
+
         return new FieldDefinition(Name, Type) { Multi = Multi, Indexed = Indexed, Column = Column, Facet = Facet };
     }
 }
@@ -210,7 +215,16 @@ public abstract class SearchMapping<T>
             else
             {
                 builder.Add(m.ToDefinition());
-                if (m.From is not null)
+                if (m.From is not null && m.Type == FieldType.Sparse)
+                {
+                    if (!_byName.TryGetValue(m.From, out MappedMember? sparseSource) || sparseSource.Type is not (FieldType.Text or FieldType.Keyword))
+                    {
+                        throw new InvalidOperationException($"Member '{m.Name}': [Sparse(From = \"{m.From}\")] must name a text or keyword member of {typeof(T).Name}.");
+                    }
+
+                    builder.Add(new FieldDefinition(AutoSparse.KeyFieldName(m.Name), FieldType.Bytes));
+                }
+                else if (m.From is not null)
                 {
                     if (m.Type != FieldType.Vector || !_byName.TryGetValue(m.From, out MappedMember? source) || source.Type is not (FieldType.Text or FieldType.Keyword))
                     {

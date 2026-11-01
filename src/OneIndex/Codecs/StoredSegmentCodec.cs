@@ -364,6 +364,12 @@ public sealed class SegmentStoredFields : IStoredFieldsReader, IDisposable
             {
                 throw new CorruptIndexException(name, "a field name is not valid UTF-8");
             }
+
+            // A document cannot hold a field with no name, so a table that lists one is damaged.
+            if (names[i].Length == 0)
+            {
+                throw new CorruptIndexException(name, "a field name is empty");
+            }
         }
 
         if ((long)blocks * EntrySize != cursor.Remaining || blocks == 0 || blocks > docs)

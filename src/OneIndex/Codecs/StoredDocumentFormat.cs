@@ -69,6 +69,16 @@ internal static class StoredDocumentFormat
                     }
 
                     break;
+                case FieldValueKind.Sparse:
+                    SparseVector sparse = f.Value.AsSparse();
+                    destination.WriteVarUInt((uint)sparse.Count);
+                    for (int k = 0; k < sparse.Count; k++)
+                    {
+                        WriteBytes(destination, Encoding.UTF8.GetBytes(sparse.Tokens[k]));
+                        destination.WriteUInt32(BitConverter.SingleToUInt32Bits(sparse.Weights[k]));
+                    }
+
+                    break;
                 case FieldValueKind.Json:
                     WriteBytes(destination, Encoding.UTF8.GetBytes(f.Value.AsJson().GetRawText()));
                     break;
@@ -135,6 +145,28 @@ internal static class StoredDocumentFormat
                         }
 
                         value = FieldValue.FromVector(vector);
+                        break;
+                    }
+
+                case FieldValueKind.Sparse:
+                    {
+                        int n = cursor.Count(SparseVector.MaxEntries, "sparse entries");
+                        var entries = new List<KeyValuePair<string, float>>(n);
+                        for (int k = 0; k < n; k++)
+                        {
+                            string token = cursor.Text(limits);
+                            entries.Add(new(token, BitConverter.UInt32BitsToSingle(cursor.UInt32())));
+                        }
+
+                        try
+                        {
+                            value = FieldValue.FromSparse(new SparseVector(entries));
+                        }
+                        catch (ArgumentException e)
+                        {
+                            throw new CorruptIndexException(fileName, "a stored sparse vector is invalid", e);
+                        }
+
                         break;
                     }
 
@@ -352,6 +384,18 @@ internal static class StoredDocumentFormat
                         }
 
                         Position += dims * 4;
+                        break;
+                    }
+
+                case FieldValueKind.Sparse:
+                    {
+                        int n = Count(SparseVector.MaxEntries, "sparse entries");
+                        for (int k = 0; k < n; k++)
+                        {
+                            _ = Bytes();
+                            _ = UInt32();
+                        }
+
                         break;
                     }
 

@@ -38,8 +38,30 @@ public static class SearchIndex
         where T : class
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
-        return new SearchIndex<T>(new FileSystemStorage(path), SearchMappings.Require<T>(), embedder);
+        return new SearchIndex<T>(new FileSystemStorage(path), SearchMappings.Require<T>(), embedder, SearchSparseEncoders.Default);
     }
+
+    /// <summary>Opens an index in a directory with explicit embedder and sparse encoder, for <c>[Vector(From = ...)]</c> and <c>[Sparse(From = ...)]</c> members.</summary>
+    /// <typeparam name="T">The attributed document type.</typeparam>
+    /// <param name="path">The directory, created if missing.</param>
+    /// <param name="embedder">The embedder, or <see langword="null"/> for none.</param>
+    /// <param name="sparseEncoder">The sparse encoder, or <see langword="null"/> for none: sparse vectors are then supplied by the application.</param>
+    /// <returns>The index.</returns>
+    public static SearchIndex<T> Open<T>(string path, IEmbedder? embedder, ISparseEncoder? sparseEncoder)
+        where T : class
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        return new SearchIndex<T>(new FileSystemStorage(path), SearchMappings.Require<T>(), embedder, sparseEncoder);
+    }
+
+    /// <summary>Creates an in-memory index with explicit embedder and sparse encoder (see <see cref="Open{T}(string, IEmbedder, ISparseEncoder)"/>).</summary>
+    /// <typeparam name="T">The attributed document type.</typeparam>
+    /// <param name="embedder">The embedder, or <see langword="null"/> for none.</param>
+    /// <param name="sparseEncoder">The sparse encoder, or <see langword="null"/> for none.</param>
+    /// <returns>The index.</returns>
+    public static SearchIndex<T> InMemory<T>(IEmbedder? embedder, ISparseEncoder? sparseEncoder)
+        where T : class
+        => new(new MemoryStorage(), SearchMappings.Require<T>(), embedder, sparseEncoder);
 
     /// <summary>Creates an index that lives in memory only and disappears when disposed.</summary>
     /// <typeparam name="T">The attributed document type.</typeparam>
@@ -47,7 +69,7 @@ public static class SearchIndex
     /// <exception cref="InvalidOperationException">The type has no generated mapping or no <see cref="SearchIdAttribute"/> member.</exception>
     public static SearchIndex<T> InMemory<T>()
         where T : class
-        => new(new MemoryStorage(), SearchMappings.Require<T>(), SearchEmbedders.Default);
+        => new(new MemoryStorage(), SearchMappings.Require<T>(), SearchEmbedders.Default, SearchSparseEncoders.Default);
 
     /// <summary>Creates an in-memory index with an explicit embedder (see <see cref="Open{T}(string, IEmbedder)"/>).</summary>
     /// <typeparam name="T">The attributed document type.</typeparam>
@@ -55,7 +77,7 @@ public static class SearchIndex
     /// <returns>The index.</returns>
     public static SearchIndex<T> InMemory<T>(IEmbedder? embedder)
         where T : class
-        => new(new MemoryStorage(), SearchMappings.Require<T>(), embedder);
+        => new(new MemoryStorage(), SearchMappings.Require<T>(), embedder, SearchSparseEncoders.Default);
 }
 
 /// <summary>
@@ -80,14 +102,20 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     private Generation? _current;
     private volatile bool _disposed;
     private readonly AutoEmbedding? _auto;
+    private readonly AutoSparse? _autoSparse;
 
-    internal SearchIndex(IStorage storage, SearchMapping<T> mapping, IEmbedder? embedder = null)
+    internal SearchIndex(IStorage storage, SearchMapping<T> mapping, IEmbedder? embedder = null, ISparseEncoder? sparseEncoder = null)
     {
         _storage = storage;
         _mapping = mapping;
-        if (embedder is not null && mapping.Members.Any(static m => m.From is not null))
+        if (embedder is not null && mapping.Members.Any(static m => m.From is not null && m.Type == FieldType.Vector))
         {
             _auto = new AutoEmbedding(embedder, mapping.Members);
+        }
+
+        if (sparseEncoder is not null && mapping.Members.Any(static m => m.From is not null && m.Type == FieldType.Sparse))
+        {
+            _autoSparse = new AutoSparse(sparseEncoder, mapping.Members);
         }
 
         var options = new IndexWriterOptions();
@@ -124,6 +152,11 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
 
     internal AutoEmbedding? Auto => _auto;
 
+    internal AutoSparse? AutoSparse => _autoSparse;
+
+    /// <summary>The sparse encoder that fills <c>[Sparse(From = ...)]</c> members and encodes search text, or <see langword="null"/> when the index has none.</summary>
+    public ISparseEncoder? SparseEncoder => _autoSparse?.Encoder;
+
     /// <summary>The schema of the index, which the strict query syntax, filter strings and query JSON are checked against.</summary>
     public Schema Schema => _mapping.Schema;
 
@@ -144,6 +177,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(document);
         Document doc = _mapping.ToDocument(document);
         _auto?.Fill([doc], _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken);
+        _autoSparse?.Fill([doc], _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken);
         Write(document, doc, cancellationToken);
     }
 
@@ -200,6 +234,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         }
 
         _auto?.Fill(docs, _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken);
+        _autoSparse?.Fill(docs, _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken);
         for (int i = 0; i < docs.Count; i++)
         {
             Write(batch[i], docs[i], cancellationToken);
@@ -219,6 +254,11 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
             await _auto.FillAsync([doc], _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken).ConfigureAwait(false);
         }
 
+        if (_autoSparse is not null)
+        {
+            await _autoSparse.FillAsync([doc], _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken).ConfigureAwait(false);
+        }
+
         Write(document, doc, cancellationToken);
     }
 
@@ -232,7 +272,13 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     /// <exception cref="InvalidOperationException">The index has no embedder.</exception>
     public int ReembedStale(CancellationToken cancellationToken = default)
     {
-        AutoEmbedding auto = _auto ?? throw new InvalidOperationException("The index has no embedder, so there is nothing to embed with.");
+        AutoEmbedding? auto = _auto;
+        AutoSparse? sparse = _autoSparse;
+        if (auto is null && sparse is null)
+        {
+            throw new InvalidOperationException("The index has no embedder or sparse encoder, so there is nothing to embed with.");
+        }
+
         Generation? generation = Acquire();
         if (generation is null)
         {
@@ -253,19 +299,19 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
                     }
 
                     Document? stored = Source(generation, leaf, local, out _);
-                    if (stored is not null && auto.IsStale(stored))
+                    if (stored is not null && ((auto?.IsStale(stored) ?? false) || (sparse?.IsStale(stored) ?? false)))
                     {
                         batch.Add(stored);
                         if (batch.Count == UpsertBatch)
                         {
-                            total += Reembed(auto, batch, cancellationToken);
+                            total += Reembed(auto, sparse, batch, cancellationToken);
                             batch.Clear();
                         }
                     }
                 }
             }
 
-            total += Reembed(auto, batch, cancellationToken);
+            total += Reembed(auto, sparse, batch, cancellationToken);
         }
         finally
         {
@@ -275,7 +321,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         return total;
     }
 
-    private int Reembed(AutoEmbedding auto, List<Document> batch, CancellationToken cancellationToken)
+    private int Reembed(AutoEmbedding? auto, AutoSparse? sparse, List<Document> batch, CancellationToken cancellationToken)
     {
         if (batch.Count == 0)
         {
@@ -295,7 +341,8 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
             copies.Add(copy);
         }
 
-        auto.Fill(copies, _mapping.Schema.IdField!, static _ => null, replace: true, cancellationToken);
+        auto?.Fill(copies, _mapping.Schema.IdField!, static _ => null, replace: true, cancellationToken);
+        sparse?.Fill(copies, _mapping.Schema.IdField!, static _ => null, replace: true, cancellationToken);
         foreach (Document c in copies)
         {
             Write(null, c, cancellationToken);
@@ -519,6 +566,11 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
             Search.Query scored = request.Query is null ? textArm : new BooleanQuery([new BooleanClause(textArm, Occur.Must), new BooleanClause(request.Query, Occur.Must)]);
             // The filter goes to both lists, so it is a filter of the search and not a clause of the text query.
             search = SearchBy(scored).HybridCore(new HybridSpec(hybrid.SemanticRatio, hybrid.Fusion, hybrid.RankConstant, hybrid.Window, hybrid.Field, null, hybrid.Text));
+            if (hybrid.Sparse)
+            {
+                search = search.Sparse(hybrid.SparseWeight);
+            }
+
             if (request.Filter is { } requestFilter)
             {
                 search = search.WhereQuery(requestFilter);

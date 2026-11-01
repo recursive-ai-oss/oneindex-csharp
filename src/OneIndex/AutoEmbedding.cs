@@ -27,7 +27,7 @@ internal sealed class AutoEmbedding
         var slots = new List<Slot>();
         foreach (MappedMember m in members)
         {
-            if (m.From is null)
+            if (m.From is null || m.Type != FieldType.Vector)
             {
                 continue;
             }
