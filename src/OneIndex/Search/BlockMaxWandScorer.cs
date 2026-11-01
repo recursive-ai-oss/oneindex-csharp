@@ -96,6 +96,11 @@ public sealed class BlockMaxWandScorer : Scorer
         _docs = new int[_clauses.Length];
         Array.Fill(_docs, -1); // so that Advance before the first NextDoc positions every clause
         _order = new int[_clauses.Length];
+        for (int i = 0; i < _order.Length; i++)
+        {
+            _order[i] = i;
+        }
+
         _maxScores = new float[_clauses.Length];
         for (int i = 0; i < _clauses.Length; i++)
         {
@@ -106,14 +111,6 @@ public sealed class BlockMaxWandScorer : Scorer
 
     /// <summary>Whether block bounds are used to skip runs of documents. Default <see langword="true"/>; false leaves only the whole-list bounds of plain WAND.</summary>
     public bool UseBlockMax { get; init; } = true;
-
-    /// <summary>
-    /// When the clauses' postings together hold at most this many documents per clause, every document is returned without
-    /// pivoting or block bounds: a WAND round orders and bounds every clause, which costs more than scoring a few hundred postings
-    /// of each (a fuzzy expansion has dozens of short lists). The documents and scores returned are the same either way.
-    /// Default 512; 0 always prunes.
-    /// </summary>
-    public long ExhaustiveCostPerClause { get; init; } = 512;
 
     /// <summary>How many documents the iterator has returned, that is, how many a collector scored.</summary>
     public long DocumentsReturned { get; private set; }
@@ -259,46 +256,29 @@ public sealed class BlockMaxWandScorer : Scorer
 
     private int Find()
     {
-        if (_cost <= ExhaustiveCostPerClause * _clauses.Length)
-        {
-            // A plain disjunction: the smallest current document of any clause.
-            int smallest = NoMoreDocs;
-            for (int i = 0; i < _docs.Length; i++)
-            {
-                if (_docs[i] < smallest)
-                {
-                    smallest = _docs[i];
-                }
-            }
-
-            if (smallest == NoMoreDocs)
-            {
-                return Finish();
-            }
-
-            _current = smallest;
-            DocumentsReturned++;
-            return smallest;
-        }
-
         int n;
         while (true)
         {
-            n = 0;
-            for (int i = 0; i < _clauses.Length; i++)
+            // Insertion sort of the previous round's order by current document: only the clauses that moved are out of place, so a
+            // round costs about the number of clauses, not its square. Finished clauses sort last.
+            for (int k = 1; k < _order.Length; k++)
             {
-                if (_docs[i] != NoMoreDocs)
+                int c = _order[k];
+                int doc = _docs[c];
+                int j = k;
+                while (j > 0 && _docs[_order[j - 1]] > doc)
                 {
-                    // Insertion sort by current document: the order changes little between rounds.
-                    int k = n++;
-                    while (k > 0 && _docs[_order[k - 1]] > _docs[i])
-                    {
-                        _order[k] = _order[k - 1];
-                        k--;
-                    }
-
-                    _order[k] = i;
+                    _order[j] = _order[j - 1];
+                    j--;
                 }
+
+                _order[j] = c;
+            }
+
+            n = _order.Length;
+            while (n > 0 && _docs[_order[n - 1]] == NoMoreDocs)
+            {
+                n--;
             }
 
             if (n == 0)
