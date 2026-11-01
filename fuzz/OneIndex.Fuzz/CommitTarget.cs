@@ -80,17 +80,12 @@ internal static class CommitTarget
             return;
         }
 
-        byte[] again = schema.Serialize();
-        if (again.AsSpan().SequenceEqual(data))
+        // Sections this build does not know are dropped when a schema is written again, so the first write need not equal the input;
+        // what it writes must read back to a schema that writes the same bytes.
+        byte[] written = schema.Serialize();
+        if (!Schema.TryDeserialize(written, Limits, out Schema? again, out _) || !again.Serialize().AsSpan().SequenceEqual(written))
         {
-            return;
-        }
-
-        // Sections this build does not know are skipped on read and so are not written back: the rewritten schema must then be a
-        // fixed point (it parses and writes the same bytes), which is the form the commit file carries from then on.
-        if (!Schema.TryDeserialize(again, Limits, out Schema? second, out _) || !second.Serialize().AsSpan().SequenceEqual(again))
-        {
-            throw new InvalidOperationException("a schema that parsed did not serialize back to a stable form");
+            throw new InvalidOperationException("a schema that parsed did not serialize to bytes that read back to the same schema");
         }
     }
 

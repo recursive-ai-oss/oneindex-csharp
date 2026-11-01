@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 using OneIndex.Codecs;
 using OneIndex.Index;
@@ -124,6 +125,119 @@ public sealed class QueryEngine : IWeightFactory
             return TermWeight.Create(context, options.Bm25, fields, query.Term, query.Boost);
         }
 
+        public override Weight VisitTypoTerm(TypoTermQuery query)
+        {
+            CheckBoost(query);
+            if (query.Fields.Count == 0)
+            {
+                throw new QueryException("A typo-tolerant term query needs at least one field.");
+            }
+
+            if (query.MaxTypos is < 0 or > 2)
+            {
+                throw new QueryException($"The typos of a term query are 0 to 2, got {query.MaxTypos}.");
+            }
+
+            var defs = new List<FieldDefinition>();
+            foreach (string name in query.Fields)
+            {
+                FieldDefinition f = RequireTextField(name);
+                if (defs.Contains(f))
+                {
+                    throw new QueryException($"Field '{name}' is listed twice in a typo-tolerant term query.");
+                }
+
+                defs.Add(f);
+            }
+
+            // Gather the candidate words per field and segment, then cost each once with the reference computation (the automata only
+            // narrow the scan). The automata are built once per budget and serve every segment.
+            var set = new ExpansionSet(defs.Count);
+            var plans = new TypoCandidates.Plan?[3];
+            for (int f = 0; f < defs.Count; f++)
+            {
+                int budget = query.ExactFields.Contains(defs[f].Name) ? 0 : query.MaxTypos;
+                TypoCandidates.Plan plan = plans[budget] ??= new TypoCandidates.Plan(query.Term, budget, query.Prefix);
+                int scanned = 0;
+                int field = f;
+                foreach (LeafContext leaf in context.Leaves)
+                {
+                    if (leaf.Reader.GetTextField(defs[f].Name) is not { } reader)
+                    {
+                        continue;
+                    }
+
+                    int ordinal = leaf.Ordinal;
+                    plan.Collect(reader, (ReadOnlySpan<byte> term, in TermInfo info) =>
+                    {
+                        if (++scanned <= ScanCeiling)
+                        {
+                            set.Add(term, ordinal, field, info);
+                        }
+                    });
+                }
+            }
+
+            int[] word = TypoRanking.CodePoints(query.Term);
+            var accepted = new List<(ExpandedTerm Term, long DocFreq)>();
+            Span<int> decoded = stackalloc int[256]; // a dictionary term decoded to code points; longer words use the heap below
+            for (int c = 0; c < set.Terms.Count; c++)
+            {
+                int[]? heap = null;
+                ReadOnlySpan<byte> bytes = set.Terms[c];
+                Span<int> cps = bytes.Length <= decoded.Length ? decoded : (heap = new int[bytes.Length]);
+                int n = 0;
+                for (int pos = 0; pos < bytes.Length;)
+                {
+                    _ = Rune.DecodeFromUtf8(bytes[pos..], out Rune r, out int used);
+                    cps[n++] = r.Value;
+                    pos += used;
+                }
+
+                if (TypoRanking.Match(word, cps[..n], query.MaxTypos, query.Prefix) is not { } match)
+                {
+                    continue;
+                }
+
+                // A field that allows no typos only takes matches without them.
+                uint mask = 0;
+                long total = 0;
+                for (int f = 0; f < defs.Count; f++)
+                {
+                    long df = set.DocFreq[c][f];
+                    if (df > 0)
+                    {
+                        total += df;
+                        if (match.Typos == 0 || !query.ExactFields.Contains(defs[f].Name))
+                        {
+                            mask |= 1u << f;
+                        }
+                    }
+                }
+
+                if (mask != 0)
+                {
+                    accepted.Add((new ExpandedTerm { Candidate = c, Fields = mask, Boost = query.Boost * match.Factor, Match = match }, total));
+                }
+            }
+
+            // Past the limit keep the closest and then the most frequent words; unlike the other expansions this never throws, because it
+            // serves user text, which must not fail on a short word.
+            if (accepted.Count > options.MaxExpandedTerms)
+            {
+                accepted = [.. accepted.OrderBy(static a => a.Term.Match!.Value.Typos).ThenBy(static a => a.Term.Match!.Value.IsPrefixExtension).ThenByDescending(static a => a.DocFreq)
+                    .ThenBy(a => set.Terms[a.Term.Candidate], ByteArrayOrder.Instance).Take(options.MaxExpandedTerms)];
+            }
+
+            if (accepted.Count == 0)
+            {
+                return EmptyWeight.Instance;
+            }
+
+            accepted.Sort((x, y) => ByteArrayOrder.Instance.Compare(set.Terms[x.Term.Candidate], set.Terms[y.Term.Candidate]));
+            return new ExpandedTermsWeight(context, options.Bm25, defs, set, [.. accepted.Select(static a => a.Term)], 1f, query.Term);
+        }
+
         public override Weight VisitPhrase(PhraseQuery query)
         {
             CheckBoost(query);
@@ -191,6 +305,11 @@ public sealed class QueryEngine : IWeightFactory
             CheckBoost(query);
             FieldDefinition def = RequireTextField(query.Field);
             byte[] prefix = Encoding.UTF8.GetBytes(query.Prefix);
+            if (!query.ScoreTerms)
+            {
+                return new ConstantWeight($"prefix '{query.Prefix}' in field {def.Name}", query.Boost, leaf => TermUnion.Documents(leaf, def.Name, reader => reader.GetTerms(prefix)));
+            }
+
             return Expand(def, query.Boost, leaf => leaf.GetTerms(prefix));
         }
 
@@ -206,6 +325,16 @@ public sealed class QueryEngine : IWeightFactory
             if (query.PrefixLength < 0)
             {
                 throw new QueryException($"The prefix length of a fuzzy query must not be negative, got {query.PrefixLength}.");
+            }
+
+            if (query.MaxExpansions < 1)
+            {
+                throw new QueryException($"The expansions of a fuzzy query must be at least 1, got {query.MaxExpansions}.");
+            }
+
+            if (query.MaxExpansions < 1)
+            {
+                throw new QueryException($"The expansions of a fuzzy query must be at least 1, got {query.MaxExpansions}.");
             }
 
             if (query.MaxEdits == 0)
@@ -229,7 +358,7 @@ public sealed class QueryEngine : IWeightFactory
             }
 
             byte[] prefix = Encoding.UTF8.GetBytes(query.Term[..split]);
-            return Expand(def, query.Boost, leaf => leaf.Intersect(new LevenshteinAutomaton(query.Term, query.MaxEdits, query.Transpositions), prefix));
+            return ExpandClosest(def, query.Boost, query.Term, query.MaxEdits, query.MaxExpansions, leaf => leaf.Intersect(new LevenshteinAutomaton(query.Term, query.MaxEdits, query.Transpositions), prefix));
         }
 
         public override Weight VisitRegex(RegexQuery query)
@@ -359,6 +488,75 @@ public sealed class QueryEngine : IWeightFactory
             return new BooleanWeight(children, 0, boost);
         }
 
+        // Keeps the terms closest to the word: fewest edits, then most documents, then term bytes. Never throws, however many terms match.
+        private Weight ExpandClosest(FieldDefinition def, float boost, string word, int maxEdits, int maxExpansions, Func<ITextFieldReader, ITermEnumerator> open)
+        {
+            var set = new ExpansionSet(1);
+            foreach (LeafContext leaf in context.Leaves)
+            {
+                if (leaf.Reader.GetTextField(def.Name) is not { } reader)
+                {
+                    continue;
+                }
+
+                using ITermEnumerator terms = open(reader);
+                while (terms.MoveNext())
+                {
+                    set.Add(terms.Term, leaf.Ordinal, 0, terms.Info);
+                }
+            }
+
+            if (set.Terms.Count == 0)
+            {
+                return EmptyWeight.Instance;
+            }
+
+            var ranked = new List<int>(set.Terms.Count);
+            for (int c = 0; c < set.Terms.Count; c++)
+            {
+                ranked.Add(c);
+            }
+
+            if (ranked.Count > maxExpansions)
+            {
+                // Only a query with more candidates than it keeps needs their distances.
+                var edits = new int[ranked.Count];
+                for (int c = 0; c < edits.Length; c++)
+                {
+                    edits[c] = Edits(word, set.Terms[c], maxEdits);
+                }
+
+                ranked.Sort((x, y) =>
+                {
+                    int c = edits[x].CompareTo(edits[y]);
+                    c = c != 0 ? c : set.DocFreq[y][0].CompareTo(set.DocFreq[x][0]);
+                    return c != 0 ? c : ByteArrayOrder.Instance.Compare(set.Terms[x], set.Terms[y]);
+                });
+                ranked.RemoveRange(maxExpansions, ranked.Count - maxExpansions);
+            }
+
+            ranked.Sort((x, y) => ByteArrayOrder.Instance.Compare(set.Terms[x], set.Terms[y]));
+            return new ExpandedTermsWeight(context, options.Bm25, [def], set, [.. ranked.Select(static c => new ExpandedTerm { Candidate = c, Fields = 1u, Boost = 1f })], boost, null);
+        }
+
+        private static int Edits(string word, ReadOnlySpan<byte> term, int maxEdits)
+        {
+            char[]? rented = null;
+            Span<char> chars = term.Length <= 256 ? stackalloc char[256] : (rented = ArrayPool<char>.Shared.Rent(term.Length)); // bounded: one term of the dictionary
+            try
+            {
+                int n = Encoding.UTF8.GetChars(term, chars);
+                return OneIndex.Suggest.EditDistance.OptimalStringAlignment(word, chars[..n], maxEdits);
+            }
+            finally
+            {
+                if (rented is not null)
+                {
+                    ArrayPool<char>.Shared.Return(rented);
+                }
+            }
+        }
+
         private FieldDefinition RequireTextField(string name)
         {
             if (!context.Schema.TryGetField(name, out FieldDefinition? def))
@@ -383,6 +581,27 @@ public sealed class QueryEngine : IWeightFactory
             }
         }
     }
+}
+
+/// <summary>Equality of term byte arrays, also looked up by span. Hashes are for in-process tables only and never persisted or ordered by.</summary>
+internal sealed class ByteArrayEquality : IEqualityComparer<byte[]>, IAlternateEqualityComparer<ReadOnlySpan<byte>, byte[]>
+{
+    public static ByteArrayEquality Instance { get; } = new();
+
+    public bool Equals(byte[]? x, byte[]? y) => x.AsSpan().SequenceEqual(y);
+
+    public int GetHashCode(byte[] obj) => GetHashCode((ReadOnlySpan<byte>)obj);
+
+    public bool Equals(ReadOnlySpan<byte> alternate, byte[] other) => alternate.SequenceEqual(other);
+
+    public int GetHashCode(ReadOnlySpan<byte> alternate)
+    {
+        var hash = default(HashCode);
+        hash.AddBytes(alternate);
+        return hash.ToHashCode();
+    }
+
+    public byte[] Create(ReadOnlySpan<byte> alternate) => alternate.ToArray();
 }
 
 internal sealed class ByteArrayOrder : IComparer<byte[]>

@@ -156,15 +156,17 @@ public sealed class Schema : IEquatable<Schema>
     private const int SectionDynamicFields = 1;
     private const int SectionVectorSettings = 3;
 
+    private const int TextSettingsSection = 2;
     private static readonly byte[] MagicBytes = "OIXS"u8.ToArray();
     private readonly string[] _jsonFields;
     private readonly Dictionary<string, int> _ids;
     private readonly byte[] _serialized;
 
-    internal Schema(IReadOnlyList<FieldDefinition> fields, string? idField, IndexLimits limits)
+    internal Schema(IReadOnlyList<FieldDefinition> fields, string? idField, IndexLimits limits, TextSettings? settings = null)
     {
         Fields = [.. fields];
         IdField = idField;
+        Settings = settings ?? TextSettings.Default;
         _ids = new Dictionary<string, int>(fields.Count, StringComparer.Ordinal);
         for (int i = 0; i < fields.Count; i++)
         {
@@ -172,11 +174,23 @@ public sealed class Schema : IEquatable<Schema>
         }
 
         _jsonFields = [.. fields.Where(static f => f.Type == FieldType.Json && f.Indexed && f.DynamicParent is null).Select(static f => f.Name)];
-        _serialized = Write(this);
+        _serialized = Write(this, true);
         if (_serialized.Length > limits.MaxSchemaBytes)
         {
             throw new ArgumentException($"The serialized schema is {_serialized.Length} bytes, over the limit of {limits.MaxSchemaBytes}.");
         }
+    }
+
+    /// <summary>The query-time text settings (typo tolerance, as-you-type, synonyms, stop words) recorded with the schema. Default <see cref="TextSettings.Default"/>.</summary>
+    public TextSettings Settings { get; }
+
+    /// <summary>Whether the other schema declares the same fields and identifier, ignoring <see cref="Settings"/>. Settings only affect queries, so a schema that differs only in them can be adopted without rebuilding.</summary>
+    /// <param name="other">The schema to compare with.</param>
+    /// <returns><see langword="true"/> when the fields match.</returns>
+    public bool HasSameFields(Schema other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        return Write(this, false).AsSpan().SequenceEqual(Write(other, false));
     }
 
     /// <summary>The empty schema.</summary>
@@ -241,7 +255,7 @@ public sealed class Schema : IEquatable<Schema>
             return this;
         }
 
-        var builder = new SchemaBuilder(IndexLimits.Default) { IdFieldName = IdField };
+        var builder = new SchemaBuilder(IndexLimits.Default) { IdFieldName = IdField, Settings = Settings };
         foreach (FieldDefinition f in Fields.Where(static f => f.DynamicParent is null))
         {
             builder.Add(f);
@@ -258,7 +272,7 @@ public sealed class Schema : IEquatable<Schema>
     {
         // Declared fields keep their positions; derived fields follow in name order, so the schema depends on which paths exist and
         // not on the order they were met in.
-        var builder = new SchemaBuilder(limits) { IdFieldName = IdField };
+        var builder = new SchemaBuilder(limits) { IdFieldName = IdField, Settings = Settings };
         foreach (FieldDefinition f in Fields.Where(static f => f.DynamicParent is null))
         {
             builder.Add(f);
@@ -419,8 +433,11 @@ public sealed class Schema : IEquatable<Schema>
         _ => false,
     };
 
-    private static byte[] Write(Schema schema)
+    // Version 1 holds no settings; version 2 appends them. Default settings are written as version 1 so that indexes that never used them
+    // keep their bytes.
+    private static byte[] Write(Schema schema, bool withSettings)
     {
+        bool settings = withSettings && !schema.Settings.IsDefault;
         var sink = new ByteSink();
         foreach (byte b in MagicBytes)
         {
@@ -429,7 +446,7 @@ public sealed class Schema : IEquatable<Schema>
 
         bool hasDerived = schema.Fields.Any(static f => f.DynamicParent is not null);
         bool hasVectorSettings = schema.Fields.Any(static f => f.HasCustomVectorSettings);
-        sink.WriteUInt32(hasDerived || hasVectorSettings ? 2u : 1u);
+        sink.WriteUInt32(hasDerived || settings || hasVectorSettings ? 2u : 1u);
         sink.WriteVarUInt((ulong)schema.Fields.Count);
         foreach (FieldDefinition f in schema.Fields)
         {
@@ -443,62 +460,70 @@ public sealed class Schema : IEquatable<Schema>
         }
 
         sink.WriteString(schema.IdField ?? string.Empty);
-        if (hasDerived || hasVectorSettings)
+        if (hasDerived || settings || hasVectorSettings)
         {
-            // Version 2 appends sections: a count, then for each an id (ascending) and its bytes.
-            sink.WriteVarUInt((ulong)((hasDerived ? 1 : 0) + (hasVectorSettings ? 1 : 0)));
-        }
-
-        if (hasDerived)
-        {
-            var section = new ByteSink();
-            var pairs = new List<(int Field, int Parent)>();
-            for (int i = 0; i < schema.Fields.Count; i++)
+            // Version 2 appends sections: a count, then for each an id (ascending) and its bytes. Section 1 lists the derived
+            // (dynamic) fields, section 2 holds the text settings, section 3 the vector field settings.
+            sink.WriteVarUInt((ulong)((hasDerived ? 1 : 0) + (settings ? 1 : 0) + (hasVectorSettings ? 1 : 0)));
+            if (hasDerived)
             {
-                if (schema.Fields[i].DynamicParent is { } parent)
+                var section = new ByteSink();
+                var pairs = new List<(int Field, int Parent)>();
+                for (int i = 0; i < schema.Fields.Count; i++)
                 {
-                    pairs.Add((i, schema.GetFieldId(parent)));
+                    if (schema.Fields[i].DynamicParent is { } parent)
+                    {
+                        pairs.Add((i, schema.GetFieldId(parent)));
+                    }
                 }
-            }
 
-            section.WriteVarUInt((ulong)pairs.Count);
-            foreach ((int field, int parent) in pairs)
-            {
-                section.WriteVarUInt((ulong)field);
-                section.WriteVarUInt((ulong)parent);
-            }
-
-            sink.WriteVarUInt(SectionDynamicFields);
-            sink.WriteBytes(section.ToArray());
-        }
-
-        if (hasVectorSettings)
-        {
-            // Section 3: the index settings of the vector fields that differ from the defaults, by ascending field index. A reader that
-            // does not know the section skips it and sees the default settings.
-            var section = new ByteSink();
-            int n = 0;
-            foreach (FieldDefinition f in schema.Fields)
-            {
-                n += f.HasCustomVectorSettings ? 1 : 0;
-            }
-
-            section.WriteVarUInt((ulong)n);
-            for (int i = 0; i < schema.Fields.Count; i++)
-            {
-                FieldDefinition f = schema.Fields[i];
-                if (f.HasCustomVectorSettings)
+                section.WriteVarUInt((ulong)pairs.Count);
+                foreach ((int field, int parent) in pairs)
                 {
-                    section.WriteVarUInt((ulong)i);
-                    section.WriteByte((byte)f.Metric);
-                    section.WriteVarUInt((ulong)f.HnswM);
-                    section.WriteVarUInt((ulong)f.EfConstruction);
-                    section.WriteVarUInt((ulong)f.FlatThreshold);
+                    section.WriteVarUInt((ulong)field);
+                    section.WriteVarUInt((ulong)parent);
                 }
+
+                sink.WriteVarUInt(SectionDynamicFields);
+                sink.WriteBytes(section.ToArray());
             }
 
-            sink.WriteVarUInt(SectionVectorSettings);
-            sink.WriteBytes(section.ToArray());
+            if (settings)
+            {
+                var section = new ByteSink();
+                schema.Settings.Write(section);
+                sink.WriteVarUInt(TextSettingsSection);
+                sink.WriteBytes(section.WrittenSpan);
+            }
+
+            if (hasVectorSettings)
+            {
+                // The index settings of the vector fields that differ from the defaults, by ascending field index. A reader that
+                // does not know the section skips it and sees the default settings.
+                var section = new ByteSink();
+                int n = 0;
+                foreach (FieldDefinition f in schema.Fields)
+                {
+                    n += f.HasCustomVectorSettings ? 1 : 0;
+                }
+
+                section.WriteVarUInt((ulong)n);
+                for (int i = 0; i < schema.Fields.Count; i++)
+                {
+                    FieldDefinition f = schema.Fields[i];
+                    if (f.HasCustomVectorSettings)
+                    {
+                        section.WriteVarUInt((ulong)i);
+                        section.WriteByte((byte)f.Metric);
+                        section.WriteVarUInt((ulong)f.HnswM);
+                        section.WriteVarUInt((ulong)f.EfConstruction);
+                        section.WriteVarUInt((ulong)f.FlatThreshold);
+                    }
+                }
+
+                sink.WriteVarUInt(SectionVectorSettings);
+                sink.WriteBytes(section.ToArray());
+            }
         }
 
         return sink.ToArray();
@@ -545,6 +570,7 @@ public sealed class Schema : IEquatable<Schema>
         Array.Fill(parents, -1);
         bool skippedSection = false;
         bool knownSection = false;
+        TextSettings settingsRead = TextSettings.Default;
         var settings = new VectorSettings[count];
         Array.Fill(settings, VectorSettings.Default);
         if (version >= 2)
@@ -622,9 +648,19 @@ public sealed class Schema : IEquatable<Schema>
 
                     knownSection = true;
                 }
+                else if (sectionId == TextSettingsSection)
+                {
+                    var inner = new ByteSource(payload);
+                    settingsRead = TextSettings.Read(ref inner, limits);
+                    knownSection = true;
+                    if (inner.Remaining != 0)
+                    {
+                        throw new MalformedInputException("unexpected bytes after the text settings");
+                    }
+                }
                 else
                 {
-                    // A section from a newer build (a settings record, say) is skipped: sections only add information, and the
+                    // A section from a newer build is skipped: sections only add information, and the
                     // fields above are complete without it. The payload was already length- and limit-checked by ReadBytes.
                     skippedSection = true;
                 }
@@ -666,6 +702,7 @@ public sealed class Schema : IEquatable<Schema>
         }
 
         builder.IdFieldName = id.Length == 0 ? null : id;
+        builder.Settings = settingsRead;
         return builder.Build();
     }
 }
@@ -690,6 +727,9 @@ public sealed class SchemaBuilder
     }
 
     internal string? IdFieldName { get; set; }
+
+    /// <summary>The query-time text settings the schema carries. Default <see cref="TextSettings.Default"/>.</summary>
+    public TextSettings Settings { get; set; } = TextSettings.Default;
 
     /// <summary>Adds a field with explicit options.</summary>
     /// <param name="field">The field.</param>
@@ -808,7 +848,8 @@ public sealed class SchemaBuilder
             }
         }
 
-        return new Schema(_fields, IdFieldName, _limits);
+        Settings.Validate();
+        return new Schema(_fields, IdFieldName, _limits, Settings);
     }
 
     private void Validate(FieldDefinition f)

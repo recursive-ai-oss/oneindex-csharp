@@ -65,7 +65,7 @@ The codecs this build reads are a fixed list in `CodecRegistry`, each with the n
 ## Schema, versions 1 and 2
 
     4 bytes   "OIXS"
-    u32       version (1; 2 when the schema holds fields derived from JSON paths)
+    u32       version (1; 2 when the schema holds fields derived from JSON paths or text settings)
     varint    field count   at most 4,096
       string  name
       u8      type          1 text, 2 keyword, 3 integral, 4 fractional, 5 date, 6 bool, 7 geo point, 8 bytes, 9 vector, 10 json
@@ -77,10 +77,21 @@ The codecs this build reads are a fixed list in `CodecRegistry`, each with the n
     string    identifier field name, empty when none
     version 2 only:
     varint    section count
-      varint  section id    strictly ascending; 1 is the only id defined
+      varint  section id    strictly ascending; 1 = derived fields, 2 = text settings
       bytes   section body
 
-Sections with ids this build does not define are skipped on reading (their length is checked and they are dropped when the schema is written again). Section 1 lists the fields derived from the paths of JSON fields (dynamic.md): a varint count of at least 1, then for each, in ascending order, the varint field id of the derived field and the varint field id of the JSON field it belongs to (always an earlier field). A reader that meets a section id it does not know refuses the schema as unsupported instead of skipping it, because a section can change what the schema means. A later addition to the schema takes the next section id and a new schema version.
+Sections with ids this build does not define are skipped on reading (their length is checked and they are dropped when the schema is written again). Section 1 lists the fields derived from the paths of JSON fields (dynamic.md): a varint count of at least 1, then for each, in ascending order, the varint field id of the derived field and the varint field id of the JSON field it belongs to (always an earlier field). Section 2 holds the text settings (query-time; they never change what is indexed):
+
+        u8    flags         1 typo tolerance off, 2 no typos on numbers, 4 prefix search off
+        varint word size for one typo, varint word size for two typos   0 to 255, one <= two
+        list  words that never get typos       list = varint count, then strings
+        list  fields without typos
+        list  stop words
+        varint synonym rule count
+          list from (a group's members, or the one-way word)
+          list to (empty for a group)
+
+A schema whose text settings are all defaults and that has no derived fields is written as version 1, byte for byte as before. Opening a writer with a schema that has the committed fields but different text settings is allowed: the new settings are used at once and the next commit records them; they never trigger a rebuild.
 
 Fields keep declaration order; a field's position is its field id. The reader runs the same validation as the schema builder (unique names, types and options that make sense together, a stored single-valued keyword for the identifier).
 
@@ -88,9 +99,9 @@ Fields keep declaration order; a field's position is its field id. The reader ru
 
 A commit makes a set of already-written segment files visible:
 
-1. The caller writes each new segment file with `IndexFileWriter`, which appends the footer and fsyncs the file, and records its length and checksum.
+1. The caller writes each new segment file with `IndexFileWriter`, which appends the footer and either fsyncs the file or leaves it open to be synced together with the rest of the segment, and records its length and checksum.
 2. `CommitProtocol.Commit` serializes the commit, then checks that the generation is above the newest commit in storage and that every file the commit lists exists with the recorded length and footer checksum.
-3. It calls `SyncDirectory` so the names of the new files are durable before any commit refers to them.
+3. It verifies the files that no earlier commit listed (segment files never change, so files an earlier commit verified are not opened again), then calls `SyncDirectory` so the names of the new files are durable before any commit refers to them.
 4. It deletes any leftover temporary commit file, writes the commit to `commit-<generation>.tmp`, and fsyncs it.
 5. It renames the temporary file to `commit-<generation>.oic`, atomically.
 6. It calls `SyncDirectory` again. Only now does `Commit` return: a commit that was acknowledged is durable.

@@ -83,6 +83,11 @@ public abstract class QueryVisitor<TResult>
     /// <returns>The result.</returns>
     public virtual TResult VisitFunctionScore(FunctionScoreQuery query) => VisitUnknown(query);
 
+    /// <summary>Visits a typo-tolerant term query.</summary>
+    /// <param name="query">The query.</param>
+    /// <returns>The result.</returns>
+    public virtual TResult VisitTypoTerm(TypoTermQuery query) => VisitUnknown(query);
+
     /// <summary>Visits a <see cref="KnnQuery"/>.</summary>
     /// <param name="query">The query.</param>
     /// <returns>The result.</returns>
@@ -206,16 +211,30 @@ public sealed record PhraseQuery(string Field, IReadOnlyList<string> Terms) : Qu
     public override TResult Accept<TResult>(QueryVisitor<TResult> visitor) => visitor.VisitPhrase(this);
 }
 
-/// <summary>Documents whose field contains a term that starts with the prefix.</summary>
+/// <summary>
+/// Documents whose field contains a term that starts with the prefix. By default every match scores the boost and nothing else (a constant
+/// score, which is also what makes a short prefix cheap: no term is weighed and there is no limit on the terms it matches). With
+/// <see cref="ScoreTerms"/> the matches are scored as a disjunction of the expanded terms' BM25F scores.
+/// </summary>
 /// <param name="Field">The field name.</param>
 /// <param name="Prefix">The prefix, already analyzed.</param>
 public sealed record PrefixQuery(string Field, string Prefix) : Query
 {
+    /// <summary>
+    /// Whether each matching term is scored with BM25F (default <see langword="false"/>: constant score). Scored prefixes expand to at
+    /// most <see cref="QueryEngineOptions.MaxExpandedTerms"/> terms, with the overflow behaviour of <see cref="QueryEngineOptions.Overflow"/>.
+    /// </summary>
+    public bool ScoreTerms { get; init; }
+
     /// <inheritdoc/>
     public override TResult Accept<TResult>(QueryVisitor<TResult> visitor) => visitor.VisitPrefix(this);
 }
 
-/// <summary>Documents whose field contains a term within <see cref="MaxEdits"/> edits of the given term.</summary>
+/// <summary>
+/// Documents whose field contains a term within <see cref="MaxEdits"/> edits of the given term. Only the <see cref="MaxExpansions"/>
+/// closest terms are kept (fewest edits first, then the most documents, then term bytes), so a loose query never fails and never weighs
+/// thousands of terms; each kept term is scored with BM25F.
+/// </summary>
 /// <param name="Field">The field name.</param>
 /// <param name="Term">The term, already analyzed.</param>
 public sealed record FuzzyQuery(string Field, string Term) : Query
@@ -225,6 +244,9 @@ public sealed record FuzzyQuery(string Field, string Term) : Query
 
     /// <summary>How many leading characters must match exactly. Default 0.</summary>
     public int PrefixLength { get; init; }
+
+    /// <summary>The most terms to keep, 1 or more. Default 50. Distances are counted as optimal string alignment (a swap of adjacent characters is one edit).</summary>
+    public int MaxExpansions { get; init; } = 50;
 
     /// <summary>Whether swapping two adjacent characters counts as one edit. Default true.</summary>
     public bool Transpositions { get; init; } = true;
@@ -326,4 +348,48 @@ public sealed record GeoBoundingBoxQuery(string Field, double North, double Sout
 {
     /// <inheritdoc/>
     public override TResult Accept<TResult>(QueryVisitor<TResult> visitor) => visitor.VisitGeoBoundingBox(this);
+}
+
+/// <summary>
+/// One analyzed query word, matched in one or more fields as itself, with typos, and optionally as the beginning of longer words
+/// (as-you-type). Every indexed word that matches is scored like a term query and multiplied by its typo and exactness factors
+/// (<see cref="TypoMatch"/>); with no typos allowed and no prefix this is the same as <see cref="MultiFieldTermQuery"/>.
+/// </summary>
+/// <param name="Fields">The fields to search; they are scored together as one BM25F term. Must be text fields and not repeat.</param>
+/// <param name="Term">The analyzed query word.</param>
+public sealed record TypoTermQuery(IReadOnlyList<string> Fields, string Term) : Query
+{
+    /// <summary>The most typos a matching word may have, 0 to 2. Default 2.</summary>
+    public int MaxTypos { get; init; } = 2;
+
+    /// <summary>Whether words that begin like the query word (with typos allowed in that beginning) match too. Default <see langword="false"/>.</summary>
+    public bool Prefix { get; init; }
+
+    /// <summary>Fields of <see cref="Fields"/> in which no typos are allowed (the word and, with <see cref="Prefix"/>, its extensions still match). Default none.</summary>
+    public IReadOnlyList<string> ExactFields { get; init; } = [];
+
+    /// <inheritdoc/>
+    public bool Equals(TypoTermQuery? other)
+        => other is not null && Term == other.Term && MaxTypos == other.MaxTypos && Prefix == other.Prefix && Boost.Equals(other.Boost)
+            && Fields.SequenceEqual(other.Fields) && ExactFields.SequenceEqual(other.ExactFields);
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        // In-process hash tables only; never persisted.
+        var hash = default(HashCode);
+        hash.Add(Term);
+        hash.Add(MaxTypos);
+        hash.Add(Prefix);
+        hash.Add(Boost);
+        foreach (string f in Fields)
+        {
+            hash.Add(f);
+        }
+
+        return hash.ToHashCode();
+    }
+
+    /// <inheritdoc/>
+    public override TResult Accept<TResult>(QueryVisitor<TResult> visitor) => visitor.VisitTypoTerm(this);
 }

@@ -101,6 +101,11 @@ converted to the OneModel file format with the matrix-multiply weights and the w
 - Licence: MIT (the model card's metadata states `license: mit`, and its License section: "The released models can be used for commercial
   purposes free of charge.")
 - The licence text packed with the weights is `models/bge-small-en-v1.5/LICENSE-bge-small-en-v1.5.txt` in the package.
+- Provenance: this project did not train the model. Its authors state that the English models were first fine-tuned on unlabeled
+  data including Wikipedia, CC-net, StackExchange, Reddit, S2ORC and the sentence-transformers training data, then on labeled NLI,
+  FEVER, NQ, HotpotQA, Quora, StackExchange Duplicates and MEDI data (Xiao et al., "C-Pack", arXiv:2309.07597).
+  The weights are distributed under the model's MIT licence; the licences of the training sets are not conferred on the weights by
+  this project and are not verified here. Anyone who needs weights with a different training history can load their own by path.
 
 The tests and tools also run the Hugging Face `tokenizers` and ONNX Runtime packages as reference implementations (fetched into a cache,
 not part of the repository or any package).

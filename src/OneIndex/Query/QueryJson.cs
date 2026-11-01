@@ -405,6 +405,11 @@ public static partial class QueryJson
                 w.WriteString("type", "prefix");
                 w.WriteString("field", p.Field);
                 w.WriteString("prefix", p.Prefix);
+                if (p.ScoreTerms)
+                {
+                    w.WriteBoolean("scoreTerms", true);
+                }
+
                 break;
             case FuzzyQuery f:
                 w.WriteString("type", "fuzzy");
@@ -423,6 +428,11 @@ public static partial class QueryJson
                 if (!f.Transpositions)
                 {
                     w.WriteBoolean("transpositions", false);
+                }
+
+                if (f.MaxExpansions != 50)
+                {
+                    w.WriteNumber("maxExpansions", f.MaxExpansions);
                 }
 
                 break;
@@ -474,6 +484,38 @@ public static partial class QueryJson
 
                 w.WriteEndArray();
                 w.WriteString("term", m.Term);
+                break;
+            case TypoTermQuery ty:
+                w.WriteString("type", "typoTerm");
+                w.WriteStartArray("fields");
+                foreach (string f in ty.Fields)
+                {
+                    w.WriteStringValue(f);
+                }
+
+                w.WriteEndArray();
+                w.WriteString("term", ty.Term);
+                if (ty.MaxTypos != 2)
+                {
+                    w.WriteNumber("maxTypos", ty.MaxTypos);
+                }
+
+                if (ty.Prefix)
+                {
+                    w.WriteBoolean("prefix", true);
+                }
+
+                if (ty.ExactFields.Count > 0)
+                {
+                    w.WriteStartArray("exactFields");
+                    foreach (string f in ty.ExactFields)
+                    {
+                        w.WriteStringValue(f);
+                    }
+
+                    w.WriteEndArray();
+                }
+
                 break;
             case GeoRadiusQuery g:
                 w.WriteString("type", "geoRadius");
@@ -644,7 +686,7 @@ internal sealed partial class QueryJsonReader
     private static readonly string[] Reserved = ["facets", "aggregations", "distinct", "vector"];
 
     private static readonly string[] NodeTypes =
-        ["matchAll", "text", "strict", "filter", "term", "phrase", "prefix", "fuzzy", "regex", "range", "exists", "multiFieldTerm", "geoRadius", "geoBoundingBox", "bool", "functionScore", "knn", "sparse", "hybrid"];
+        ["matchAll", "text", "strict", "filter", "term", "phrase", "prefix", "fuzzy", "regex", "range", "exists", "multiFieldTerm", "typoTerm", "geoRadius", "geoBoundingBox", "bool", "functionScore", "knn", "sparse", "hybrid"];
 
     private readonly Schema _schema;
     private readonly UserTextCompiler _userText;
@@ -941,9 +983,10 @@ internal sealed partial class QueryJsonReader
                 return ReadPhrase(e, path);
             case "prefix":
                 {
-                    CheckProperties(e, path, ["type", "field", "prefix", "boost"]);
+                    CheckProperties(e, path, ["type", "field", "prefix", "scoreTerms", "boost"]);
                     FieldDefinition def = ReadField(e, path, FieldKinds.TextOrKeyword);
-                    return Boosted(new PrefixQuery(def.Name, ReadString(Require(e, path, "prefix"), Child(path, "prefix"))), e, path);
+                    bool scoreTerms = e.TryGetProperty("scoreTerms", out JsonElement st) && ReadBool(st, Child(path, "scoreTerms"));
+                    return Boosted(new PrefixQuery(def.Name, ReadString(Require(e, path, "prefix"), Child(path, "prefix"))) { ScoreTerms = scoreTerms }, e, path);
                 }
 
             case "fuzzy":
@@ -961,6 +1004,8 @@ internal sealed partial class QueryJsonReader
 
             case "multiFieldTerm":
                 return ReadMultiFieldTerm(e, path);
+            case "typoTerm":
+                return ReadTypoTerm(e, path);
             case "geoRadius":
                 {
                     CheckProperties(e, path, ["type", "field", "lat", "lng", "meters", "boost"]);
@@ -1342,13 +1387,14 @@ internal sealed partial class QueryJsonReader
 
     private Query ReadFuzzy(JsonElement e, string path)
     {
-        CheckProperties(e, path, ["type", "field", "term", "maxEdits", "prefixLength", "transpositions", "boost"]);
+        CheckProperties(e, path, ["type", "field", "term", "maxEdits", "prefixLength", "transpositions", "maxExpansions", "boost"]);
         FieldDefinition def = ReadField(e, path, FieldKinds.TextOrKeyword);
         string term = ReadString(Require(e, path, "term"), Child(path, "term"));
         int edits = e.TryGetProperty("maxEdits", out JsonElement m) ? ReadInt(m, Child(path, "maxEdits"), 0, 2) : 2;
         int prefix = e.TryGetProperty("prefixLength", out JsonElement p) ? ReadInt(p, Child(path, "prefixLength"), 0, 1024) : 0;
         bool transpositions = !e.TryGetProperty("transpositions", out JsonElement t) || ReadBool(t, Child(path, "transpositions"));
-        return Boosted(new FuzzyQuery(def.Name, term) { MaxEdits = edits, PrefixLength = prefix, Transpositions = transpositions }, e, path);
+        int expansions = e.TryGetProperty("maxExpansions", out JsonElement x) ? ReadInt(x, Child(path, "maxExpansions"), 1, 1024) : 50;
+        return Boosted(new FuzzyQuery(def.Name, term) { MaxEdits = edits, PrefixLength = prefix, Transpositions = transpositions, MaxExpansions = expansions }, e, path);
     }
 
     private Query ReadRegex(JsonElement e, string path)
@@ -1439,6 +1485,42 @@ internal sealed partial class QueryJsonReader
 
         string term = ReadString(Require(e, path, "term"), Child(path, "term"));
         return Boosted(new MultiFieldTermQuery(names, term), e, path);
+    }
+
+    private Query ReadTypoTerm(JsonElement e, string path)
+    {
+        CheckProperties(e, path, ["type", "fields", "term", "maxTypos", "prefix", "exactFields", "boost"]);
+        List<string> names = ReadFieldNames(e, path, "fields", required: true);
+        string term = ReadString(Require(e, path, "term"), Child(path, "term"));
+        int typos = e.TryGetProperty("maxTypos", out JsonElement m) ? ReadInt(m, Child(path, "maxTypos"), 0, 2) : 2;
+        bool prefix = e.TryGetProperty("prefix", out JsonElement p) && ReadBool(p, Child(path, "prefix"));
+        List<string> exact = ReadFieldNames(e, path, "exactFields", required: false);
+        return Boosted(new TypoTermQuery(names, term) { MaxTypos = typos, Prefix = prefix, ExactFields = exact }, e, path);
+    }
+
+    private List<string> ReadFieldNames(JsonElement e, string path, string property, bool required)
+    {
+        var names = new List<string>();
+        if (!required && !e.TryGetProperty(property, out _))
+        {
+            return names;
+        }
+
+        string fp = Child(path, property);
+        JsonElement fields = Require(e, path, property);
+        if (fields.ValueKind != JsonValueKind.Array || fields.GetArrayLength() > 64 || (required && fields.GetArrayLength() < 1))
+        {
+            throw Err(fp, "Expected an array of up to 64 full-text field names.");
+        }
+
+        int i = 0;
+        foreach (JsonElement f in fields.EnumerateArray())
+        {
+            string ip = Index(fp, i++);
+            names.Add(CheckField(ReadString(f, ip), ip, FieldKinds.TextOrKeyword).Name);
+        }
+
+        return names;
     }
 
     private Query ReadBoolQuery(JsonElement e, string path, int depth)

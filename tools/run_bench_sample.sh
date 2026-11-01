@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Indicative benchmark pass on a Wikipedia abstract sample: the corpus driver for one engine, then the native information rows.
 #
-#   tools/run_bench_sample.sh <engine> <docs> [threads]
+#   [ROWS=Terms1,Phrase] [NATIVE=1] tools/run_bench_sample.sh <engine> <docs> [threads]
 #
 # Indicative only: whoever starts this decides whether the machine is quiet. Publishable rows are bench-class runs described in
 # docs/benchmarks.md. Results go to $ONEINDEX_RESULTS (default $ONEINDEX_DATA/results/bench).
@@ -20,7 +20,7 @@ export TMPDIR="${TMPDIR:-$root/tmp}"; mkdir -p "$TMPDIR" "$results" "$root/work"
 dotnet build -c Release "$repo/tools/OneIndex.Harness.Cli" -v quiet -clp:NoSummary
 harness="$ONEINDEX_ARTIFACTS/bin/OneIndex.Harness.Cli/release/oneindex-harness"
 "$harness" queries --corpus "$corpus" --docs "$docs" --out "$results/queries.json"
-"$harness" driver --engine "$engine" --corpus "$corpus" --docs "$docs" --work "$root/work" --out "$results/$engine-$docs.json" --threads "$threads"
+"$harness" driver --engine "$engine" --corpus "$corpus" --docs "$docs" --work "$root/work" --out "$results/$engine-$docs.json" --threads "$threads" ${ROWS:+--rows "$ROWS"}
 if [ "${NATIVE:-0}" = 1 ]; then
   "$root/oracles/venv/bin/python" "$here/native/tantivy_rows.py" "$corpus" "$results/queries.json" "$docs" "$root/work/tantivy" "$results/tantivy-$docs.json"
   "$here/native/fts5_rows.sh" "$corpus" "$results/queries.json" "$docs" "$root/work/fts5" "$results/fts5-$docs.tsv"
