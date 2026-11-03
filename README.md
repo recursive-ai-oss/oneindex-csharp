@@ -11,7 +11,7 @@ OneIndex is unaffiliated with other products named OneIndex, OneSearch or simila
 | Feature | State |
 |---|---|
 | Storage interface (range reads, sync and async); memory, local-file, read-only HTTP and browser backends; fault-injecting test double | Working, tested ([docs/storage.md](docs/storage.md)) |
-| Segments, commits (fsync, then atomic rename), background merges, reader processes on committed snapshots, near-real-time readers | Working. *Durability claims: placeholder, pending the independent review of the commit protocol.* |
+| Segments, commits (fsync, then atomic rename), background merges, reader processes on committed snapshots, near-real-time readers | Working. |
 | Analysis: UAX #29 words and sentences (Unicode 17.0.0), NFC/NFKC, case and accent folding, Snowball stemmers (34 languages) and stop words, CJK bigrams | Working, conformance-tested ([docs/analysis.md](docs/analysis.md)) |
 | Term dictionary, postings, block-max WAND, BM25F; term, boolean, phrase, prefix, fuzzy, regex, range queries | Working, measured ([docs/benchmarks.md](docs/benchmarks.md)) |
 | Typo tolerance, as-you-type, "did you mean", synonyms, stop words | Working ([docs/typo-tolerance.md](docs/typo-tolerance.md)) |
@@ -22,7 +22,7 @@ OneIndex is unaffiliated with other products named OneIndex, OneSearch or simila
 | Multi-vector fields (`[MultiVector]`) with MaxSim as a rerank and as an exact scan | Working ([docs/multi-vector.md](docs/multi-vector.md)) |
 | `RecursiveAI.OneIndex.Models`: WordPiece tokenizer, bge-small-en-v1.5 embedder (int8), cross-encoder reranker, learned sparse encoder | Working ([docs/models.md](docs/models.md)) |
 | `RecursiveAI.OneIndex.Analysis.Asian` (ja, zh, ko, th, lo, km, my), decompounding (de, nl, sv, da, no, fi, is), `RecursiveAI.OneIndex.Models.Multilingual` (multilingual-e5-small, SentencePiece) | Working |
-| `RecursiveAI.OneIndex.EntityFrameworkCore`: transactional outbox, applier, pushdown with over-fetch, `ReindexAsync` | Working on SQLite and PostgreSQL ([docs/entity-framework.md](docs/entity-framework.md)). *Exactly-once wording: placeholder, pending the independent review.* |
+| `RecursiveAI.OneIndex.EntityFrameworkCore`: transactional outbox, applier, pushdown with over-fetch, `ReindexAsync` | Working on SQLite and PostgreSQL ([docs/entity-framework.md](docs/entity-framework.md)). |
 | `RecursiveAI.OneIndex.Files` / `.Files.Ocr`: folder indexing with citations | Working ([docs/files.md](docs/files.md)) |
 | `RecursiveAI.OneIndex.VectorData`: a vector store over an index | Working; the abstraction's conformance suite passes except the listed unsupported cases ([docs/vectordata.md](docs/vectordata.md)) |
 | `oneindex` command line tool | Working ([docs/cli.md](docs/cli.md)) |
@@ -33,7 +33,6 @@ OneIndex is unaffiliated with other products named OneIndex, OneSearch or simila
 - **Entity Framework:** `ExecuteUpdate`, `ExecuteDelete` and raw SQL bypass `SaveChanges`, so they are not indexed; repair with `ReindexAsync(query)`. A log row that becomes visible after the applier gave up on its position is applied at the entity's next change or by `ReindexAsync`. SQL Server and MySQL have not been run ([docs/entity-framework.md](docs/entity-framework.md)).
 - **VectorData:** dynamic (dictionary) collections, store-side embedding generation, Manhattan and Hamming distance and whole-array equality filters are not supported, so 13 of the abstraction's conformance tests and the data-type suite (which needs dynamic collections) are excluded ([docs/vectordata.md](docs/vectordata.md)).
 - **Static index against Pagefind:** a first query costs 2.6 MB at 16 KiB chunks (Pagefind: 280 KB) because segment open still reads whole term dictionaries, lengths and identifier tables; later text queries cost about 210 KB (Pagefind: 46 KB). The .NET WebAssembly payload is 5.25 MB raw against 575 KB. Hybrid queries in the static index walk the HNSW graph, not the IVF lists. IVF is a library type and the static layout, not yet a per-field server option.
-- **Windows:** file locking semantics have not been run on Windows.
 
 ### Relevance (BM25, nDCG@10, BEIR test sets; measured 2026-10)
 
@@ -52,9 +51,11 @@ BM25F scores a document as one weighted stream, so its like-for-like comparison 
 
 Text rows against Lucene.NET 4.8.0-beta00018 with matched analysis and commits, and vector rows against Hnsw.Net at matched recall, on x64 and arm64, are in [docs/benchmarks.md](docs/benchmarks.md) and [docs/vectors.md](docs/vectors.md), with peak memory and index size beside each row (measured 2026-10 and 2026-11).
 
-### Durability
+### Durability and the EF Core integration
 
-*Placeholder: the durability statement is written after the independent review of the commit protocol.* The test methods are described in [docs/storage.md](docs/storage.md) and [docs/commit-format.md](docs/commit-format.md). On Linux, .NET cannot fsync a directory, so after a power cut an index may come back at its previous commit.
+**Durable by design.** A commit that returns survives a crash or `kill -9` of your process. A reader sees one whole commit. Every file is checksummed, and damage fails the open with an error that names the file instead of returning wrong results. We test this with fault injection at every storage operation (about 500,000 schedules on x64 and arm64) and with thousands of process kills. On a power cut the index may roll back to an earlier commit, but it is never corrupt. See [docs/durability.md](docs/durability.md).
+
+**EF Core integration.** Changes made through `SaveChanges` reach the index through a transactional outbox log and are applied once. After catch-up the index equals the database, including across kills of the app and of the applier. Verified on SQLite and PostgreSQL 16; SQL Server and MySQL are not tested. A transaction left open longer than the late-row window or age is applied with the entity's next change or `ReindexAsync`. See [docs/entity-framework.md](docs/entity-framework.md).
 
 ## Getting started (preview)
 
