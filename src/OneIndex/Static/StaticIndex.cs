@@ -9,7 +9,7 @@ namespace OneIndex.StaticIndexes;
 /// <summary>Settings of <see cref="StaticIndexBuilder"/>.</summary>
 public sealed class StaticBuildOptions
 {
-    /// <summary>The chunk size in bytes, 1 KiB to 64 MiB. Default 16 KiB: a query fetches about the chunks it touches, so smaller chunks mean fewer bytes and more requests (docs/static-index.md has the measurements: on 30,000 abstracts a text query after the first costs 209 KB in 13 requests at 16 KiB and 675 KB in 3 requests at 256 KiB).</summary>
+    /// <summary>The chunk size in bytes, 1 KiB to 64 MiB. Default 16 KiB. This size applies to the files read in runs (the IVF and vector files); scattered files use <see cref="ScatteredChunkBytes"/>. A query fetches about the chunks it touches, so smaller chunks mean fewer bytes and more requests (docs/static-index.md has the measurements).</summary>
     public int ChunkBytes { get; init; } = 16 * 1024;
 
     /// <summary>
