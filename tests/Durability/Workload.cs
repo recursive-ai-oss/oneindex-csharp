@@ -255,6 +255,7 @@ public static class Workload
             vectorOf[row.Key] = Unit(VectorOf(long.Parse(row.Value[(row.Value.LastIndexOf('|') + 1)..], System.Globalization.CultureInfo.InvariantCulture)));
         }
 
+        var carriers = new HashSet<string>(StringComparer.Ordinal);
         foreach (LeafContext leaf in context.Leaves)
         {
             IVectorFieldReader? reader = leaf.Reader.GetVectors(field);
@@ -266,7 +267,16 @@ public static class Workload
                     continue;
                 }
 
-                string id = leaf.Reader.StoredFields!.GetDocument(d).Get("id").AsText();
+                Document stored = leaf.Reader.StoredFields!.GetDocument(d);
+                string id = stored.Get("id").AsText();
+                if (!stored.Fields.Any(f => f.Name == field))
+                {
+                    // Written before the field existed (an index from an earlier workload schema): additive schema changes leave
+                    // such documents without a value until they are written again, so there is no vector to check.
+                    continue;
+                }
+
+                carriers.Add(id);
                 if (reader is null || !reader.TryGetVector(d, buffer) || buffer.Zip(vectorOf[id], (x, y) => Math.Abs(x - y)).Max() > 1e-6)
                 {
                     throw new InvalidDataException($"the vector of {id} in segment {leaf.Reader.Info.Name} is missing or wrong");
@@ -274,6 +284,19 @@ public static class Workload
             }
         }
 
+        // Searches over the field see only the documents that carry it.
+        foreach (string id in vectorOf.Keys.Where(k => !carriers.Contains(k)).ToList())
+        {
+            vectorOf.Remove(id);
+        }
+
+        var withField = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        foreach (KeyValuePair<string, string> row in rows.Where(r => carriers.Contains(r.Key)))
+        {
+            withField[row.Key] = row.Value;
+        }
+
+        rows = withField;
         var rng = new Random(rows.Count);
         for (int q = 0; q < 3 && rows.Count > 0; q++)
         {
