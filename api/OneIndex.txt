@@ -79,6 +79,7 @@ OneIndex.Aggregations.FacetValueSearch.DefaultLimit : System.Int32 = 100
 OneIndex.Aggregations.FacetValueSearch.static Match(System.Collections.Generic.IReadOnlyList<OneIndex.Aggregations.FacetValue> values, System.String text, System.Int32 limit = 100, OneIndex.Aggregations.FacetSort sortBy = Alpha) : System.Collections.Generic.IReadOnlyList<OneIndex.Aggregations.FacetValue>
 OneIndex.Aggregations.FacetValueSearch.static Normalize(System.String text) : System.String
 OneIndex.Aggregations.FacetValueSearch.static Search(OneIndex.Search.IndexSearcher searcher, OneIndex.Search.Query query, System.String field, System.String text, System.Int32 limit = 100, OneIndex.Aggregations.FacetSort sortBy = Alpha, System.Threading.CancellationToken cancellationToken = null) : System.Collections.Generic.IReadOnlyList<OneIndex.Aggregations.FacetValue>
+OneIndex.Aggregations.FacetValueSearch.static SearchAsync(OneIndex.Search.IndexSearcher searcher, OneIndex.Search.Query query, System.String field, System.String text, System.Int32 limit = 100, OneIndex.Aggregations.FacetSort sortBy = Alpha, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<OneIndex.Aggregations.FacetValue>>
 OneIndex.Aggregations.HistogramAggregation..ctor(System.String name, System.String field, System.Double interval)
 OneIndex.Aggregations.HistogramAggregation.Interval : System.Double { get; }
 OneIndex.Aggregations.HistogramAggregation.MinDocCount : System.Int64 { get; init; }
@@ -659,20 +660,24 @@ OneIndex.Index.IndexReader.IsDurable : System.Boolean { get; }
 OneIndex.Index.IndexReader.Refresh(System.Threading.CancellationToken cancellationToken = null) : System.Boolean
 OneIndex.Index.IndexReader.RefreshAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<System.Boolean>
 OneIndex.Index.IndexReader.static Open(OneIndex.Storage.IStorage storage, System.Collections.Generic.IReadOnlyList<OneIndex.Index.ISegmentCodec> codecs = null, OneIndex.Storage.IndexLimits limits = null, System.Threading.CancellationToken cancellationToken = null) : OneIndex.Index.IndexReader
+OneIndex.Index.IndexReader.static OpenAsync(OneIndex.Storage.IStorage storage, System.Collections.Generic.IReadOnlyList<OneIndex.Index.ISegmentCodec> codecs = null, OneIndex.Storage.IndexLimits limits = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<OneIndex.Index.IndexReader>
 OneIndex.Index.IndexSnapshot.Commit : OneIndex.Index.CommitInfo { get; }
 OneIndex.Index.IndexSnapshot.Dispose() : System.Void
 OneIndex.Index.IndexSnapshot.Generation : System.Int64 { get; }
 OneIndex.Index.IndexSnapshot.GetSegment(System.Int32 index, System.Threading.CancellationToken cancellationToken = null) : OneIndex.Index.SegmentReader
+OneIndex.Index.IndexSnapshot.GetSegmentAsync(System.Int32 index, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<OneIndex.Index.SegmentReader>
 OneIndex.Index.IndexSnapshot.IsDurable : System.Boolean { get; }
 OneIndex.Index.IndexSnapshot.LiveDocCount : System.Int64 { get; }
 OneIndex.Index.IndexSnapshot.Schema : OneIndex.Index.Schema { get; }
 OneIndex.Index.IndexSnapshot.SegmentCount : System.Int32 { get; }
 OneIndex.Index.IndexSnapshot.TryFindById(System.ReadOnlySpan<System.Char> id, out System.Int32 segment, out System.Int32 docId) : System.Boolean
 OneIndex.Index.IndexSnapshot.Verify(System.Threading.CancellationToken cancellationToken = null) : System.Void
+OneIndex.Index.IndexSnapshot.VerifyAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
 OneIndex.Index.IndexSnapshot.static Open(OneIndex.Storage.IStorage storage, System.Collections.Generic.IReadOnlyList<OneIndex.Index.ISegmentCodec> codecs = null, OneIndex.Storage.IndexLimits limits = null, System.Threading.CancellationToken cancellationToken = null) : OneIndex.Index.IndexSnapshot
 OneIndex.Index.IndexSnapshot.static OpenAsync(OneIndex.Storage.IStorage storage, System.Collections.Generic.IReadOnlyList<OneIndex.Index.ISegmentCodec> codecs = null, OneIndex.Storage.IndexLimits limits = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<OneIndex.Index.IndexSnapshot>
 OneIndex.Index.IndexWriter.Add(OneIndex.Index.Document document) : System.Void
 OneIndex.Index.IndexWriter.AddUnique(OneIndex.Index.Document document, System.Threading.CancellationToken cancellationToken = null) : System.Void
+OneIndex.Index.IndexWriter.AddUniqueAsync(OneIndex.Index.Document document, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
 OneIndex.Index.IndexWriter.BufferedDocumentCount : System.Int32 { get; }
 OneIndex.Index.IndexWriter.Commit(System.Threading.CancellationToken cancellationToken = null) : System.Int64
 OneIndex.Index.IndexWriter.CommitAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<System.Int64>
@@ -680,17 +685,21 @@ OneIndex.Index.IndexWriter.CompleteSchemaEvolution(System.Threading.Cancellation
 OneIndex.Index.IndexWriter.CompleteSchemaEvolutionAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
 OneIndex.Index.IndexWriter.DeleteById(System.String id) : System.Boolean
 OneIndex.Index.IndexWriter.DeleteByTerm(System.String field, System.String value, System.Threading.CancellationToken cancellationToken = null) : System.Int32
+OneIndex.Index.IndexWriter.DeleteByTermAsync(System.String field, System.String value, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<System.Int32>
 OneIndex.Index.IndexWriter.Dispose() : System.Void
 OneIndex.Index.IndexWriter.DisposeAsync() : System.Threading.Tasks.ValueTask
 OneIndex.Index.IndexWriter.Flush(System.Threading.CancellationToken cancellationToken = null) : System.Void
 OneIndex.Index.IndexWriter.FlushAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
 OneIndex.Index.IndexWriter.ForceMerge(System.Int32 maxSegments = 1, System.Threading.CancellationToken cancellationToken = null) : System.Void
+OneIndex.Index.IndexWriter.ForceMergeAsync(System.Int32 maxSegments = 1, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
 OneIndex.Index.IndexWriter.Generation : System.Int64 { get; }
 OneIndex.Index.IndexWriter.LastMergeError : System.Exception { get; }
 OneIndex.Index.IndexWriter.LiveDocumentCount : System.Int64 { get; }
 OneIndex.Index.IndexWriter.MaybeMerge() : System.Void
 OneIndex.Index.IndexWriter.OpenNearRealTimeReader(System.Threading.CancellationToken cancellationToken = null) : OneIndex.Index.IndexReader
+OneIndex.Index.IndexWriter.OpenNearRealTimeReaderAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<OneIndex.Index.IndexReader>
 OneIndex.Index.IndexWriter.OpenNearRealTimeSnapshot(System.Threading.CancellationToken cancellationToken = null) : OneIndex.Index.IndexSnapshot
+OneIndex.Index.IndexWriter.OpenNearRealTimeSnapshotAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<OneIndex.Index.IndexSnapshot>
 OneIndex.Index.IndexWriter.OpenSnapshot() : OneIndex.Index.IndexSnapshot
 OneIndex.Index.IndexWriter.OpenSnapshotAsync() : System.Threading.Tasks.ValueTask<OneIndex.Index.IndexSnapshot>
 OneIndex.Index.IndexWriter.ReclaimFiles() : System.Void
@@ -701,6 +710,7 @@ OneIndex.Index.IndexWriter.SegmentCount : System.Int32 { get; }
 OneIndex.Index.IndexWriter.SetAppliedPosition(System.ReadOnlySpan<System.Byte> position) : System.Void
 OneIndex.Index.IndexWriter.SetUserData(System.String key, System.String value) : System.Void
 OneIndex.Index.IndexWriter.Upsert(OneIndex.Index.Document document, System.Threading.CancellationToken cancellationToken = null) : System.Void
+OneIndex.Index.IndexWriter.UpsertAsync(OneIndex.Index.Document document, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
 OneIndex.Index.IndexWriter.WaitForMerges(System.Threading.CancellationToken cancellationToken = null) : System.Void
 OneIndex.Index.IndexWriter.WaitForMergesAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
 OneIndex.Index.IndexWriter.static Open(OneIndex.Storage.IStorage storage, OneIndex.Index.Schema schema = null, OneIndex.Index.IndexWriterOptions options = null, System.Threading.CancellationToken cancellationToken = null) : OneIndex.Index.IndexWriter
@@ -1256,6 +1266,9 @@ OneIndex.Search.IndexSearcher.Explain(OneIndex.Search.Query query, System.Int32 
 OneIndex.Search.IndexSearcher.Search(OneIndex.Search.Query query, OneIndex.Search.Collector collector, System.Threading.CancellationToken cancellationToken = null) : System.Void
 OneIndex.Search.IndexSearcher.Search(OneIndex.Search.Query query, System.Int32 count, System.Boolean countExactly, System.Threading.CancellationToken cancellationToken = null) : OneIndex.Search.TopDocs
 OneIndex.Search.IndexSearcher.Search(OneIndex.Search.Query query, System.Int32 count, System.Threading.CancellationToken cancellationToken = null) : OneIndex.Search.TopDocs
+OneIndex.Search.IndexSearcher.SearchAsync(OneIndex.Search.Query query, OneIndex.Search.Collector collector, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
+OneIndex.Search.IndexSearcher.SearchAsync(OneIndex.Search.Query query, System.Int32 count, System.Boolean countExactly, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<OneIndex.Search.TopDocs>
+OneIndex.Search.IndexSearcher.SearchAsync(OneIndex.Search.Query query, System.Int32 count, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<OneIndex.Search.TopDocs>
 OneIndex.Search.KnnQuery..ctor(System.String Field, System.Single[] Vector, System.Int32 K)
 OneIndex.Search.KnnQuery.Ef : System.Int32 { get; init; }
 OneIndex.Search.KnnQuery.Equals(OneIndex.Search.KnnQuery other) : System.Boolean
@@ -1530,13 +1543,14 @@ OneIndex.SearchIndex.static OpenSizedToEmbedder<T>(System.String path, OneIndex.
 OneIndex.SearchIndex<T>.AppliedPosition : System.ReadOnlyMemory<System.Byte> { get; }
 OneIndex.SearchIndex<T>.Commit(System.ReadOnlySpan<System.Byte> appliedPosition, System.Threading.CancellationToken cancellationToken = null) : System.Int64
 OneIndex.SearchIndex<T>.Commit(System.Threading.CancellationToken cancellationToken = null) : System.Int64
+OneIndex.SearchIndex<T>.CommitAsync(System.ReadOnlyMemory<System.Byte> appliedPosition, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<System.Int64>
 OneIndex.SearchIndex<T>.CommitAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<System.Int64>
 OneIndex.SearchIndex<T>.CommittedIds() : System.Collections.Generic.List<System.String>
 OneIndex.SearchIndex<T>.CompleteSchemaEvolution(System.Threading.CancellationToken cancellationToken = null) : System.Void
 OneIndex.SearchIndex<T>.CompleteSchemaEvolutionAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
 OneIndex.SearchIndex<T>.Count : System.Int64 { get; }
 OneIndex.SearchIndex<T>.Delete(System.String id) : System.Boolean
-OneIndex.SearchIndex<T>.DeleteAsync(System.String id) : System.Threading.Tasks.ValueTask<System.Boolean>
+OneIndex.SearchIndex<T>.DeleteAsync(System.String id, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<System.Boolean>
 OneIndex.SearchIndex<T>.Dispose() : System.Void
 OneIndex.SearchIndex<T>.DisposeAsync() : System.Threading.Tasks.ValueTask
 OneIndex.SearchIndex<T>.Documents() : System.Collections.Generic.IEnumerable<T>
@@ -1556,6 +1570,7 @@ OneIndex.SearchIndex<T>.SparseEncoder : OneIndex.Vectors.ISparseEncoder { get; }
 OneIndex.SearchIndex<T>.TryParse(System.String queryJson, out OneIndex.SearchQuery<T> search, out OneIndex.Queries.QueryParseException error) : System.Boolean
 OneIndex.SearchIndex<T>.Upsert(System.Collections.Generic.IEnumerable<T> documents, System.Threading.CancellationToken cancellationToken = null) : System.Void
 OneIndex.SearchIndex<T>.Upsert(T document, System.Threading.CancellationToken cancellationToken = null) : System.Void
+OneIndex.SearchIndex<T>.UpsertAsync(System.Collections.Generic.IEnumerable<T> documents, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
 OneIndex.SearchIndex<T>.UpsertAsync(T document, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
 OneIndex.SearchMapping.static FromDate(OneIndex.Index.FieldValue value) : System.DateTime
 OneIndex.SearchMapping.static ToDate(System.DateTime value) : System.DateTimeOffset
@@ -1573,6 +1588,7 @@ OneIndex.SearchMappings.static Require<T>() : OneIndex.SearchMapping<T>
 OneIndex.SearchMappings.static TryGet<T>(out OneIndex.SearchMapping<T> mapping) : System.Boolean
 OneIndex.SearchQuery<T>.Aggregate(System.Action<OneIndex.Aggregations.AggregationBuilder<T>> configure) : OneIndex.SearchQuery<T>
 OneIndex.SearchQuery<T>.Count() : System.Int64
+OneIndex.SearchQuery<T>.CountAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<System.Int64>
 OneIndex.SearchQuery<T>.CountExactly() : OneIndex.SearchQuery<T>
 OneIndex.SearchQuery<T>.DefaultRerankWindow : System.Int32 = 100
 OneIndex.SearchQuery<T>.Distinct<TField>(System.Linq.Expressions.Expression<System.Func<T,TField>> member) : OneIndex.SearchQuery<T>
@@ -1607,6 +1623,7 @@ OneIndex.SearchQuery<T>.ThenByDescending<TKey>(System.Linq.Expressions.Expressio
 OneIndex.SearchQuery<T>.ThenByDistance<TPoint>(System.Linq.Expressions.Expression<System.Func<T,TPoint>> member, System.Double latitude, System.Double longitude, OneIndex.Search.SortDirection direction = Ascending) : OneIndex.SearchQuery<T>
 OneIndex.SearchQuery<T>.ThenByRelevance() : OneIndex.SearchQuery<T>
 OneIndex.SearchQuery<T>.ToList() : System.Collections.Generic.List<OneIndex.SearchHit<T>>
+OneIndex.SearchQuery<T>.ToListAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<System.Collections.Generic.List<OneIndex.SearchHit<T>>>
 OneIndex.SearchQuery<T>.ToQuery() : OneIndex.Search.Query
 OneIndex.SearchQuery<T>.Where(System.Linq.Expressions.Expression<System.Func<T,System.Boolean>> predicate) : OneIndex.SearchQuery<T>
 OneIndex.SearchQuery<T>.Where(System.String filter) : OneIndex.SearchQuery<T>
@@ -1871,6 +1888,7 @@ OneIndex.Suggest.DidYouMean.Suggest(OneIndex.Search.ITextFieldReader field, Syst
 OneIndex.Suggest.DidYouMean.Suggest(System.Collections.Generic.IReadOnlyList<OneIndex.Search.ITextFieldReader> segments, System.String text, System.Threading.CancellationToken cancellationToken = null) : System.Collections.Generic.IReadOnlyList<OneIndex.Suggest.Suggestion>
 OneIndex.Suggest.DidYouMean.SuggestAsync(System.Collections.Generic.IReadOnlyList<OneIndex.Search.ITextFieldReader> segments, System.String text, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<OneIndex.Suggest.Suggestion>>
 OneIndex.Suggest.DidYouMean.SuggestTerm(System.Collections.Generic.IReadOnlyList<OneIndex.Search.ITextFieldReader> segments, System.String term, System.Threading.CancellationToken cancellationToken = null) : System.Collections.Generic.IReadOnlyList<OneIndex.Suggest.TermCandidate>
+OneIndex.Suggest.DidYouMean.SuggestTermAsync(System.Collections.Generic.IReadOnlyList<OneIndex.Search.ITextFieldReader> segments, System.String term, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<OneIndex.Suggest.TermCandidate>>
 OneIndex.Suggest.EditDistance.static CodePointCount(System.ReadOnlySpan<System.Char> text) : System.Int32
 OneIndex.Suggest.EditDistance.static OptimalStringAlignment(System.ReadOnlySpan<System.Char> a, System.ReadOnlySpan<System.Char> b, System.Int32 max) : System.Int32
 OneIndex.Suggest.SuggestMode.Missing : OneIndex.Suggest.SuggestMode = 0
