@@ -7,6 +7,7 @@ AnalysisScenario.Run();
 AsianScenario.Run();
 QueryFormsLowLevelScenario.Run();
 RankingScenario.Run();
+MultiVectorScenario.Run();
 VectorScenario.RunLowLevel();
 SmokeScenario.RunWriter(new MemoryStorage(), threadedMerges: false);
 

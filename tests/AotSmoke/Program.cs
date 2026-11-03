@@ -16,6 +16,7 @@ ModelsScenario.Run();
 HybridScenario.Run();
 RerankScenario.Run();
 SparseScenario.Run();
+MultiVectorScenario.Run();
 VectorScenario.RunLowLevel();
 VectorScenario.RunFilteredWalk();
 VectorScenario.RunHappyPath();
