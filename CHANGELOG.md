@@ -4,6 +4,12 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.3.0-preview.1] - 2026-11-03
+
+- Commit format 3: a flushed segment writes its text, column, point, stored and identifier parts into one pack file, so a small commit adds two files instead of eight (fewer flushes to disk per commit). Indexes written by earlier formats open, search and merge unchanged.
+- Term proximity: user-text searches add a proximity bonus to the BM25F score (after Büttcher, Clarke and Lushman, SIGIR 2006), weight 0.1 by default; typed queries are unchanged.
+- Ranking rules (opt-in): a bucket-sort order of `words`, `typo`, `proximity`, `attribute`, `sort` and `exactness` rules, declared with `[RankingRules(...)]`, set per search with `.RankingRules(...)`, or given as `rankingRules` in query JSON.
+- Query JSON: a string holding an unpaired surrogate escape is a positioned parse error instead of an exception.
 - Term dictionary format 2: nodes keep their labels, cumulative term counts and child distances in fixed-width tables, so an arc is found by label and fuzzy, typo and as-you-type expansion can look up only the arcs a Levenshtein state can still use. Fuzzy automata share precomputed shape transitions across queries. Version 1 segments stay readable and are rewritten as version 2 when merged.
 - Block-max WAND re-sorts its clauses from the previous round's order instead of from scratch, which makes disjunctions of dozens of terms (fuzzy and typo expansions) about twice as fast.
 - Merge policy: `TieredMergePolicy.SizeRatio` (default 2) also merges the smallest segments when the largest of a group is at most that many times the others combined, so a settled index keeps a handful of segments and fuzzy, typo and prefix queries walk fewer term dictionaries; set it to 0 for the plain tiered policy. Bulk loads rewrite documents more often (about 3.8 times at 15 flushes against 1.7).
