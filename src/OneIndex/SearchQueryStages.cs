@@ -44,6 +44,56 @@ public sealed partial class SearchQuery<T>
     }
 
     /// <summary>
+    /// Facet value search (Meilisearch's facet search): the values of a property that match what the user typed, with their counts over the documents
+    /// this search matches (its text and filters), so the counts follow the current selection. Matching folds case and accents and tolerates typos
+    /// (docs/facets.md). Paging, sorting and facets of this search are ignored.
+    /// </summary>
+    /// <typeparam name="TField">The property type.</typeparam>
+    /// <param name="member">The property, like <c>x =&gt; x.Category</c>; it must keep a column (<c>[Facet]</c>).</param>
+    /// <param name="text">What the user typed; <see langword="null"/> or empty lists every value.</param>
+    /// <param name="limit">The most values returned, at least 1. Default 100.</param>
+    /// <param name="sortBy">Order by value (default) or by count.</param>
+    /// <param name="cancellationToken">Cancels the search.</param>
+    /// <returns>The matching values; empty before the first commit.</returns>
+    /// <exception cref="ArgumentException">The expression is not a plain property, or it keeps no column or cannot be faceted.</exception>
+    public IReadOnlyList<FacetValue> FacetValues<TField>(Expression<Func<T, TField>> member, string? text, int limit = FacetValueSearch.DefaultLimit, FacetSort sortBy = FacetSort.Alpha, CancellationToken cancellationToken = default)
+    {
+        MappedMember m = MemberNames.Resolve(_index.Mapping, member, nameof(FacetValues));
+        if (limit < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(limit), "limit must be at least 1.");
+        }
+
+        _ = new FacetCollector(_index.Mapping.Schema, [new FacetRequest(m.Name)]); // validates the field now
+        Search.Query query = Build(out _, out _, out _);
+        SearchIndex<T>.Generation? generation = _index.Acquire();
+        if (generation is null)
+        {
+            return [];
+        }
+
+        try
+        {
+            return FacetValueSearch.Search(generation.Searcher, query, m.Name, text, limit, sortBy, cancellationToken);
+        }
+        finally
+        {
+            generation.Release();
+        }
+    }
+
+    /// <summary>Facet value search (see <see cref="FacetValues{TField}(Expression{Func{T, TField}}, string, int, FacetSort, CancellationToken)"/>); the work runs on the calling thread.</summary>
+    /// <typeparam name="TField">The property type.</typeparam>
+    /// <param name="member">The property.</param>
+    /// <param name="text">What the user typed.</param>
+    /// <param name="limit">The most values returned.</param>
+    /// <param name="sortBy">The order.</param>
+    /// <param name="cancellationToken">Cancels the search.</param>
+    /// <returns>The matching values.</returns>
+    public ValueTask<IReadOnlyList<FacetValue>> FacetValuesAsync<TField>(Expression<Func<T, TField>> member, string? text, int limit = FacetValueSearch.DefaultLimit, FacetSort sortBy = FacetSort.Alpha, CancellationToken cancellationToken = default)
+        => ValueTask.FromResult(FacetValues(member, text, limit, sortBy, cancellationToken));
+
+    /// <summary>
     /// Keeps only the best hit for each value of a property (Meilisearch's distinct attribute): hits are collapsed, groups are ranked by
     /// their best document and paged with <c>Skip</c> and <c>Take</c>. A document with several values is grouped by the first; a
     /// document without one is its own group. <see cref="SearchResults{T}.TotalHits"/> then counts groups, exactly. Memory grows with the number of groups.

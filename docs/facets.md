@@ -34,6 +34,8 @@ Happy path: `index.Search("shoes").Facets(x => x.Tags).Facets(x => x.Price, sort
 
 `FacetValueSearch.Search(searcher, query, field, text, limit)` answers "which values of this facet match what the user typed", counted over the documents `query` matches (so the counts reflect the current filters). `Match(values, text, limit)` applies the same rules to counts already in hand. The result is ordered by value (ordinal; the default, as in Meilisearch) or, with `sortBy: FacetSort.Count`, by count (most documents first, ties by value), then cut at `limit` (default 100).
 
+On the happy path the same search is `index.Search(...).Where(...).FacetValues(x => x.Category, "sho")` (and `FacetValuesAsync`): it counts over the documents of that search, ignoring its paging.
+
 Normalization of both the value and the input: NFKC, full case folding, accent removal (the same steps as the standard analyzers; `ß` becomes `ss`, `ﬁ` becomes `fi`, final sigma folds to sigma). Then both are split into words (runs of letters, digits and combining marks).
 
 A value matches when
