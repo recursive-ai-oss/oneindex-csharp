@@ -7,9 +7,13 @@ Per row: the median over repetitions of each engine's median, the ratio (ours / 
 throughput, so that below 1.0 is always better for us), peak resident set, index size and allocated bytes. Prints the geometric mean
 of the ratios. The as-you-type typo row with the comparator's match set (oneindex-matched) gates; the documented-semantics row is information.
 """
-import glob, json, math, os, statistics, sys
+import glob, json, math, os, re, statistics, sys
 
 d = sys.argv[1]
+
+
+def one_min(s):
+    return float(re.findall(r"[0-9]+\.?[0-9]*", s)[0])
 
 
 def load(prefix):
@@ -40,8 +44,8 @@ for name, runs in (("oneindex", one), ("lucene", luc)):
     if runs:
         m = runs[0]
         print(f"{name}: {m['engine']} {m['engineVersion']} | {m['machine'].get('cpu')} | {m['machine'].get('logicalCores')} cores | {m['machine'].get('runtime')} | docs {m['documents']}")
-        print(f"  load before {[r['loadBefore'] for r in runs]} after {[r['loadAfter'] for r in runs]}")
-        print(f"  load during (max 1-min) {[max(float(x.split()[0]) for x in r['loadDuring']) for r in runs]}")
+        print(f"  1-min load before {[one_min(r['loadBefore']) for r in runs]} after {[one_min(r['loadAfter']) for r in runs]}")
+        print(f"  load during (max 1-min) {[max(one_min(x) for x in r['loadDuring']) for r in runs]}")
 
 print("\n| Row | OneIndex | Lucene.NET | ratio (ours/theirs, <1 faster) | checksum equal | RSS MiB ours/theirs | index bytes ours/theirs | alloc B/op ours/theirs |")
 print("|---|---|---|---|---|---|---|---|")
