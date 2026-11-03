@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The Entity Framework Core campaigns: two application processes share one SQLite database, each keeps its own index, and both are
+       killed at random points and at named stages. The model is shared with the unit tests. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>OneIndex.EfDurability</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/OneIndex/OneIndex.csproj" />
+    <ProjectReference Include="../../src/OneIndex.EntityFrameworkCore/OneIndex.EntityFrameworkCore.csproj" />
+    <ProjectReference Include="../../src/OneIndex.Generators/OneIndex.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" />
+  </ItemGroup>
+
+</Project>
