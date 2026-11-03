@@ -4,6 +4,11 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+- `RecursiveAI.OneIndex.Analysis.Asian`: Japanese and Korean lattice segmentation (IPADIC, mecab-ko-dic), Chinese most-probable-path segmentation (jieba word list) and Thai, Lao, Khmer and Myanmar maximal matching (ICU word lists), as the analyzers `ja`, `ko`, `zh`, `th`, `lo`, `km` and `my` (`AsianAnalyzers.Register()`; core gains `AnalyzerRegistry.Register`). Dictionaries are a checksummed container format (`OIDICT` 1) with typed errors.
+- Decompounding in core: `CompoundSplitter` (Koehn and Knight splitting, fewest parts first), `DecompoundFilter`, packed word lists for de, nl, sv, da, no, fi and is, and the analyzers `<code>-compound` and `<code>-compound-both`.
+- `RecursiveAI.OneIndex.Models`: SentencePiece unigram tokenizer (`SentencePieceModel`, `SentencePieceTokenizer`) with the nmt_nfkc normalizer.
+- New package `RecursiveAI.OneIndex.Models.Multilingual`: `MultilingualE5Embedder` (multilingual-e5-small, int8 weights packed).
+
 ## [0.3.0-preview.1] - 2026-11-03
 
 - Commit format 3: a flushed segment writes its text, column, point, stored and identifier parts into one pack file, so a small commit adds two files instead of eight (fewer flushes to disk per commit). Indexes written by earlier formats open, search and merge unchanged.

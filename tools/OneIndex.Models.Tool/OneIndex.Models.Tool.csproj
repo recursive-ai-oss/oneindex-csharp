@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/OneIndex.Models/OneIndex.Models.csproj" />
+    <ProjectReference Include="../../src/OneIndex.Models.Multilingual/OneIndex.Models.Multilingual.csproj" />
     <ProjectReference Include="../OneIndex.Harness/OneIndex.Harness.csproj" />
   </ItemGroup>
 

@@ -14,6 +14,7 @@
   <ItemGroup>
     <ProjectReference Include="../../src/OneIndex/OneIndex.csproj" />
     <ProjectReference Include="../../src/OneIndex.Models/OneIndex.Models.csproj" />
+    <ProjectReference Include="../../src/OneIndex.Analysis.Asian/OneIndex.Analysis.Asian.csproj" />
     <!-- A packaged app gets the generator from the package; here it is referenced directly. -->
     <ProjectReference Include="../../src/OneIndex.Generators/OneIndex.Generators.csproj" ReferenceOutputAssembly="false" OutputItemType="Analyzer" />
   </ItemGroup>

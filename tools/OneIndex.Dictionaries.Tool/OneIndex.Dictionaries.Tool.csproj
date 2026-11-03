@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Builds the packed dictionary files of OneIndex.Analysis.Asian from fetched source dictionaries (tools/dictionaries/build.sh),
+       and evaluates the segmenters against gold-segmented treebanks. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>OneIndex.Dictionaries.Tool</RootNamespace>
+    <AssemblyName>oneindex-dictionaries</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsAotCompatible>false</IsAotCompatible>
+    <IsTrimmable>false</IsTrimmable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/OneIndex.Analysis.Asian/OneIndex.Analysis.Asian.csproj" />
+  </ItemGroup>
+
+</Project>

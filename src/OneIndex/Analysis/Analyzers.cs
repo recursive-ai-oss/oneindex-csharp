@@ -62,14 +62,16 @@ public sealed class LanguageAnalyzer : Analyzer
     private readonly string _code;
     private readonly string _language;
     private readonly bool _both;
+    private readonly bool _decompound;
     private readonly StopWordSettings? _stopSettings;
 
     /// <summary>Creates an analyzer.</summary>
     /// <param name="languageCode">An ISO 639-1 code from <see cref="LanguageCodes"/>.</param>
     /// <param name="keepUnstemmed">Whether to index the unstemmed word beside its stem (the <c>-both</c> form).</param>
     /// <param name="stopWords">A per-index stop word configuration that replaces or extends the language's list; <see langword="null"/> (default) keeps the language's own list. The analyzer's <see cref="Name"/> does not change: the settings are stored with the index, not in the name.</param>
-    /// <exception cref="ArgumentException">The code is not supported.</exception>
-    public LanguageAnalyzer(string languageCode, bool keepUnstemmed = false, StopWordSettings? stopWords = null)
+    /// <param name="decompound">Whether to also index the parts of compound words (the <c>-compound</c> form); needs a language in <see cref="CompoundVocabulary.PackedLanguages"/>.</param>
+    /// <exception cref="ArgumentException">The code is not supported, or <paramref name="decompound"/> is set for a language without a packed word list.</exception>
+    public LanguageAnalyzer(string languageCode, bool keepUnstemmed = false, StopWordSettings? stopWords = null, bool decompound = false)
     {
         ArgumentNullException.ThrowIfNull(languageCode);
         string? language = null;
@@ -85,13 +87,19 @@ public sealed class LanguageAnalyzer : Analyzer
         _code = languageCode;
         _both = keepUnstemmed;
         _stopSettings = stopWords;
+        if (decompound && !CompoundVocabulary.PackedLanguages.Contains(languageCode))
+        {
+            throw new ArgumentException($"There is no decompounding word list for '{languageCode}'.", nameof(decompound));
+        }
+
+        _decompound = decompound;
     }
 
     /// <summary>The ISO 639-1 codes that have an analyzer, in alphabetical order.</summary>
     public static IReadOnlyList<string> LanguageCodes { get; } = Table.Select(t => t.Code).ToArray();
 
     /// <inheritdoc/>
-    public override string Name => _both ? _code + "-both" : _code;
+    public override string Name => _code + (_decompound ? "-compound" : string.Empty) + (_both ? "-both" : string.Empty);
 
     /// <inheritdoc/>
     protected override TokenSource CreateStream()
@@ -104,6 +112,12 @@ public sealed class LanguageAnalyzer : Analyzer
 
         stream = new CaseFoldFilter(stream);
         stream = new ApostropheFilter(stream);
+        if (_decompound)
+        {
+            // Compounds are split before stop words and stemming, so each part is stemmed like any other word.
+            stream = new DecompoundFilter(stream, CompoundSplitter.ForLanguage(_code));
+        }
+
         StopWords? elision = _code switch
         {
             "fr" => ElisionFilter.French,

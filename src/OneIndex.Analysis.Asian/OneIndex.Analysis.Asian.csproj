@@ -3,8 +3,30 @@
   <PropertyGroup>
     <RootNamespace>OneIndex.Analysis.Asian</RootNamespace>
     <PackageId>$(PackagePrefix).Analysis.Asian</PackageId>
-    <Description>Japanese, Chinese, Korean and Southeast Asian word segmentation for OneIndex. Part of the OneIndex embedded search engine; unaffiliated with other products named OneIndex, OneSearch or similar.</Description>
+    <Description>Japanese, Chinese, Korean, Thai, Lao, Khmer and Myanmar word segmentation for OneIndex, with packed dictionaries under permissive licences. Part of the OneIndex embedded search engine; unaffiliated with other products named OneIndex, OneSearch or similar.</Description>
   </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="OneIndex.Tests" />
+    <InternalsVisibleTo Include="OneIndex.Fuzz" />
+    <InternalsVisibleTo Include="oneindex-dictionaries" />
+  </ItemGroup>
+
+  <PropertyGroup Label="Packed dictionaries">
+    <!-- Written by tools/dictionaries/build.sh from the fetched sources. A build without them compiles and runs; an analyzer that needs a
+         missing packed dictionary then says so, and a dictionary can always be loaded from a file instead. -->
+    <OneIndexDictionaries Condition="'$(OneIndexDictionaries)' == ''">$(ArtifactsPath)/dictionaries</OneIndexDictionaries>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="$(OneIndexDictionaries)/ja.oidict" LogicalName="OneIndex.Analysis.Asian.Dictionaries.ja.oidict" Condition="Exists('$(OneIndexDictionaries)/ja.oidict')" />
+    <EmbeddedResource Include="$(OneIndexDictionaries)/ko.oidict" LogicalName="OneIndex.Analysis.Asian.Dictionaries.ko.oidict" Condition="Exists('$(OneIndexDictionaries)/ko.oidict')" />
+    <EmbeddedResource Include="$(OneIndexDictionaries)/zh.oidict" LogicalName="OneIndex.Analysis.Asian.Dictionaries.zh.oidict" Condition="Exists('$(OneIndexDictionaries)/zh.oidict')" />
+    <EmbeddedResource Include="$(OneIndexDictionaries)/th.oidict" LogicalName="OneIndex.Analysis.Asian.Dictionaries.th.oidict" Condition="Exists('$(OneIndexDictionaries)/th.oidict')" />
+    <EmbeddedResource Include="$(OneIndexDictionaries)/lo.oidict" LogicalName="OneIndex.Analysis.Asian.Dictionaries.lo.oidict" Condition="Exists('$(OneIndexDictionaries)/lo.oidict')" />
+    <EmbeddedResource Include="$(OneIndexDictionaries)/km.oidict" LogicalName="OneIndex.Analysis.Asian.Dictionaries.km.oidict" Condition="Exists('$(OneIndexDictionaries)/km.oidict')" />
+    <EmbeddedResource Include="$(OneIndexDictionaries)/my.oidict" LogicalName="OneIndex.Analysis.Asian.Dictionaries.my.oidict" Condition="Exists('$(OneIndexDictionaries)/my.oidict')" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="../OneIndex/OneIndex.csproj" />

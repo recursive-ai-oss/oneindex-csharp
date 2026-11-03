@@ -18,6 +18,16 @@
     <InternalsVisibleTo Include="OneIndex.VectorBench.Curiosity" />
   </ItemGroup>
 
+  <PropertyGroup Label="Packed decompounding word lists">
+    <!-- Written by tools/decompounding/build_lists.py from the fetched sources. A build without them compiles and runs; CompoundVocabulary.ForLanguage
+         then says the list is missing, and CompoundVocabulary.Read loads any list from a file. -->
+    <OneIndexDecompounding Condition="'$(OneIndexDecompounding)' == ''">$(ArtifactsPath)/decompounding</OneIndexDecompounding>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="$(OneIndexDecompounding)/*.tsv.gz" Condition="Exists('$(OneIndexDecompounding)')" LogicalName="OneIndex.Analysis.Decompounding.%(Filename)%(Extension)" />
+  </ItemGroup>
+
   <!-- The source generator ships inside this package as an analyzer; it is built first and is not a runtime dependency. -->
   <ItemGroup>
     <ProjectReference Include="../OneIndex.Generators/OneIndex.Generators.csproj" ReferenceOutputAssembly="false" OutputItemType="Analyzer" />

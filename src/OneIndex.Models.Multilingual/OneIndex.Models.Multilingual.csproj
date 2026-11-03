@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>OneIndex.Models.Multilingual</RootNamespace>
+    <PackageId>$(PackagePrefix).Models.Multilingual</PackageId>
+    <Description>The multilingual dense embedder for the OneIndex embedded search engine: multilingual-e5-small (MIT licence, about 100 languages, 384 dimensions, int8 weights included) with its SentencePiece tokenizer, running on OneModel. A separate package because the weights are about 120 MB. Unaffiliated with other products named OneIndex, OneSearch or similar.</Description>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Packed weights">
+    <!-- Written by tools/models/pack-weights.sh e5. A build without them compiles and runs; MultilingualE5Embedder.Load() then reports that the
+         weights are missing, and Open() takes model files. -->
+    <OneIndexE5Weights Condition="'$(OneIndexE5Weights)' == ''">$(ArtifactsPath)/model-weights/multilingual-e5-small</OneIndexE5Weights>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(OneIndexE5Weights)/model.onemodel') And Exists('$(OneIndexE5Weights)/sentencepiece.bpe.model')">
+    <EmbeddedResource Include="$(OneIndexE5Weights)/model.onemodel" LogicalName="OneIndex.Models.Weights.multilingual-e5-small.onemodel" />
+    <EmbeddedResource Include="$(OneIndexE5Weights)/sentencepiece.bpe.model" LogicalName="OneIndex.Models.Weights.multilingual-e5-small.sentencepiece.bpe.model" />
+    <None Include="$(OneIndexE5Weights)/LICENSE-multilingual-e5-small.txt" Pack="true" PackagePath="models/multilingual-e5-small/" Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../OneIndex.Models/OneIndex.Models.csproj" />
+  </ItemGroup>
+
+</Project>

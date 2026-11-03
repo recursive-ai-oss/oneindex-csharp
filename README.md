@@ -21,7 +21,8 @@ OneIndex is unaffiliated with other products named OneIndex, OneSearch or simila
 | Vectors: HNSW and exact flat search; auto-embedding with an embedding cache; hybrid search (rank fusion, linear fusion) | Working (preview); quantized codecs, filtered traversal, sparse vectors and reranking in progress |
 | `RecursiveAI.OneIndex.Models`: WordPiece tokenizer, default English embedder (bge-small-en-v1.5, int8) | Working (preview) |
 | Entity Framework Core, folder indexing, vector-store adapter, command line tool | Not built yet (empty packages) |
-| Browser backends and static index, Asian segmenters, multi-vector, IVF | Not built yet |
+| `RecursiveAI.OneIndex.Analysis.Asian` (ja, zh, ko, th, lo, km, my), decompounding (de, nl, sv, da, no, fi, is), `RecursiveAI.OneIndex.Models.Multilingual` (multilingual-e5-small, SentencePiece) | Working (preview) |
+| Browser backends and static index, multi-vector, IVF | Not built yet |
 
 ### Relevance (BM25, nDCG@10, BEIR test sets)
 
@@ -86,6 +87,7 @@ foreach (var hit in results)
 | `RecursiveAI.OneIndex` | The engine and the happy path (no dependencies beyond .NET) |
 | `RecursiveAI.OneIndex.Models` | Embedders, reranker and sparse encoder on OneModel |
 | `RecursiveAI.OneIndex.Analysis.Asian` | Japanese, Chinese, Korean and Southeast Asian segmentation |
+| `RecursiveAI.OneIndex.Models.Multilingual` | multilingual-e5-small embedder with SentencePiece tokenizer and int8 weights |
 | `RecursiveAI.OneIndex.EntityFrameworkCore` | Keeps an index in step with `SaveChanges` |
 | `RecursiveAI.OneIndex.VectorData` | A vector store over an index for Microsoft.Extensions.VectorData |
 | `RecursiveAI.OneIndex.Files` / `.Files.Ocr` | Folder indexing through OnePDF, onehtml, onearchive and oneocr |

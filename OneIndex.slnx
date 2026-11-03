@@ -3,6 +3,7 @@
     <Project Path="src/OneIndex/OneIndex.csproj" />
     <Project Path="src/OneIndex.Generators/OneIndex.Generators.csproj" />
     <Project Path="src/OneIndex.Models/OneIndex.Models.csproj" />
+    <Project Path="src/OneIndex.Models.Multilingual/OneIndex.Models.Multilingual.csproj" />
     <Project Path="src/OneIndex.Analysis.Asian/OneIndex.Analysis.Asian.csproj" />
     <Project Path="src/OneIndex.EntityFrameworkCore/OneIndex.EntityFrameworkCore.csproj" />
     <Project Path="src/OneIndex.VectorData/OneIndex.VectorData.csproj" />
@@ -27,6 +28,7 @@
     <Project Path="tools/OneIndex.Harness/OneIndex.Harness.csproj" />
     <Project Path="tools/OneIndex.Harness.Cli/OneIndex.Harness.Cli.csproj" />
     <Project Path="tools/OneIndex.Models.Tool/OneIndex.Models.Tool.csproj" />
+    <Project Path="tools/OneIndex.Dictionaries.Tool/OneIndex.Dictionaries.Tool.csproj" />
     <Project Path="tools/OneIndex.Files.Tool/OneIndex.Files.Tool.csproj" />
     <Project Path="tools/UcdTables/UcdTables.csproj" />
     <Project Path="tools/SnowballGen/SnowballGen.csproj" />

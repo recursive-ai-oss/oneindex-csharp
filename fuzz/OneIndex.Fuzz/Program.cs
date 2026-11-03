@@ -31,6 +31,8 @@ internal static class Program
         ["vectors"] = VectorTarget.Run,
         ["dynamic"] = DynamicTarget.Run,
         ["wordpiece"] = WordPieceTarget.Run,
+        ["dictionary"] = AsianTargets.RunDictionary,
+        ["asian"] = AsianTargets.RunText,
         ["static"] = StaticTarget.Run,
     };
 
@@ -97,6 +99,12 @@ internal static class Program
                     break;
                 case "wordpiece":
                     WordPieceTarget.WriteSeeds(args[2]);
+                    break;
+                case "asian":
+                    AsianTargets.WriteSeeds(args[2]);
+                    break;
+                case "dictionary":
+                    AsianTargets.WriteDictionarySeeds(args[2]);
                     break;
                 case "static":
                     StaticTarget.WriteSeeds(args[2]);

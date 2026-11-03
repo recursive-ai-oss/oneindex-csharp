@@ -42,6 +42,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The character table of the nmt_nfkc normalizer, observed from the released SentencePiece normalizer. -->
+    <EmbeddedResource Include="Tokenization/nmt_nfkc.tsv" LogicalName="OneIndex.Models.Tokenization.nmt_nfkc.tsv" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../OneIndex/OneIndex.csproj" />
   </ItemGroup>
 
