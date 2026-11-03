@@ -13,5 +13,6 @@ out="${OneIndexSparseWeights:-${ONEINDEX_ARTIFACTS:?set ONEINDEX_ARTIFACTS or On
 mkdir -p "$out"
 cp "$src/$file" "$out/model.onemodel"
 cp "$src/vocab.txt" "$src/idf.json" "$out/"
-cp "$src/hf/LICENSE" "$out/LICENSE-neural-sparse.txt" 2>/dev/null || printf 'Apache License 2.0, see https://www.apache.org/licenses/LICENSE-2.0\n' > "$out/LICENSE-neural-sparse.txt"
+# The model card states Apache-2.0; when the download carries no LICENSE file, pack the full Apache-2.0 text (the redistribution condition).
+cp "$src/hf/LICENSE" "$out/LICENSE-neural-sparse.txt" 2>/dev/null || cp "$(dirname "${BASH_SOURCE[0]}")/../../LICENSE-APACHE" "$out/LICENSE-neural-sparse.txt"
 sha256sum "$out/model.onemodel" "$out/vocab.txt" "$out/idf.json"
