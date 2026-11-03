@@ -243,7 +243,7 @@ nDCG@10 under the BEIR convention), against the model card's MTEB figures (the `
 |---|---|---|---|
 | SciFact | 67.704 | 67.82 | +0.1 point |
 | ArguAna | 39.063 | 38.59 | -0.5 point |
-| SCIDOCS | 13.895 | SCIDOCS_PLACEHOLDER | |
+| SCIDOCS | 13.895 | 13.75 | -0.1 point |
 
 MIRACL and NQ were not run: MIRACL needs multilingual corpora of millions of passages and NQ is 2.68 million passages, at 15 to 30
 passages per second on CPU. ArguAna's queries are documents of the corpus: the BEIR convention (used here) skips a hit whose id equals

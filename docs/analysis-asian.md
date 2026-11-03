@@ -82,6 +82,25 @@ Differences to explain:
   shared segmenter is unit-tested on a synthetic list (and shared with Thai, which is scored above); the three packed analyzers get a smoke
   test (no tokens from blank text) and no accuracy figure. Treat them as dictionary breaking, not as evaluated segmentation.
 
+## Speed (information)
+
+Segmentation only (the segmenter over text, not the whole analyzer), single thread, one process, warmed up, three runs per language;
+`oneindex-dictionaries speed <lang> <dictionary> <text>`, indicative (a shared 16-core AMD Ryzen 9 7950X3D, load about 11 before, during and
+after; .NET 10.0, x64). Text: UD sentences for ja, ko, zh and th, repeated to about 3 million characters; for lo, km and my random strings
+of dictionary words (no real text was available), so those three show the cost of matching, not of real prose.
+
+| Language | Method | Million characters per second (3 runs) | MB per second of UTF-16 |
+|---|---|---|---|
+| ja | lattice, search mode | 1.75 to 1.91 | 3.5 to 3.8 |
+| ko | lattice | 1.20 to 1.33 | 2.4 to 2.7 |
+| zh | unigram | 4.45 to 4.56 | 8.9 to 9.1 |
+| th | maximal matching | 5.80 to 6.09 | 11.6 to 12.2 |
+| lo | maximal matching | 4.94 to 6.10 | 9.9 to 12.2 |
+| km | maximal matching | 4.97 to 5.18 | 9.9 to 10.4 |
+| my | maximal matching | 6.03 to 6.13 | 12.1 to 12.3 |
+
+There is no comparator row: the other segmenters were not run (no managed engine's segmenter is in the benchmark set).
+
 ## Limits and safety
 
 Dictionary readers validate the magic, version, every section length and the checksum before using an offset; sizes and counts are
