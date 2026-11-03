@@ -95,13 +95,27 @@ BertEmbedder OpenEmbedder(string prefix) => BertEmbedder.Open(Req("model"), Req(
     MaxBatchTokens = int.Parse(Opt("batch-tokens", "2048"), CultureInfo.InvariantCulture),
 });
 
+// With --spm <sentencepiece.bpe.model> the model is multilingual-e5-small (its prefixes are built in); otherwise a BERT-style model with --vocab.
+(IEmbedder Embedder, IDisposable Owner, string Kernel) OpenAny(string prefix)
+{
+    if (options.TryGetValue("spm", out string? spm))
+    {
+        MultilingualE5Embedder e5 = MultilingualE5Embedder.Open(Req("model"), spm, "tool", exactArithmetic: Opt("exact", "off") == "on");
+        return (e5, e5, e5.KernelPath);
+    }
+
+    BertEmbedder bert = OpenEmbedder(prefix);
+    return (bert, bert, bert.KernelPath);
+}
+
 int Parity()
 {
     var role = Opt("role", "document") == "query" ? EmbeddingRole.Query : EmbeddingRole.Document;
     var texts = File.ReadLines(Req("texts")).Select(l => JsonDocument.Parse(l).RootElement.GetProperty("t").GetString()!).ToList();
     byte[] raw = File.ReadAllBytes(Req("reference"));
     ReadOnlySpan<float> reference = MemoryMarshal.Cast<byte, float>(raw);
-    using BertEmbedder embedder = OpenEmbedder(Opt("prefix", ""));
+    (IEmbedder embedder, IDisposable owner, string kernel) = OpenAny(Opt("prefix", ""));
+    using IDisposable ownerScope = owner;
     int d = embedder.Dimension;
     if (reference.Length != texts.Count * d)
     {
@@ -126,7 +140,7 @@ int Parity()
     }
 
     Array.Sort(cosines);
-    Console.WriteLine($"texts {texts.Count} dim {d} kernel {embedder.KernelPath} cosine min {cosines[0]:F6} p1 {cosines[texts.Count / 100]:F6} median {cosines[texts.Count / 2]:F6} mean {cosines.Average():F6} maxAbsDiff {maxAbs:F5} seconds {sw.Elapsed.TotalSeconds:F1}");
+    Console.WriteLine($"texts {texts.Count} dim {d} kernel {kernel} cosine min {cosines[0]:F6} p1 {cosines[texts.Count / 100]:F6} median {cosines[texts.Count / 2]:F6} mean {cosines.Average():F6} maxAbsDiff {maxAbs:F5} seconds {sw.Elapsed.TotalSeconds:F1}");
     return 0;
 }
 
@@ -138,7 +152,8 @@ int Beir()
     bool instruction = Opt("instruction", "on") == "on";
     double budget = double.Parse(Opt("budget-seconds", "1500"), CultureInfo.InvariantCulture);
     var clock = Stopwatch.StartNew();
-    using BertEmbedder embedder = OpenEmbedder(instruction ? BgeQueryInstruction : "");
+    (IEmbedder embedder, IDisposable owner, string kernel) = OpenAny(instruction ? BgeQueryInstruction : "");
+    using IDisposable ownerScope = owner;
     int d = embedder.Dimension;
     const int ChunkDocs = 500;
 
@@ -230,7 +245,7 @@ int Beir()
         }
     }
 
-    Console.WriteLine($"set {data.Name} docs {ids.Count} queries {n} instruction {(instruction ? "on" : "off")} nDCG@10 {ndcg:F4} (embedding this run: {embedded} passages in {embedSeconds:F1} s) model {Path.GetFileName(Req("model"))} kernel {embedder.KernelPath}");
+    Console.WriteLine($"set {data.Name} docs {ids.Count} queries {n} instruction {(instruction ? "on" : "off")} nDCG@10 {ndcg:F4} (embedding this run: {embedded} passages in {embedSeconds:F1} s) model {Path.GetFileName(Req("model"))} kernel {kernel}");
     return 0;
 }
 

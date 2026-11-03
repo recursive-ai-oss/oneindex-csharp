@@ -3,7 +3,7 @@ wheel (black box). The sample mixes: sentences of four Universal Dependencies tr
 from the Snowball vocabularies (34 languages), and hand-written edge cases (empty, white space, control characters, combining
 sequences, compatibility forms, emoji, unknown characters, very long runs). Seeded, so it is reproducible.
 
-usage: spm_sample.py <model-file> <ud-dir> <snowball-data-dir> <out-prefix>   (writes <prefix>.texts.jsonl and <prefix>.ids.jsonl)
+usage: spm_sample.py <model-file> <ud-dir> <snowball-data-dir> <out-prefix> [tokenizer.json]   (writes <prefix>.texts.jsonl and <prefix>.ids.jsonl)
 """
 import json
 import os
@@ -13,6 +13,7 @@ import sys
 import sentencepiece as spm
 
 model, ud_dir, snow_dir, prefix = sys.argv[1:5]
+tokenizer_json = sys.argv[5] if len(sys.argv) > 5 else None
 rng = random.Random(20261103)
 texts = []
 
@@ -71,4 +72,11 @@ with open(prefix + ".norm.jsonl", "w", encoding="utf-8") as f:
 with open(prefix + ".ids.jsonl", "w") as f:
     for t in texts:
         f.write(json.dumps(sp.encode(t)) + "\n")
+if tokenizer_json:
+    # The model's own fast tokenizer (Hugging Face `tokenizers`, run as a black box): ids with the sentence boundaries, in the model's numbering.
+    from tokenizers import Tokenizer
+    hf = Tokenizer.from_file(tokenizer_json)
+    with open(prefix + ".hf.jsonl", "w") as f:
+        for t in texts:
+            f.write(json.dumps(hf.encode(t).ids) + "\n")
 print(len(texts), "texts")
