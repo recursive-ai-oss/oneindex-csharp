@@ -221,12 +221,14 @@ internal sealed class VectorFieldReader : IVectorFieldReader
     private readonly HnswGraphData? _graph;
     private readonly QuantizedFieldData? _quantized;
     private readonly float _oversample;
+    private readonly IvfIndex? _ivf;
     private readonly DistanceKind _kind;
     private readonly int _maxDoc;
 
     public VectorFieldReader(string name, VectorFieldData values, int[]? ordinalToDoc, HnswGraphData? graph, VectorMetric metric, int maxDoc,
-        QuantizedFieldData? quantized = null, float oversample = 1f)
+        QuantizedFieldData? quantized = null, float oversample = 1f, IvfIndex? ivf = null)
     {
+        _ivf = ivf;
         _quantized = quantized;
         _oversample = oversample;
         Name = name;
@@ -247,6 +249,9 @@ internal sealed class VectorFieldReader : IVectorFieldReader
     public int Count => _values.Count;
 
     public bool HasGraph => _graph is not null;
+
+    /// <summary>Whether the field is searched through an IVF index in this segment.</summary>
+    public bool HasIvf => _ivf is not null;
 
     internal VectorValues Values => _values;
 
@@ -322,6 +327,7 @@ internal sealed class VectorFieldReader : IVectorFieldReader
         FloatNodeScorer scorer = scratch.Scorer(_kind);
         scorer.Reset(_values, q.AsSpan(0, Dimensions));
         IOrdinalFilter? filter = live is null && acceptedDocs is null ? null : new DocFilter(this, live, acceptedDocs);
+        int requestedEf = ef;
         ef = ef <= 0 ? DefaultEf(k) : Math.Max(ef, k);
         long accepted = acceptedDocs is null ? Count : CountBits(acceptedDocs);
         Candidate[] buffer = ArrayPool<Candidate>.Shared.Rent(k);
@@ -336,7 +342,17 @@ internal sealed class VectorFieldReader : IVectorFieldReader
                 graph = false;
             }
 
-            if (graph && _quantized is not null)
+            bool clustered = _ivf is not null && _graph is null && !exact && accepted > 0
+                && !(acceptedDocs is not null && accepted <= FlatSwitchFactor * Math.Max(ef, k));
+            if (clustered)
+            {
+                n = IvfSearch(q.AsSpan(0, Dimensions), k, requestedEf, filter, accepted, buffer);
+                if (n < 0)
+                {
+                    n = FlatSearch.Search(_values, _kind, q.AsSpan(0, Dimensions), k, filter, buffer);
+                }
+            }
+            else if (graph && _quantized is not null)
             {
                 n = QuantizedSearch(scratch, q.AsSpan(0, Dimensions), k, ef, filter, accepted, buffer);
                 if (n < 0)
@@ -370,6 +386,42 @@ internal sealed class VectorFieldReader : IVectorFieldReader
             ArrayPool<Candidate>.Shared.Return(buffer);
         }
     }
+
+    /// <summary>
+    /// IVF search: the lists of the <c>nprobe</c> nearest centres are scored on their 8-bit codes, the best <c>oversample * k</c> candidates are
+    /// measured against the full-precision vectors and the best <c>k</c> by true distance are returned, so the scores are exact whatever the codes.
+    /// <paramref name="nprobe"/> is the number of lists to read (0: an eighth of the lists, at least 8).
+    /// </summary>
+    /// <returns>The number of results, or -1 when the probed lists held too few accepted vectors (the caller scans exactly).</returns>
+    private int IvfSearch(ReadOnlySpan<float> q, int k, int nprobe, IOrdinalFilter? filter, long acceptedCount, Candidate[] output)
+    {
+        IvfIndex ivf = _ivf!;
+        int probes = nprobe <= 0 ? DefaultProbes(ivf.Lists) : Math.Min(nprobe, ivf.Lists);
+        int want = (int)Math.Min(Math.Ceiling(k * (double)IvfOversample), Count);
+        want = Math.Max(want, k);
+        IvfHit[] found = ivf.SearchApproximate(q, Math.Min(want, 10_000), probes, filter is null ? null : filter.Accepts);
+        if (filter is not null && found.Length < Math.Min(k, acceptedCount))
+        {
+            return -1;
+        }
+
+        var scored = new Candidate[found.Length];
+        for (int i = 0; i < found.Length; i++)
+        {
+            scored[i] = new Candidate(FloatNodeScorer.Distance(_kind, q, _values.Get(found[i].Id)), found[i].Id);
+        }
+
+        Array.Sort(scored, CandidateComparer.Instance);
+        int take = Math.Min(k, scored.Length);
+        Array.Copy(scored, output, take);
+        return take;
+    }
+
+    /// <summary>How many candidates the IVF search re-scores exactly, as a multiple of the results asked for.</summary>
+    internal const double IvfOversample = 3;
+
+    /// <summary>The lists read when the caller gives none: an eighth of them, at least 8 (about 0.9 recall on text embeddings; docs/ivf.md).</summary>
+    internal static int DefaultProbes(int lists) => Math.Min(lists, Math.Max(8, (lists + 7) / 8));
 
     /// <summary>
     /// Graph search on the compressed copy, then an exact rerank. The walk keeps at least <c>oversample * k</c> candidates (and at least
@@ -473,9 +525,18 @@ internal sealed class VectorPartReader : ISegmentPartReader, IVectorSource
 
     /// <summary>Opens the vectors file and, when present, the graph file of a segment, checking their structure.</summary>
     public static VectorPartReader Open(IRangeReader vectors, IRangeReader? graph, IRangeReader? quantized, Schema schema, int maxDoc, IndexLimits limits, CancellationToken cancellationToken)
+        => Open(vectors, graph, quantized, null, schema, maxDoc, limits, cancellationToken);
+
+    /// <summary>Opens the vectors file and, when present, the graph, compressed and IVF files of a segment, checking their structure.</summary>
+    public static VectorPartReader Open(IRangeReader vectors, IRangeReader? graph, IRangeReader? quantized, IRangeReader? ivf, Schema schema, int maxDoc, IndexLimits limits, CancellationToken cancellationToken)
     {
         var part = new VectorPartReader();
         part._files.Add(vectors);
+        if (ivf is not null)
+        {
+            part._files.Add(ivf);
+        }
+
         if (graph is not null)
         {
             part._files.Add(graph);
@@ -488,7 +549,7 @@ internal sealed class VectorPartReader : ISegmentPartReader, IVectorSource
 
         try
         {
-            part.Load(vectors, graph, quantized, schema, maxDoc, limits, cancellationToken);
+            part.Load(vectors, graph, quantized, ivf, schema, maxDoc, limits, cancellationToken);
         }
         catch
         {
@@ -568,7 +629,7 @@ internal sealed class VectorPartReader : ISegmentPartReader, IVectorSource
         }
     }
 
-    private void Load(IRangeReader vectors, IRangeReader? graph, IRangeReader? quantized, Schema schema, int maxDoc, IndexLimits limits, CancellationToken cancellationToken)
+    private void Load(IRangeReader vectors, IRangeReader? graph, IRangeReader? quantized, IRangeReader? ivf, Schema schema, int maxDoc, IndexLimits limits, CancellationToken cancellationToken)
     {
         string vname = vectors.Name;
         (ByteCursorBox dirBox, long directoryAt) = ReadDirectory(vectors, VectorSegmentCodec.VectorsMagic, CodecRegistry.NewestVersion(SegmentParts.Vectors), maxDoc, limits, cancellationToken);
@@ -675,6 +736,7 @@ internal sealed class VectorPartReader : ISegmentPartReader, IVectorSource
 
         Dictionary<string, HnswGraphData> graphs = graph is null ? [] : LoadGraphs(graph, schema, maxDoc, limits, entries.ToDictionary(e => e.Name, e => e.Count, StringComparer.Ordinal), cancellationToken);
         Dictionary<string, QuantizedFieldData> compressed = quantized is null ? [] : LoadQuantized(quantized, schema, maxDoc, limits, entries.ToDictionary(e => e.Name, e => e.Count, StringComparer.Ordinal), cancellationToken);
+        Dictionary<string, IvfIndex> clusters = ivf is null ? [] : LoadIvf(ivf, schema, maxDoc, limits, entries.ToDictionary(e => e.Name, e => e.Count, StringComparer.Ordinal), cancellationToken);
         foreach (var e in entries)
         {
             // A compressed copy is used only while it is the codec the schema asks for and there is a graph to walk it with; otherwise
@@ -682,8 +744,59 @@ internal sealed class VectorPartReader : ISegmentPartReader, IVectorSource
             HnswGraphData? g = graphs.GetValueOrDefault(e.Name);
             QuantizedFieldData? qd = g is not null && compressed.TryGetValue(e.Name, out QuantizedFieldData? c) && c.Codec == e.Def.Quantization ? c : null;
             float oversample = e.Def.Oversample > 0 ? e.Def.Oversample : VectorQuantizer.DefaultOversample(e.Def.Quantization);
-            _fields[e.Name] = new VectorFieldReader(e.Name, e.Data, e.OrdDoc, g, e.Def.Metric, maxDoc, qd, oversample);
+            _fields[e.Name] = new VectorFieldReader(e.Name, e.Data, e.OrdDoc, g, e.Def.Metric, maxDoc, qd, oversample, clusters.GetValueOrDefault(e.Name));
         }
+    }
+
+    private static Dictionary<string, IvfIndex> LoadIvf(IRangeReader file, Schema schema, int maxDoc, IndexLimits limits, Dictionary<string, int> counts, CancellationToken cancellationToken)
+    {
+        string iname = file.Name;
+        (ByteCursorBox dirBox, long directoryAt) = ReadDirectory(file, VectorSegmentCodec.IvfMagic, CodecRegistry.NewestVersion(SegmentParts.Ivf), maxDoc, limits, cancellationToken);
+        ByteCursor cursor = dirBox.Cursor();
+        int fieldCount = ResidentFile.ReadCount(iname, ref cursor, limits.MaxFields, "IVF field count");
+        var result = new Dictionary<string, IvfIndex>(StringComparer.Ordinal);
+        string? previous = null;
+        long expected = IndexFile.HeaderLength + 4;
+        for (int i = 0; i < fieldCount; i++)
+        {
+            string name = ReadName(iname, ref cursor, limits);
+            if (previous is not null && string.CompareOrdinal(previous, name) >= 0)
+            {
+                throw new CorruptIndexException(iname, "IVF field names are not in strictly increasing order");
+            }
+
+            previous = name;
+            if (!schema.TryGetField(name, out FieldDefinition? def) || def.Type != FieldType.Vector || !counts.TryGetValue(name, out int count))
+            {
+                throw new CorruptIndexException(iname, $"the file holds an IVF index for '{name}', which is not a vector field of this segment");
+            }
+
+            ulong dims = cursor.ReadVarUInt();
+            ulong vectors = cursor.ReadVarUInt();
+            ulong offset = cursor.ReadVarUInt();
+            ulong length = cursor.ReadVarUInt();
+            if (dims != (ulong)def.Dimensions || vectors != (ulong)count || offset != (ulong)expected || length == 0 || length > (ulong)directoryAt || expected + (long)length > directoryAt)
+            {
+                throw new CorruptIndexException(iname, $"the IVF index of '{name}' disagrees with the vectors, the schema or the file layout");
+            }
+
+            expected += (long)length;
+            // The index checks its own header, directory and list sizes against the window; the footer checksum of the whole file is the commit's check.
+            IvfIndex index = IvfIndex.Open(new SliceReader(file, (long)offset, (long)length), verifyChecksum: false, cancellationToken);
+            if (index.Count != count || index.Dimensions != def.Dimensions || index.Metric != def.Metric || index.Storage != IvfStorage.EightBitCodes)
+            {
+                throw new CorruptIndexException(iname, $"the IVF index of '{name}' was built for other vectors than the segment holds");
+            }
+
+            result[name] = index;
+        }
+
+        if (expected != directoryAt || cursor.Remaining != 0)
+        {
+            throw new CorruptIndexException(iname, "the IVF sections and directory do not tile the file");
+        }
+
+        return result;
     }
 
     private static Dictionary<string, HnswGraphData> LoadGraphs(IRangeReader graph, Schema schema, int maxDoc, IndexLimits limits, Dictionary<string, int> counts, CancellationToken cancellationToken)

@@ -37,7 +37,7 @@ Over http, per query kind (the first query excluded; it opens the index):
 
 **Payload** of the .NET WebAssembly app (runtime, the engine, the test app): 5,247,641 bytes raw, 1,933,623 gzip, 1,539,151 brotli (the app bundle, symbols and maps excluded).
 
-**Re-run with parts opened on demand and 16 KiB chunks** (the current default; same 30,000 abstracts, Chromium 155.0.8059.84 headless, Node 22.22.1, playwright-core 1.49.1, the worker, x64): http 40 of 40 equal to the server, memory 32 of 32, OPFS 32 of 32. Http: median 100 ms, p95 912 ms; first query 2,686 KB; per kind (median ms, average KB, average requests): text 60 / 214 / 13.1, filter 75 / 111 / 6.8, hybrid 638 / 1,341 / 81.9, vector (IVF) 93 / 579 / 35.5, highlight 100 / 193 / 11.8. Text queries are faster and smaller than with 64 KiB chunks (98 ms, 536 KB); hybrid is slower (387 ms before) because its graph walk now makes 82 requests. App payload 5,332,316 bytes raw (gzip 1,969,036, brotli 1,570,672). Pagefind 1.6.0, same run: first query 280,271 bytes, median 5.5 ms, 65,923 bytes per query over all 12 (the table below keeps the earlier 46 KB figure for the 11 after the first). Details and the proposed next step: [static-index.md](static-index.md).
+**Re-run with paged reads, 4 KiB chunks for scattered files and hybrid through IVF** (the current default; the same 30,000 abstracts, Google Chrome for Testing 156.0.8078.47 headless, Node 22.22.1, playwright-core 1.49.1, the worker, x64): http 40 of 40 equal to the server's static index, memory 24 of 24, OPFS 24 of 24 (memory and OPFS open the files as an ordinary index, whose hybrid uses the HNSW graph, so their 8 hybrid queries are not counted: they legitimately differ from the IVF-based static hybrid, which `static-index.md` compares by overlap). Http: median 155 ms, p95 941 ms over all 40; first query 646 KB (plus the manifest, about 737 KB); per kind (median ms, average KB, average requests): text 74 / 198 / 48.5, filter 107 / 61 / 14.9, hybrid 549 / 371 / 65.5, vector (IVF) 145 / 462 / 72, highlight 208 / 186 / 45.5. Compared with the 16 KiB run before it (first query 2,686 KB; text 60 ms / 214 KB / 13 requests; hybrid 638 ms / 1,341 KB / 82 requests): bytes fall, requests and latency rise for text because a 4 KiB chunk is one more round trip (the engine re-runs a query once per missing chunk, serially). App payload 5,351,162 bytes raw (gzip 1,975,115, brotli 1,573,139). Pagefind 1.6.0, same run: first query 323,199 bytes, median 10.9 ms, p95 102.7 ms, 69,501 bytes per query over all 12 (46,437 over the 11 after the first). Details: [static-index.md](static-index.md).
 
 ## Beside Pagefind
 
@@ -46,12 +46,12 @@ Pagefind 1.6.0 (MIT, the npm package, run as a black box) indexes the same 30,00
 | | OneIndex static index | Pagefind 1.6.0 |
 |---|---:|---:|
 | Runtime payload before the first query | 5.25 MB raw, 1.93 MB gzip, 1.54 MB brotli | 575 KB raw, 226 KB gzip, 183 KB brotli (JS and wasm, plus 90 KB of index metadata fetched at init) |
-| Index on the server | 31.0 MB (24 files; 13.2 MB of it are vector files: HNSW graphs and vectors 7.8 MB, IVF 5.4 MB) | 15.3 MB in 30,182 files |
-| First query, bytes | 5.29 MB | 280 KB |
-| Text query after the first, bytes (avg) | 536 KB in 8.2 requests | 46 KB in 4.4 requests (the 11 after the first; all 12 average 66 KB) |
-| Text query, median latency | 98 ms | 6.4 ms (p95 72.5 ms) |
+| Index on the server | 31.1 MB (the static directory; vector files are about 13 MB of it) | 15.3 MB in 30,182 files |
+| First query, bytes | 646 KB (737 KB with the manifest) | 323 KB |
+| Text query after the first, bytes (avg) | 198 KB in 48.5 requests | 46 KB in 4.4 requests (the 11 after the first; all 12 average 70 KB) |
+| Text query, median latency | 74 ms | 10.9 ms (p95 102.7 ms) |
 
-Pagefind is smaller and faster on this row, by an order of magnitude in payload and bytes. It is a different thing: a pure keyword search over pre-split index files with no filters, vectors, hybrid or exact engine results. The causes of our numbers are in [static-index.md](static-index.md): a .NET runtime payload; whole files read at open; stored-source reads of 64 KiB chunks for each hit. These rows are reported, not gated.
+Pagefind is smaller and faster on this row, by an order of magnitude in payload and bytes. It is a different thing: a pure keyword search over pre-split index files with no filters, vectors, hybrid or exact engine results. The causes of our numbers are in [static-index.md](static-index.md): a .NET runtime payload; stored-source blocks for each hit (about 60 KB of the 198 KB); term-dictionary pages (about 94 KB). These rows are reported, not gated.
 
 ## Other platforms
 

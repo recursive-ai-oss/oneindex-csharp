@@ -20,12 +20,13 @@ public sealed class VectorSegmentCodec : ISegmentCodec
     internal static readonly uint VectorsMagic = IndexFile.Magic("OIXV");
     internal static readonly uint GraphMagic = IndexFile.Magic("OIXH");
     internal static readonly uint QuantizedMagic = IndexFile.Magic("OIXQ");
+    internal static readonly uint IvfMagic = IndexFile.Magic("OIXL");
 
     /// <inheritdoc/>
     public string Name => "vectors";
 
     /// <inheritdoc/>
-    public IReadOnlyList<string> Parts { get; } = [SegmentParts.Vectors, SegmentParts.Graph, SegmentParts.Quantized];
+    public IReadOnlyList<string> Parts { get; } = [SegmentParts.Vectors, SegmentParts.Graph, SegmentParts.Quantized, SegmentParts.Ivf];
 
     private sealed class Payload(FieldDefinition def, VectorValues values, int[]? ordinalToDoc)
     {
@@ -229,7 +230,7 @@ public sealed class VectorSegmentCodec : ISegmentCodec
 
         foreach (Payload p in payloads)
         {
-            if (p.Values.Count >= p.Def.FlatThreshold && p.Values.Count >= 2)
+            if (p.Def.VectorIndex == VectorIndexKind.Hnsw && p.Values.Count >= p.Def.FlatThreshold && p.Values.Count >= 2)
             {
                 var builder = new HnswBuilder(p.Values, KindOf(p.Def.Metric), p.Def.HnswM, p.Def.EfConstruction, SeedFor(p.Def.Name));
                 if (p.Seed is not null)
@@ -248,11 +249,61 @@ public sealed class VectorSegmentCodec : ISegmentCodec
             WriteGraphs(payloads, maxDoc, sink, cancellationToken);
         }
 
+        List<Payload> clustered = [.. payloads.Where(static p => p.Def.VectorIndex == VectorIndexKind.Ivf && p.Values.Count >= p.Def.FlatThreshold && p.Values.Count >= 2 && IvfFits(p))];
+        if (clustered.Count > 0)
+        {
+            WriteIvf(clustered, maxDoc, sink, cancellationToken);
+        }
+
         // A compressed copy is only worth having where there is a graph to walk on it; smaller segments are searched exactly.
         if (payloads.Any(p => p.Graph is not null && p.Def.Quantization != VectorQuantization.None))
         {
             WriteQuantized(payloads, maxDoc, sink, cancellationToken);
         }
+    }
+
+    // The index image holds 8-bit codes (a scale and one byte per dimension) and a number per vector, in one array; past 2 GiB the segment gets no
+    // IVF part and is searched exactly, which is correct but slow, so the limit is in docs/ivf.md.
+    private static bool IvfFits(Payload p) => (long)p.Values.Count * (8L + p.Def.Dimensions) + (4L * p.Def.Dimensions * 4096) + 4096 < int.MaxValue
+        && (long)p.Values.Count * p.Def.Dimensions < int.MaxValue / 4;
+
+    private static void WriteIvf(List<Payload> fields, int maxDoc, SegmentFileSink sink, CancellationToken cancellationToken)
+    {
+        using SegmentFileBuilder file = sink.Create(SegmentParts.Ivf, "OIXL", CodecRegistry.NewestVersion(SegmentParts.Ivf), cancellationToken);
+        var head = new ByteBuilder(16);
+        head.WriteUInt32((uint)maxDoc);
+        file.Write(head.Span, cancellationToken);
+        var directory = new ByteBuilder(256);
+        directory.WriteVarUInt((ulong)fields.Count);
+        foreach (Payload p in fields)
+        {
+            int dims = p.Def.Dimensions;
+            int count = p.Values.Count;
+            // The vectors are already scaled to length 1 for a cosine field, so the builder's own normalisation changes nothing.
+            var flat = new float[checked(count * dims)];
+            for (int i = 0; i < count; i++)
+            {
+                if ((i & 1023) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
+                p.Values.Get(i).CopyTo(flat.AsSpan(i * dims, dims));
+            }
+
+            byte[] image = IvfBuilder.Build(flat, dims, new IvfOptions { Metric = p.Def.Metric, Lists = p.Def.IvfLists, Storage = IvfStorage.EightBitCodes, Seed = SeedFor(p.Def.Name) });
+            long offset = file.Position;
+            file.Write(image, cancellationToken);
+            byte[] name = Encoding.UTF8.GetBytes(p.Def.Name);
+            directory.WriteVarUInt((ulong)name.Length);
+            directory.Write(name);
+            directory.WriteVarUInt((ulong)dims);
+            directory.WriteVarUInt((ulong)count);
+            directory.WriteVarUInt((ulong)offset);
+            directory.WriteVarUInt((ulong)image.Length);
+        }
+
+        FinishWithDirectory(file, directory, cancellationToken);
     }
 
     private static void WriteQuantized(List<Payload> payloads, int maxDoc, SegmentFileSink sink, CancellationToken cancellationToken)
@@ -493,17 +544,20 @@ public sealed class VectorSegmentCodec : ISegmentCodec
 
         IRangeReader? graph = null;
         IRangeReader? quantized = null;
+        IRangeReader? ivf = null;
         try
         {
             graph = context.OpenPart(SegmentParts.Graph, out _, cancellationToken);
             quantized = context.OpenPart(SegmentParts.Quantized, out _, cancellationToken);
-            return VectorPartReader.Open(vectors, graph, quantized, context.Schema, context.Info.DocCount, context.Limits, cancellationToken);
+            ivf = context.OpenPart(SegmentParts.Ivf, out _, cancellationToken);
+            return VectorPartReader.Open(vectors, graph, quantized, ivf, context.Schema, context.Info.DocCount, context.Limits, cancellationToken);
         }
         catch
         {
             vectors.Dispose();
             graph?.Dispose();
             quantized?.Dispose();
+            ivf?.Dispose();
             throw;
         }
     }

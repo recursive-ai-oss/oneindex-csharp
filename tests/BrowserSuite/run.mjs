@@ -67,12 +67,15 @@ for (const mode of modes) {
   const results = lines.filter((l) => l.startsWith('RESULT ')).map((l) => l.slice(7))
   const stats = lines.filter((l) => l.startsWith('STAT ')).map((l) => l.slice(5).split('|').map(Number))
   const total = lines.find((l) => l.startsWith('TOTAL ')) ?? ''
-  // Memory and OPFS modes have no IVF file, so they skip the vector queries; compare the lines they produced.
+  // Memory and OPFS modes have no IVF file, so they skip the vector queries; compare the lines they produced. Their hybrid queries
+  // fuse the text arm with the HNSW graph, while the static index fuses it with IVF candidates, so the two legitimately differ: those
+  // lines are not part of the equality count (the static hybrid is compared in http mode).
   const byIndex = new Map(expected.map((l) => [l.slice(0, l.indexOf('|')), l]))
   let matched = 0, compared = 0
   const diffs = []
   for (const r of results) {
     const k = r.slice(0, r.indexOf('|'))
+    if (mode !== 'http' && r.split('|')[1] === 'hybrid') continue
     compared++
     if (byIndex.get(k) === r) matched++; else diffs.push({ browser: r.slice(0, 200), server: (byIndex.get(k) ?? '').slice(0, 200) })
   }

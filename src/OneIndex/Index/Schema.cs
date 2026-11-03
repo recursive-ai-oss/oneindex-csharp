@@ -139,6 +139,14 @@ public sealed class FieldDefinition
     /// </summary>
     public float Oversample { get; init; }
 
+    /// <summary>The structure built over this field's vectors in each segment of at least <see cref="FlatThreshold"/> vectors. Default <see cref="VectorIndexKind.Hnsw"/>. Vector fields only.</summary>
+    public VectorIndexKind VectorIndex { get; init; }
+
+    /// <summary>For <see cref="VectorIndexKind.Ivf"/>: the number of lists (k-means clusters) per segment, 1 to 4,096. 0 (the default) picks about the square root of the segment's vector count.</summary>
+    public int IvfLists { get; init; }
+
+    internal bool HasCustomIvf => Type == FieldType.Vector && (VectorIndex != VectorIndexKind.Hnsw || IvfLists != 0);
+
     internal bool HasCustomQuantization => Type == FieldType.Vector && (Quantization != VectorQuantization.None || Oversample != 0);
 
     internal bool HasCustomVectorSettings => Type == FieldType.Vector && (Metric != VectorMetric.Cosine || HnswM != DefaultHnswM || EfConstruction != DefaultEfConstruction || FlatThreshold != DefaultFlatThreshold);
@@ -173,6 +181,10 @@ public sealed class Schema : IEquatable<Schema>
     private const int SectionVectorSettings = 3;
     private const int SectionQuantization = 4;
     private const int SectionRanking = 5;
+    private const int SectionIvf = 6;
+
+    /// <summary>The largest number of IVF lists a field may ask for.</summary>
+    internal const int MaxIvfLists = 4096;
 
     private const int TextSettingsSection = 2;
     private static readonly byte[] MagicBytes = "OIXS"u8.ToArray();
@@ -466,7 +478,8 @@ public sealed class Schema : IEquatable<Schema>
         bool hasDerived = schema.Fields.Any(static f => f.DynamicParent is not null);
         bool hasVectorSettings = schema.Fields.Any(static f => f.HasCustomVectorSettings);
         bool hasQuantization = schema.Fields.Any(static f => f.HasCustomQuantization);
-        sink.WriteUInt32(hasDerived || settings || hasVectorSettings || hasQuantization || ranking ? 2u : 1u);
+        bool hasIvf = schema.Fields.Any(static f => f.HasCustomIvf);
+        sink.WriteUInt32(hasDerived || settings || hasVectorSettings || hasQuantization || ranking || hasIvf ? 2u : 1u);
         sink.WriteVarUInt((ulong)schema.Fields.Count);
         foreach (FieldDefinition f in schema.Fields)
         {
@@ -480,11 +493,11 @@ public sealed class Schema : IEquatable<Schema>
         }
 
         sink.WriteString(schema.IdField ?? string.Empty);
-        if (hasDerived || settings || hasVectorSettings || hasQuantization || ranking)
+        if (hasDerived || settings || hasVectorSettings || hasQuantization || ranking || hasIvf)
         {
             // Version 2 appends sections: a count, then for each an id (ascending) and its bytes. Section 1 lists the derived
             // (dynamic) fields, section 2 holds the text settings, section 3 the vector field settings, section 4 the compressed copies.
-            sink.WriteVarUInt((ulong)((hasDerived ? 1 : 0) + (settings ? 1 : 0) + (hasVectorSettings ? 1 : 0) + (hasQuantization ? 1 : 0) + (ranking ? 1 : 0)));
+            sink.WriteVarUInt((ulong)((hasDerived ? 1 : 0) + (settings ? 1 : 0) + (hasVectorSettings ? 1 : 0) + (hasQuantization ? 1 : 0) + (ranking ? 1 : 0) + (hasIvf ? 1 : 0)));
             if (hasDerived)
             {
                 var section = new ByteSink();
@@ -582,6 +595,33 @@ public sealed class Schema : IEquatable<Schema>
                 sink.WriteVarUInt(SectionRanking);
                 sink.WriteBytes(section.WrittenSpan);
             }
+
+            if (hasIvf)
+            {
+                // Section 6: the vector index kind and list count of each vector field that has an IVF index or a list count, by ascending
+                // field index. A reader that does not know the section finds no graph in those fields' segments and searches them exactly.
+                var section = new ByteSink();
+                int n = 0;
+                foreach (FieldDefinition f in schema.Fields)
+                {
+                    n += f.HasCustomIvf ? 1 : 0;
+                }
+
+                section.WriteVarUInt((ulong)n);
+                for (int i = 0; i < schema.Fields.Count; i++)
+                {
+                    FieldDefinition f = schema.Fields[i];
+                    if (f.HasCustomIvf)
+                    {
+                        section.WriteVarUInt((ulong)i);
+                        section.WriteByte((byte)f.VectorIndex);
+                        section.WriteVarUInt((ulong)f.IvfLists);
+                    }
+                }
+
+                sink.WriteVarUInt(SectionIvf);
+                sink.WriteBytes(section.ToArray());
+            }
         }
 
         return sink.ToArray();
@@ -633,6 +673,7 @@ public sealed class Schema : IEquatable<Schema>
         var settings = new VectorSettings[count];
         Array.Fill(settings, VectorSettings.Default);
         var quantization = new (VectorQuantization Codec, float Oversample)[count];
+        var ivf = new (VectorIndexKind Kind, int Lists)[count];
         if (version >= 2)
         {
             int sections = src.ReadCount(16, "section count");
@@ -739,6 +780,37 @@ public sealed class Schema : IEquatable<Schema>
 
                     knownSection = true;
                 }
+                else if (sectionId == SectionIvf)
+                {
+                    var inner = new ByteSource(payload);
+                    int entries = inner.ReadCount(count, "IVF settings count");
+                    int last = -1;
+                    for (int p = 0; p < entries; p++)
+                    {
+                        int field = inner.ReadCount(count - 1, "IVF settings field index");
+                        if (field <= last || (FieldType)defs[field].Type != FieldType.Vector)
+                        {
+                            throw new MalformedInputException("IVF settings are not in order or name a field that is not a vector");
+                        }
+
+                        byte kind = inner.ReadByte();
+                        int lists = inner.ReadCount(MaxIvfLists, "IVF list count");
+                        if (kind > (byte)VectorIndexKind.Ivf || (kind == 0 && lists == 0))
+                        {
+                            throw new MalformedInputException($"vector field '{defs[field].Name}' has an unknown index kind");
+                        }
+
+                        ivf[field] = ((VectorIndexKind)kind, lists);
+                        last = field;
+                    }
+
+                    if (inner.Remaining != 0 || entries == 0)
+                    {
+                        throw new MalformedInputException("the IVF settings section is empty or has trailing bytes");
+                    }
+
+                    knownSection = true;
+                }
                 else if (sectionId == SectionRanking)
                 {
                     var inner = new ByteSource(payload);
@@ -800,6 +872,8 @@ public sealed class Schema : IEquatable<Schema>
                 FlatThreshold = vs.FlatThreshold,
                 Quantization = quantization[i].Codec,
                 Oversample = quantization[i].Oversample,
+                VectorIndex = ivf[i].Kind,
+                IvfLists = ivf[i].Lists,
                 DynamicParent = parents[i] >= 0 ? defs[parents[i]].Name : null,
             });
         }
@@ -1022,6 +1096,11 @@ public sealed class SchemaBuilder
             if (f.Multi)
             {
                 throw new ArgumentException($"Vector field '{n}' holds one vector per document.");
+            }
+
+            if (!Enum.IsDefined(f.VectorIndex) || f.IvfLists < 0 || f.IvfLists > Schema.MaxIvfLists || (f.VectorIndex == VectorIndexKind.Hnsw && f.IvfLists != 0))
+            {
+                throw new ArgumentException($"Vector field '{n}' needs a known vector index and, for IVF, 0 (automatic) to {Schema.MaxIvfLists} lists.");
             }
 
             if (!Enum.IsDefined(f.Quantization) || !(f.Oversample == 0 || (f.Oversample >= 1 && f.Oversample <= 100)) || (f.Quantization == VectorQuantization.None && f.Oversample != 0))

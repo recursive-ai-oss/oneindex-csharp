@@ -25,6 +25,33 @@ internal static class TextIndexTarget
     /// <inheritdoc cref="RunTerms"/>
     public static void RunPostings(ReadOnlySpan<byte> data) => Run(data, terms: false);
 
+    /// <summary>
+    /// Terms or lengths file bytes opened the way a static index opens them: read by page on first touch, with no whole-file checksum, so
+    /// mutations reach the structure parsers without a repaired checksum. Bit 0 of the first byte repairs the frame (header and footer) so the
+    /// body is reached; bit 1 selects the lengths file instead of the terms file.
+    /// </summary>
+    public static void RunPaged(ReadOnlySpan<byte> data)
+    {
+        if (data.IsEmpty)
+        {
+            return;
+        }
+
+        Baseline good = Good.Value;
+        bool lengths = (data[0] & 2) != 0;
+        byte[] file = data[1..].ToArray();
+        if ((data[0] & 1) != 0)
+        {
+            Repair(file, lengths ? TextSegmentWriter.LengthsMagic : TextSegmentWriter.TermsMagic, 2);
+        }
+
+        var storage = new MemoryStorage();
+        Put(storage, "s.terms", lengths ? good.Terms : file);
+        Put(storage, "s.postings", good.Postings);
+        Put(storage, "s.lengths", lengths ? file : good.Lengths);
+        Exercise(storage, paged: true);
+    }
+
     private static void Run(ReadOnlySpan<byte> data, bool terms)
     {
         if (data.IsEmpty)
@@ -48,11 +75,15 @@ internal static class TextIndexTarget
     }
 
     /// <summary>Opens the three files and reads all of them, treating <see cref="CorruptIndexException"/> as the expected outcome for damaged input.</summary>
-    public static void Exercise(IStorage storage)
+    public static void Exercise(IStorage storage) => Exercise(storage, paged: false);
+
+    private static void Exercise(IStorage storage, bool paged)
     {
         try
         {
-            using TextSegmentReader reader = TextSegmentReader.Open(storage, "s.terms", "s.postings", "s.lengths", Limits);
+            using TextSegmentReader reader = paged
+                ? TextSegmentReader.Open(storage.OpenRead("s.terms"), storage.OpenRead("s.postings"), storage.OpenRead("s.lengths"), Limits, paged: true, default)
+                : TextSegmentReader.Open(storage, "s.terms", "s.postings", "s.lengths", Limits);
             foreach (string name in reader.FieldNames)
             {
                 ITextFieldReader field = reader.GetTextField(name)!;
@@ -184,6 +215,13 @@ internal static class TextIndexTarget
         var bytes = new byte[r.Length];
         r.ReadExactly(0, bytes);
         return bytes;
+    }
+
+    public static void WritePagedSeeds(string directory)
+    {
+        Baseline good = Good.Value;
+        File.WriteAllBytes(Path.Combine(directory, "terms"), [1, .. good.Terms]);
+        File.WriteAllBytes(Path.Combine(directory, "lengths"), [3, .. good.Lengths]);
     }
 
     public static void WriteSeeds(string directory, bool terms)

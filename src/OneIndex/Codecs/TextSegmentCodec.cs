@@ -158,7 +158,7 @@ public sealed class TextSegmentCodec : ISegmentCodec
             throw;
         }
 
-        TextSegmentReader segment = TextSegmentReader.Open(terms, postings, lengths, context.Limits, cancellationToken);
+        TextSegmentReader segment = TextSegmentReader.Open(terms, postings, lengths, context.Limits, context.DeferOptionalParts, cancellationToken);
         if (segment.MaxDoc != context.Info.DocCount)
         {
             int found = segment.MaxDoc;

@@ -20,12 +20,20 @@ public sealed record KnnQuery(string Field, float[] Vector, int K) : Query
 
     /// <summary>
     /// How many candidates the graph search keeps while it looks, at least <see cref="K"/>. Larger finds the true neighbours more often and
-    /// costs time. 0 (default) uses <c>max(K, 100)</c>. Ignored by exact search.
+    /// costs time. 0 (default) uses <c>max(K, 100)</c>. Ignored by exact search. On a field with <see cref="Vectors.VectorIndexKind.Ivf"/> it is instead
+    /// the number of lists each segment reads, 1 or more (0: an eighth of the lists, at least 8); more lists find more of the true neighbours.
     /// </summary>
     public int Ef { get; init; }
 
     /// <summary>Only documents matching this query may be neighbours. Its scores are ignored. Default none.</summary>
     public Query? Filter { get; init; }
+
+    /// <summary>
+    /// Neighbours computed outside the segments, such as by a static index's IVF lists: asked for the best <c>count</c> as (global document id,
+    /// score), nearest first. When set, the search takes its candidates from here instead of the segments' vector parts (the filter, deletes
+    /// and the boost still apply, and a larger count is asked for when a filter drops too many).
+    /// </summary>
+    internal Func<int, IReadOnlyList<(int Doc, float Score)>>? CandidateSource { get; init; }
 
     /// <summary>Compare with every vector instead of walking the graph: exact and slower. Default <see langword="false"/>.</summary>
     public bool Exact { get; init; }
@@ -35,7 +43,7 @@ public sealed record KnnQuery(string Field, float[] Vector, int K) : Query
     /// <returns><see langword="true"/> when equal.</returns>
     public bool Equals(KnnQuery? other)
         => other is not null && Field == other.Field && K == other.K && Ef == other.Ef && Exact == other.Exact && Boost.Equals(other.Boost)
-           && Equals(Filter, other.Filter) && Vector.AsSpan().SequenceEqual(other.Vector);
+           && Equals(Filter, other.Filter) && ReferenceEquals(CandidateSource, other.CandidateSource) && Vector.AsSpan().SequenceEqual(other.Vector);
 
     /// <inheritdoc/>
     public override int GetHashCode()
@@ -105,14 +113,22 @@ internal sealed class KnnWeight : Weight
             }
         }
 
-        if (q.K < 1 || q.K > KnnQuery.MaxK || q.Ef < 0 || q.Ef > KnnQuery.MaxK || (q.Ef != 0 && q.Ef < q.K))
+        bool clustered = def.VectorIndex == VectorIndexKind.Ivf;
+        if (q.K < 1 || q.K > KnnQuery.MaxK || q.Ef < 0 || q.Ef > KnnQuery.MaxK || (!clustered && q.Ef != 0 && q.Ef < q.K))
         {
-            throw new QueryException($"A knn query needs K from 1 to {KnnQuery.MaxK} and Ef 0 or from K to {KnnQuery.MaxK}; got K {q.K}, Ef {q.Ef}.");
+            throw new QueryException(clustered
+                ? $"A knn query needs K from 1 to {KnnQuery.MaxK} and Ef (the lists to read on an IVF field) 0 or from 1 to {KnnQuery.MaxK}; got K {q.K}, Ef {q.Ef}."
+                : $"A knn query needs K from 1 to {KnnQuery.MaxK} and Ef 0 or from K to {KnnQuery.MaxK}; got K {q.K}, Ef {q.Ef}.");
         }
 
         var perLeaf = new List<(int Leaf, int Doc, float Score)>();
         var hits = new VectorHit[q.K];
-        foreach (LeafContext leaf in context.Leaves)
+        if (q.CandidateSource is { } source)
+        {
+            perLeaf = FromCandidates(context, q, filter, source);
+        }
+
+        foreach (LeafContext leaf in q.CandidateSource is null ? context.Leaves : Array.Empty<LeafContext>())
         {
             if (leaf.Reader.GetVectors(q.Field) is not { } reader)
             {
@@ -188,6 +204,83 @@ internal sealed class KnnWeight : Weight
         }
 
         return new KnnWeight($"knn on {q.Field} (k={q.K}, {def.Metric})", docs, scores);
+    }
+
+    // Candidates from outside the segments: keep the live ones that pass the filter. A filter can drop most of what was asked for, so ask for more
+    // (four times as many, up to MaxK) while fewer than K survive and the source still returned everything it was asked for.
+    private static List<(int Leaf, int Doc, float Score)> FromCandidates(SearchContext context, KnnQuery q, Weight? filter, Func<int, IReadOnlyList<(int Doc, float Score)>> source)
+    {
+        IReadOnlyList<LeafContext> leaves = context.Leaves;
+        var accepted = new ulong[]?[leaves.Count];
+        var skip = new bool[leaves.Count];
+        if (filter is not null)
+        {
+            foreach (LeafContext leaf in leaves)
+            {
+                accepted[leaf.Ordinal] = new ulong[(leaf.Reader.MaxDoc + 63) >> 6];
+                Scorer? s = filter.GetScorer(leaf);
+                if (s is null)
+                {
+                    skip[leaf.Ordinal] = true;
+                    continue;
+                }
+
+                for (int d = s.NextDoc(); d != DocIdSetIterator.NoMoreDocs; d = s.NextDoc())
+                {
+                    accepted[leaf.Ordinal]![d >> 6] |= 1UL << (d & 63);
+                }
+            }
+        }
+
+        int ask = filter is null ? q.K : Math.Min(KnnQuery.MaxK, q.K * 4);
+        while (true)
+        {
+            IReadOnlyList<(int Doc, float Score)> found = source(ask);
+            var kept = new List<(int Leaf, int Doc, float Score)>(found.Count);
+            foreach ((int global, float score) in found)
+            {
+                int lo = 0;
+                int hi = leaves.Count - 1;
+                while (lo < hi)
+                {
+                    int mid = (lo + hi + 1) >> 1;
+                    if (leaves[mid].DocBase <= global)
+                    {
+                        lo = mid;
+                    }
+                    else
+                    {
+                        hi = mid - 1;
+                    }
+                }
+
+                if (leaves.Count == 0)
+                {
+                    break;
+                }
+
+                LeafContext leaf = leaves[lo];
+                int local = global - leaf.DocBase;
+                if (local < 0 || local >= leaf.Reader.MaxDoc || skip[leaf.Ordinal] || (leaf.Reader.LiveDocs is { } live && !live.IsLive(local)))
+                {
+                    continue;
+                }
+
+                if (accepted[leaf.Ordinal] is { } bits && (bits[local >> 6] & (1UL << (local & 63))) == 0)
+                {
+                    continue;
+                }
+
+                kept.Add((leaf.Ordinal, local, score * q.Boost));
+            }
+
+            if (kept.Count >= q.K || found.Count < ask || ask >= KnnQuery.MaxK)
+            {
+                return kept;
+            }
+
+            ask = Math.Min(KnnQuery.MaxK, ask * 4);
+        }
     }
 
     /// <inheritdoc/>

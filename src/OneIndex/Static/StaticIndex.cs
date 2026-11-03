@@ -9,8 +9,15 @@ namespace OneIndex.StaticIndexes;
 /// <summary>Settings of <see cref="StaticIndexBuilder"/>.</summary>
 public sealed class StaticBuildOptions
 {
-    /// <summary>The chunk size in bytes, 1 KiB to 64 MiB. Default 16 KiB: a query fetches about the chunks it touches, so smaller chunks mean fewer bytes and more requests (docs/static-index.md has the measurements: on 30,000 abstracts a text query after the first costs 209 KB in 13 requests at 16 KiB and 675 KB in 3 requests at 256 KiB).</summary>
+    /// <summary>The chunk size in bytes, 1 KiB to 64 MiB. Default 16 KiB. This size applies to the files read in runs (the IVF and vector files); scattered files use <see cref="ScatteredChunkBytes"/>. A query fetches about the chunks it touches, so smaller chunks mean fewer bytes and more requests (docs/static-index.md has the measurements).</summary>
     public int ChunkBytes { get; init; } = 16 * 1024;
+
+    /// <summary>
+    /// The chunk size in bytes, 1 KiB to 64 MiB, of the files a query probes at scattered places: term dictionaries, postings, stored documents,
+    /// field lengths, identifier tables, columns, points and small-part packs. A lookup in these touches a few bytes in many places, so a smaller chunk
+    /// fetches less. Default 4 KiB. Set it equal to <see cref="ChunkBytes"/> for one size everywhere.
+    /// </summary>
+    public int ScatteredChunkBytes { get; init; } = 4 * 1024;
 
     /// <summary>The IVF settings of every vector field of the type. Default: cosine lists of 8-bit codes with full-precision rerank, about the square root of the count.</summary>
     public IvfOptions Ivf { get; init; } = new() { Storage = IvfStorage.EightBit };
@@ -40,6 +47,8 @@ public static class StaticIndexBuilder
         options ??= new StaticBuildOptions();
         ArgumentOutOfRangeException.ThrowIfLessThan(options.ChunkBytes, 1024);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(options.ChunkBytes, 1 << 26);
+        ArgumentOutOfRangeException.ThrowIfLessThan(options.ScatteredChunkBytes, 1024);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(options.ScatteredChunkBytes, 1 << 26);
         Directory.CreateDirectory(outDirectory);
         if (File.Exists(Path.Combine(outDirectory, StaticManifest.FileName)))
         {
@@ -74,7 +83,7 @@ public static class StaticIndexBuilder
             }
 
             using IRangeReader reader = source.OpenRead(name, cancellationToken);
-            files.Add(WriteChunks(outDirectory, name, options.ChunkBytes, reader.Length, (offset, buffer) => reader.ReadExactly(offset, buffer, cancellationToken)));
+            files.Add(WriteChunks(outDirectory, name, IsScattered(name) ? options.ScatteredChunkBytes : options.ChunkBytes, options.ChunkBytes, reader.Length, (offset, buffer) => reader.ReadExactly(offset, buffer, cancellationToken)));
         }
 
         // Vector fields: an IVF file over the stored vectors, and the identifier of each vector.
@@ -87,7 +96,8 @@ public static class StaticIndexBuilder
             {
                 var vectors = new List<float>();
                 var ids = new List<string>();
-                foreach (T doc in index.Documents())
+                var docIds = new List<int>();
+                foreach ((T doc, int docId) in index.DocumentsWithIds())
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     Document d = mapping.ToDocument(doc);
@@ -96,6 +106,7 @@ public static class StaticIndexBuilder
                     {
                         vectors.AddRange(v.AsVector().ToArray());
                         ids.Add(mapping.GetId(doc) ?? string.Empty);
+                        docIds.Add(docId);
                     }
                 }
 
@@ -108,9 +119,28 @@ public static class StaticIndexBuilder
                 var withMetric = new IvfOptions { Metric = m.Metric, Lists = o.Lists, Iterations = o.Iterations, Seed = o.Seed, Storage = o.Storage, TrainingPerList = o.TrainingPerList };
                 // The length comes from the stored vectors: an index built with another embedder may differ from the attribute.
                 byte[] ivf = IvfBuilder.Build(vectors.ToArray(), vectors.Count / ids.Count, withMetric);
-                files.Add(WriteChunks(outDirectory, IvfFileName(m.Name), options.ChunkBytes, ivf.Length, (offset, buffer) => ivf.AsSpan((int)offset, buffer.Length).CopyTo(buffer)));
+                files.Add(WriteChunks(outDirectory, IvfFileName(m.Name), options.ChunkBytes, options.ChunkBytes, ivf.Length, (offset, buffer) => ivf.AsSpan((int)offset, buffer.Length).CopyTo(buffer)));
                 byte[] table = IdTable(ids);
-                files.Add(WriteChunks(outDirectory, IdsFileName(m.Name), options.ChunkBytes, table.Length, (offset, buffer) => table.AsSpan((int)offset, buffer.Length).CopyTo(buffer)));
+                files.Add(WriteChunks(outDirectory, IdsFileName(m.Name), options.ScatteredChunkBytes, options.ChunkBytes, table.Length, (offset, buffer) => table.AsSpan((int)offset, buffer.Length).CopyTo(buffer)));
+
+                // Hybrid search names documents by their id in the commit. When vector number i is document i (no deletes, every document has a
+                // vector) nothing more is needed; otherwise a table of u32 document ids, one per vector number, says which is which.
+                bool identity = true;
+                for (int i = 0; i < docIds.Count && identity; i++)
+                {
+                    identity = docIds[i] == i;
+                }
+
+                if (!identity)
+                {
+                    var map = new byte[4 * docIds.Count];
+                    for (int i = 0; i < docIds.Count; i++)
+                    {
+                        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(map.AsSpan(4 * i), (uint)docIds[i]);
+                    }
+
+                    files.Add(WriteChunks(outDirectory, DocsFileName(m.Name), options.ScatteredChunkBytes, options.ChunkBytes, map.Length, (offset, buffer) => map.AsSpan((int)offset, buffer.Length).CopyTo(buffer)));
+                }
             }
         }
 
@@ -123,6 +153,8 @@ public static class StaticIndexBuilder
     }
 
     internal static string IvfFileName(string field) => "ivf-" + Safe(field) + ".ivf";
+
+    internal static string DocsFileName(string field) => "ivf-" + Safe(field) + ".docs";
 
     internal static string IdsFileName(string field) => "ivf-" + Safe(field) + ".ids";
 
@@ -161,7 +193,11 @@ public static class StaticIndexBuilder
         return result;
     }
 
-    private static StaticFile WriteChunks(string dir, string name, int chunkBytes, long length, Action<long, Span<byte>> read)
+    private static bool IsScattered(string name) => name.EndsWith(".terms", StringComparison.Ordinal) || name.EndsWith(".lengths", StringComparison.Ordinal)
+        || name.EndsWith(".ids", StringComparison.Ordinal) || name.EndsWith(".columns", StringComparison.Ordinal) || name.EndsWith(".points", StringComparison.Ordinal)
+        || name.EndsWith(".pack", StringComparison.Ordinal) || name.EndsWith(".postings", StringComparison.Ordinal) || name.EndsWith(".stored", StringComparison.Ordinal) || name.EndsWith(".docs", StringComparison.Ordinal);
+
+    private static StaticFile WriteChunks(string dir, string name, int chunkBytes, int manifestChunkBytes, long length, Action<long, Span<byte>> read)
     {
         long chunks = length == 0 ? 0 : ((length - 1) / chunkBytes) + 1;
         var crcs = new List<uint>();
@@ -175,7 +211,7 @@ public static class StaticIndexBuilder
             File.WriteAllBytes(Path.Combine(dir, StaticManifest.ChunkName(name, chunks, c)), span.ToArray());
         }
 
-        return new StaticFile(name, length, crcs);
+        return new StaticFile(name, length, crcs, chunkBytes == manifestChunkBytes ? 0 : chunkBytes);
     }
 }
 
@@ -222,8 +258,14 @@ public sealed class StaticIndex<T>
     /// <summary>The chunk storage, with its counters.</summary>
     public ChunkedStaticStorage Storage { get; }
 
-    /// <summary>Chunks fetched after the missing one, in the same file. Default 1.</summary>
+    /// <summary>Chunks fetched after the missing one, in the same file, for the IVF and vector files, which are read in runs; other files fetch only the chunk a query is missing. Default 1.</summary>
     public int ReadAhead { get; }
+
+    /// <summary>
+    /// How many IVF lists a hybrid search reads for its vector list, 1 or more (capped at the field's list count). Default 16 (about 0.89 of the top results of the same hybrid search with a graph vector list, on 30,000 abstracts; 8 gives 0.71, 32 gives 0.95). More lists find more of
+    /// the true neighbours and fetch more bytes (a list holds about the square root of the vector count in vectors).
+    /// </summary>
+    public int HybridNprobe { get; set; } = 16;
 
     /// <summary>How many times queries ran against missing chunks and had to run again, since opening.</summary>
     public int Retries { get; private set; }
@@ -243,13 +285,14 @@ public sealed class StaticIndex<T>
             try
             {
                 using SearchIndex<T> index = await SearchIndex.OpenReadOnlyAsync<T>(Storage, _embedder, cancellationToken).ConfigureAwait(false);
+                index.ExternalVectorArm = new StaticVectorArm(Storage, _ivf, Math.Max(1, HybridNprobe));
                 return query(index);
             }
             catch (Exception e) when (Missing(e) is { } miss)
             {
                 Retries++;
                 int last = ChunkCount(miss.File) - 1;
-                for (int c = miss.Chunk; c <= Math.Min(last, miss.Chunk + ReadAhead); c++)
+                for (int c = miss.Chunk; c <= Math.Min(last, miss.Chunk + (ReadsInRuns(miss.File) ? ReadAhead : 0)); c++)
                 {
                     await Storage.LoadChunkAsync(miss.File, c, cancellationToken).ConfigureAwait(false);
                 }
@@ -257,6 +300,16 @@ public sealed class StaticIndex<T>
         }
 
         throw new InvalidOperationException("The query kept asking for chunks; giving up after 100000 retries.");
+    }
+
+    // The IVF and vector files are read in runs (a probed list, a block of rows), so the next chunk is usually wanted too. Every other
+    // file is probed at scattered places in small chunks, where a neighbouring chunk is mostly wasted bytes (measured: read-ahead on
+    // postings and stored documents added 19 KB to a text query).
+    private static bool ReadsInRuns(string file)
+    {
+        int dot = file.LastIndexOf(".c", StringComparison.Ordinal);
+        string name = dot > 0 ? file[..dot] : file;
+        return name.EndsWith(".ivf", StringComparison.Ordinal) || name.EndsWith(".vectors", StringComparison.Ordinal);
     }
 
     private int ChunkCount(string file) => Storage.Manifest.Files.First(f => f.Name == file).ChunkCrcs.Count;
@@ -395,5 +448,63 @@ public sealed class StaticIndex<T>
         var text = new byte[end - start];
         table.ReadExactly(4 + (4 * (count + 1)) + start, text);
         return Encoding.UTF8.GetString(text);
+    }
+}
+
+/// <summary>
+/// The vector list of a hybrid search over a static index: the field's IVF lists, read through the chunk cache (a chunk that is not there yet
+/// raises <see cref="ChunkNotLoadedException"/>, which the query loop answers by fetching and running again). Ranks by the 8-bit codes and
+/// never reads the full-precision rows, so a list of 100 costs the probed lists and nothing more.
+/// </summary>
+internal sealed class StaticVectorArm(ChunkedStaticStorage storage, Dictionary<string, IvfIndex> ivf, int nprobe) : IExternalVectorArm
+{
+    public bool Handles(string field) => storage.Exists(StaticIndexBuilder.IvfFileName(field));
+
+    public IReadOnlyList<(int Doc, float Score)> Nearest(string field, float[] vector, int count)
+    {
+        IvfIndex index;
+        lock (ivf)
+        {
+            if (!ivf.TryGetValue(field, out IvfIndex? open))
+            {
+                open = IvfIndex.Open(storage.OpenRead(StaticIndexBuilder.IvfFileName(field)), verifyChecksum: false);
+                ivf[field] = open;
+            }
+
+            index = open;
+        }
+
+        IvfHit[] hits = index.SearchApproximate(vector, Math.Min(Math.Max(1, count), Math.Min(index.Count, 10_000)), nprobe);
+        string mapFile = StaticIndexBuilder.DocsFileName(field);
+        IRangeReader? map = storage.Exists(mapFile) ? storage.OpenRead(mapFile) : null;
+        var result = new List<(int, float)>(hits.Length);
+        Span<byte> entry = stackalloc byte[4]; // one u32 of the vector-number to document-id table
+        using (map)
+        {
+            foreach (IvfHit h in hits)
+            {
+                int doc = h.Id;
+                if (map is not null)
+                {
+                    if (4L * (h.Id + 1) > map.Length)
+                    {
+                        throw new CorruptIndexException(map.Name, "the document table is shorter than the IVF file's vector count");
+                    }
+
+                    map.ReadExactly(4L * h.Id, entry);
+                    uint raw = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(entry);
+                    if (raw > int.MaxValue)
+                    {
+                        throw new CorruptIndexException(map.Name, "a document id is out of range");
+                    }
+
+                    doc = (int)raw;
+                }
+
+                result.Add((doc, h.Score));
+            }
+        }
+
+        return result;
     }
 }

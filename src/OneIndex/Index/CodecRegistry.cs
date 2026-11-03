@@ -37,6 +37,9 @@ public static class SegmentParts
     /// <summary>The compressed copies (int8, int4, sign-bit) of the vector fields that ask for one, which graph search runs on.</summary>
     public const string Quantized = "vecq";
 
+    /// <summary>The clustered inverted-file index of the vector fields that ask for one (docs/ivf.md).</summary>
+    public const string Ivf = "ivf";
+
     /// <summary>The delete bitmap of one generation.</summary>
     public const string Deletes = "deletes";
 
@@ -71,6 +74,8 @@ public static class CodecRegistry
         new(SegmentParts.Graph, 1),
 
         new(SegmentParts.Quantized, 1),
+
+        new(SegmentParts.Ivf, 1),
 
         new(SegmentParts.Deletes, 1),
 

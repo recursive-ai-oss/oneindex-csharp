@@ -8,7 +8,7 @@ using IvfIndex index = IvfIndex.Open(storage.OpenRead("v.ivf"));
 IvfHit[] hits = index.Search(query, k: 10, nprobe: 16);                  // Id is the vector's number; Score larger is nearer
 ```
 
-IVF is the vector layout of the static index ([static-index.md](static-index.md)). On the server the engine's vector fields use HNSW and the flat scan; IVF is available there as the library types above but is not a per-field segment option.
+IVF is the vector layout of the static index ([static-index.md](static-index.md)). On the server a vector field uses HNSW by default; `[Vector(Index = VectorIndexKind.Ivf)]` (or `FieldDefinition.VectorIndex`) makes it an IVF field, described in "IVF as a per-field index" below.
 
 ## Building
 
@@ -35,6 +35,26 @@ All integers little-endian.
 | end | CRC-32C of everything before it (`u32`), magic `OIVF` again (`u32`) |
 
 Readers check the magic, version, sizes against the file length, each directory entry against the list region, each vector number against the count, and the CRC (on by default; `verifyChecksum: false` for a reader that has checked the bytes another way, such as a static index's per-chunk CRCs). Damage raises `CorruptIndexException`. The file is at most 2 GiB.
+
+## IVF as a per-field index
+
+`FieldDefinition.VectorIndex` (`Hnsw` default, or `Ivf`) and `IvfLists` (0 = about the square root of the segment's vector count) are stored in schema section 6; a reader that does not know the section skips it and searches the full-precision vectors. Changing the option re-indexes the field from stored source in the background, like a metric change.
+
+- **Part `ivf`** (magic `OIXL`, codec version 1), beside `vectors`: `u32` document count, then for each IVF field a complete `OIVF` image, then a directory (field count; per field its name, dimensions, vector count, image offset and length) and the checksummed footer. The images use `IvfStorage.EightBitCodes` (storage value 2: the codes with a scale per vector and no float rerank region; version 1 of `OIVF` allows storage 0 to 2). The full-precision vectors stay in the `vectors` part and are what the rerank reads.
+- **When it is written.** On flush and on merge, for segments with at least `FlatThreshold` vectors (smaller segments are scanned exactly); a merge rebuilds the lists from the merged vectors (no graph is written for the field). The part is skipped, and the field is scanned exactly, if its image would pass 2 GiB.
+- **Search.** `KnnQuery.Ef` means the number of probed lists for an IVF field (0 = max(8, lists / 8)). The probed lists are scored on the codes, the best 3 x k candidates (the oversample) are re-scored from `vectors`, and a filter and the deletes apply while scanning. Sync and async twins as for every vector query.
+- **Damage.** The reader validates the directory against the file and every image through `IvfIndex.Open`; a bad file raises `CorruptIndexException` naming the part. The `vectors` fuzz target covers the part.
+
+Measured (indicative: the worker, one thread per query, load average 7-18 from other jobs, the same 150,000 x 384 and 75,000 x 768 embedding sets as below, M = 16 and efConstruction = 100 for HNSW, `tools/vector_ivf_rows.sh`; the sizes are the whole segment, `vectors` included):
+
+| | recall@10 | QPS | build | index bytes | peak RSS |
+|---|---:|---:|---:|---:|---:|
+| 384 d HNSW ef 100 / 200 / 400 | 0.863 / 0.915 / 0.951 | 2,174 / 1,237 / 663 | 89.9 s | 250.6 MB | 945 MB |
+| 384 d IVF nprobe 16 / 48 / 96 | 0.734 / 0.879 / 0.938 | 434 / 160 / 82 | 9.2 s | 289.8 MB | 1,414 MB |
+| 768 d HNSW ef 100 / 200 / 400 | 0.893 / 0.937 / 0.968 | 1,541 / 840 / 423 | 57.6 s | 240.5 MB | 856 MB |
+| 768 d IVF nprobe 16 / 48 / 96 | 0.757 / 0.891 / 0.953 | 289 / 100 / 45 | 10.3 s | 289.5 MB | 1,360 MB |
+
+On text embeddings HNSW is 3 to 8 times faster at equal recall; IVF builds about 6-10 times faster and its file is a plain list layout (no pointer walk), which is why it is the static layout and an option for fields that are rebuilt often or read from slow storage. Its recall includes the float rerank. Real text embeddings have little cluster structure, so recall 0.95 needs about a quarter of the lists.
 
 ## Recall and speed
 

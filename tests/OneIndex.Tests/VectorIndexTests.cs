@@ -347,7 +347,7 @@ public sealed class VectorIndexTests
                 }
             }
 
-            Assert.Equal(1800, survived);
+            Assert.Equal(2400, survived);
         }
         finally
         {

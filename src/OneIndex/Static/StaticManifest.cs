@@ -8,7 +8,8 @@ namespace OneIndex.StaticIndexes;
 /// <param name="Name">The file's name in the index.</param>
 /// <param name="Size">Its size in bytes.</param>
 /// <param name="ChunkCrcs">The CRC-32C of each chunk, in order. A file of at most one chunk is stored under its own name; a longer file is stored as <c>name.c00000</c>, <c>name.c00001</c>, ...</param>
-public sealed record StaticFile(string Name, long Size, IReadOnlyList<uint> ChunkCrcs);
+/// <param name="ChunkBytes">The file's own chunk size, 1 KiB to 64 MiB, or 0 to use the manifest's. Files probed at scattered places (term dictionaries, lengths) are cut finer than files read in runs.</param>
+public sealed record StaticFile(string Name, long Size, IReadOnlyList<uint> ChunkCrcs, int ChunkBytes = 0);
 
 /// <summary>
 /// The manifest of a static index (<c>static.json</c>): the chunk size, the commit to open, and every file with the checksums of its chunks.
@@ -42,6 +43,15 @@ public sealed class StaticManifest
     /// <summary>The files.</summary>
     public IReadOnlyList<StaticFile> Files { get; }
 
+    /// <summary>The chunk size of a file: its own when it has one, otherwise the manifest's.</summary>
+    /// <param name="file">The file.</param>
+    /// <returns>Bytes per chunk.</returns>
+    public int ChunkSize(StaticFile file)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        return file.ChunkBytes > 0 ? file.ChunkBytes : ChunkBytes;
+    }
+
     /// <summary>The name a chunk of a file is stored under.</summary>
     /// <param name="file">The file.</param>
     /// <param name="chunk">The chunk number, from 0.</param>
@@ -69,6 +79,11 @@ public sealed class StaticManifest
                 w.WriteStartObject();
                 w.WriteString("name", f.Name);
                 w.WriteNumber("size", f.Size);
+                if (f.ChunkBytes > 0 && f.ChunkBytes != ChunkBytes)
+                {
+                    w.WriteNumber("chunk", f.ChunkBytes);
+                }
+
                 w.WriteStartArray("crc");
                 foreach (uint c in f.ChunkCrcs)
                 {
@@ -147,7 +162,8 @@ public sealed class StaticManifest
             // chunkBytes must come before files in the writer's order; check sizes against it now.
             foreach (StaticFile f in files)
             {
-                long expected = f.Size == 0 ? 0 : ((f.Size - 1) / chunk) + 1;
+                int size = f.ChunkBytes > 0 ? f.ChunkBytes : chunk;
+                long expected = f.Size == 0 ? 0 : ((f.Size - 1) / size) + 1;
                 if (f.ChunkCrcs.Count != expected)
                 {
                     throw Bad($"file '{f.Name}' lists {f.ChunkCrcs.Count} chunks, expected {expected}");
@@ -180,6 +196,7 @@ public sealed class StaticManifest
         {
             string? name = null;
             long size = -1;
+            int ownChunk = 0;
             var crcs = new List<uint>();
             while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
             {
@@ -192,6 +209,14 @@ public sealed class StaticManifest
                         break;
                     case "size":
                         size = reader.GetInt64();
+                        break;
+                    case "chunk":
+                        ownChunk = reader.GetInt32();
+                        if (ownChunk is < 1024 or > (1 << 26))
+                        {
+                            throw Bad("a file's chunk size is out of range");
+                        }
+
                         break;
                     case "crc":
                         if (reader.TokenType != JsonTokenType.StartArray)
@@ -221,7 +246,7 @@ public sealed class StaticManifest
             }
 
             StorageNames.Validate(name);
-            files.Add(new StaticFile(name, size, crcs));
+            files.Add(new StaticFile(name, size, crcs, ownChunk == chunk ? 0 : ownChunk));
             if (files.Count > limits.MaxFields * 64)
             {
                 throw Bad("too many files");

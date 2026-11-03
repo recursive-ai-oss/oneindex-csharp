@@ -555,6 +555,7 @@ OneIndex.Index.FieldDefinition.FlatThreshold : System.Int32 { get; init; }
 OneIndex.Index.FieldDefinition.HnswM : System.Int32 { get; init; }
 OneIndex.Index.FieldDefinition.IndexOptions : OneIndex.Index.IndexOptions { get; init; }
 OneIndex.Index.FieldDefinition.Indexed : System.Boolean { get; init; }
+OneIndex.Index.FieldDefinition.IvfLists : System.Int32 { get; init; }
 OneIndex.Index.FieldDefinition.Metric : OneIndex.Vectors.VectorMetric { get; init; }
 OneIndex.Index.FieldDefinition.Multi : System.Boolean { get; init; }
 OneIndex.Index.FieldDefinition.Name : System.String { get; }
@@ -562,6 +563,7 @@ OneIndex.Index.FieldDefinition.Oversample : System.Single { get; init; }
 OneIndex.Index.FieldDefinition.Quantization : OneIndex.Vectors.VectorQuantization { get; init; }
 OneIndex.Index.FieldDefinition.Stored : System.Boolean { get; init; }
 OneIndex.Index.FieldDefinition.Type : OneIndex.Index.FieldType { get; }
+OneIndex.Index.FieldDefinition.VectorIndex : OneIndex.Vectors.VectorIndexKind { get; init; }
 OneIndex.Index.FieldType.Bool : OneIndex.Index.FieldType = 6
 OneIndex.Index.FieldType.Bytes : OneIndex.Index.FieldType = 8
 OneIndex.Index.FieldType.Date : OneIndex.Index.FieldType = 5
@@ -828,6 +830,7 @@ OneIndex.Index.SegmentParts.Columns : System.String = columns
 OneIndex.Index.SegmentParts.Deletes : System.String = deletes
 OneIndex.Index.SegmentParts.Graph : System.String = hnsw
 OneIndex.Index.SegmentParts.Ids : System.String = ids
+OneIndex.Index.SegmentParts.Ivf : System.String = ivf
 OneIndex.Index.SegmentParts.Lengths : System.String = lengths
 OneIndex.Index.SegmentParts.Points : System.String = points
 OneIndex.Index.SegmentParts.Postings : System.String = postings
@@ -902,7 +905,7 @@ OneIndex.Linq.FilterTranslator<T>..ctor(OneIndex.SearchMapping<T> mapping)
 OneIndex.Linq.FilterTranslator<T>.Translate(System.Linq.Expressions.Expression<System.Func<T,System.Boolean>> predicate) : OneIndex.Search.Query
 OneIndex.Linq.UnsupportedExpressionException..ctor(System.Linq.Expressions.Expression expression, System.String reason)
 OneIndex.Linq.UnsupportedExpressionException.Expression : System.Linq.Expressions.Expression { get; }
-OneIndex.MappedMember..ctor(System.String name, OneIndex.Index.FieldType type, System.Boolean multi, System.Boolean indexed, System.Boolean column, System.Boolean facet, System.Boolean fullText, System.Boolean isId, System.Single boost, System.String analyzer, System.Int32 dimensions = 0, OneIndex.Vectors.VectorMetric metric = Cosine, System.Int32 hnswM = 16, System.Int32 efConstruction = 100, System.Int32 flatThreshold = 1000, OneIndex.Vectors.VectorQuantization quantization = None, System.Single oversample = 0, System.String from = null, System.Boolean rerank = False)
+OneIndex.MappedMember..ctor(System.String name, OneIndex.Index.FieldType type, System.Boolean multi, System.Boolean indexed, System.Boolean column, System.Boolean facet, System.Boolean fullText, System.Boolean isId, System.Single boost, System.String analyzer, System.Int32 dimensions = 0, OneIndex.Vectors.VectorMetric metric = Cosine, System.Int32 hnswM = 16, System.Int32 efConstruction = 100, System.Int32 flatThreshold = 1000, OneIndex.Vectors.VectorQuantization quantization = None, System.Single oversample = 0, System.String from = null, System.Boolean rerank = False, OneIndex.Vectors.VectorIndexKind vectorIndex = Hnsw, System.Int32 ivfLists = 0)
 OneIndex.MappedMember.Analyzer : System.String { get; }
 OneIndex.MappedMember.Boost : System.Single { get; }
 OneIndex.MappedMember.Column : System.Boolean { get; }
@@ -915,6 +918,7 @@ OneIndex.MappedMember.FullText : System.Boolean { get; }
 OneIndex.MappedMember.HnswM : System.Int32 { get; }
 OneIndex.MappedMember.Indexed : System.Boolean { get; }
 OneIndex.MappedMember.IsId : System.Boolean { get; }
+OneIndex.MappedMember.IvfLists : System.Int32 { get; }
 OneIndex.MappedMember.Metric : OneIndex.Vectors.VectorMetric { get; }
 OneIndex.MappedMember.Multi : System.Boolean { get; }
 OneIndex.MappedMember.Name : System.String { get; }
@@ -922,6 +926,7 @@ OneIndex.MappedMember.Oversample : System.Single { get; }
 OneIndex.MappedMember.Quantization : OneIndex.Vectors.VectorQuantization { get; }
 OneIndex.MappedMember.Rerank : System.Boolean { get; }
 OneIndex.MappedMember.Type : OneIndex.Index.FieldType { get; }
+OneIndex.MappedMember.VectorIndex : OneIndex.Vectors.VectorIndexKind { get; }
 OneIndex.MultiVectorAttribute..ctor()
 OneIndex.MultiVectorAttribute.Dimensions : System.Int32 { get; set; }
 OneIndex.OneWaySynonymsAttribute..ctor(System.String word, System.String[] synonyms)
@@ -1705,11 +1710,14 @@ OneIndex.StaticIndexes.IStaticSource.abstract FetchAsync(System.String objectNam
 OneIndex.StaticIndexes.StaticBuildOptions..ctor()
 OneIndex.StaticIndexes.StaticBuildOptions.ChunkBytes : System.Int32 { get; init; }
 OneIndex.StaticIndexes.StaticBuildOptions.Ivf : OneIndex.Vectors.IvfOptions { get; init; }
-OneIndex.StaticIndexes.StaticFile..ctor(System.String Name, System.Int64 Size, System.Collections.Generic.IReadOnlyList<System.UInt32> ChunkCrcs)
+OneIndex.StaticIndexes.StaticBuildOptions.ScatteredChunkBytes : System.Int32 { get; init; }
+OneIndex.StaticIndexes.StaticFile..ctor(System.String Name, System.Int64 Size, System.Collections.Generic.IReadOnlyList<System.UInt32> ChunkCrcs, System.Int32 ChunkBytes = 0)
+OneIndex.StaticIndexes.StaticFile.ChunkBytes : System.Int32 { get; init; }
 OneIndex.StaticIndexes.StaticFile.ChunkCrcs : System.Collections.Generic.IReadOnlyList<System.UInt32> { get; init; }
 OneIndex.StaticIndexes.StaticFile.Name : System.String { get; init; }
 OneIndex.StaticIndexes.StaticFile.Size : System.Int64 { get; init; }
 OneIndex.StaticIndexes.StaticIndex.static OpenAsync<T>(OneIndex.StaticIndexes.IStaticSource source, OneIndex.Vectors.IEmbedder embedder = null, System.Int64 maxCacheBytes = 134217728, System.Int32 readAhead = 1, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<OneIndex.StaticIndexes.StaticIndex<T>>
+OneIndex.StaticIndexes.StaticIndex<T>.HybridNprobe : System.Int32 { get; set; }
 OneIndex.StaticIndexes.StaticIndex<T>.QueryAsync<TResult>(System.Func<OneIndex.SearchIndex<T>,TResult> query, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<TResult>
 OneIndex.StaticIndexes.StaticIndex<T>.ReadAhead : System.Int32 { get; }
 OneIndex.StaticIndexes.StaticIndex<T>.Retries : System.Int32 { get; }
@@ -1718,6 +1726,7 @@ OneIndex.StaticIndexes.StaticIndex<T>.Storage : OneIndex.StaticIndexes.ChunkedSt
 OneIndex.StaticIndexes.StaticIndexBuilder.static Build<T>(System.String indexPath, System.String outDirectory, OneIndex.StaticIndexes.StaticBuildOptions options = null, System.Threading.CancellationToken cancellationToken = null) : OneIndex.StaticIndexes.StaticManifest
 OneIndex.StaticIndexes.StaticManifest..ctor(System.Int32 chunkBytes, System.String commit, System.Collections.Generic.IReadOnlyList<OneIndex.StaticIndexes.StaticFile> files)
 OneIndex.StaticIndexes.StaticManifest.ChunkBytes : System.Int32 { get; }
+OneIndex.StaticIndexes.StaticManifest.ChunkSize(OneIndex.StaticIndexes.StaticFile file) : System.Int32
 OneIndex.StaticIndexes.StaticManifest.Commit : System.String { get; }
 OneIndex.StaticIndexes.StaticManifest.CurrentVersion : System.Int32 = 1
 OneIndex.StaticIndexes.StaticManifest.FileName : System.String = static.json
@@ -1962,6 +1971,8 @@ OneIndex.VectorAttribute.Dimensions : System.Int32 { get; set; }
 OneIndex.VectorAttribute.EfConstruction : System.Int32 { get; set; }
 OneIndex.VectorAttribute.FlatThreshold : System.Int32 { get; set; }
 OneIndex.VectorAttribute.From : System.String { get; set; }
+OneIndex.VectorAttribute.Index : OneIndex.Vectors.VectorIndexKind { get; set; }
+OneIndex.VectorAttribute.IvfLists : System.Int32 { get; set; }
 OneIndex.VectorAttribute.M : System.Int32 { get; set; }
 OneIndex.VectorAttribute.Metric : OneIndex.Vectors.VectorMetric { get; set; }
 OneIndex.VectorAttribute.Oversample : System.Single { get; set; }
@@ -2012,6 +2023,7 @@ OneIndex.Vectors.IvfOptions.Seed : System.UInt64 { get; init; }
 OneIndex.Vectors.IvfOptions.Storage : OneIndex.Vectors.IvfStorage { get; init; }
 OneIndex.Vectors.IvfOptions.TrainingPerList : System.Int32 { get; init; }
 OneIndex.Vectors.IvfStorage.EightBit : OneIndex.Vectors.IvfStorage = 1
+OneIndex.Vectors.IvfStorage.EightBitCodes : OneIndex.Vectors.IvfStorage = 2
 OneIndex.Vectors.IvfStorage.FullPrecision : OneIndex.Vectors.IvfStorage = 0
 OneIndex.Vectors.MaxSim.static Rerank<T>(System.Collections.Generic.IEnumerable<OneIndex.SearchHit<T>> hits, System.Func<T,System.Byte[]> multiVector, System.Collections.Generic.IReadOnlyList<System.Single[]> queryVectors, System.Int32? take = null) : System.Collections.Generic.List<OneIndex.Vectors.MaxSimHit<T>>
 OneIndex.Vectors.MaxSim.static Rerank<T>(System.Collections.Generic.IEnumerable<OneIndex.SearchHit<T>> hits, System.Func<T,System.Single[][]> multiVector, System.Collections.Generic.IReadOnlyList<System.Single[]> queryVectors, System.Int32? take = null) : System.Collections.Generic.List<OneIndex.Vectors.MaxSimHit<T>>
@@ -2035,6 +2047,8 @@ OneIndex.Vectors.SparseEncoderExtensions.static Encode(OneIndex.Vectors.ISparseE
 OneIndex.Vectors.VectorHit..ctor(System.Int32 Doc, System.Single Score)
 OneIndex.Vectors.VectorHit.Doc : System.Int32 { get; init; }
 OneIndex.Vectors.VectorHit.Score : System.Single { get; init; }
+OneIndex.Vectors.VectorIndexKind.Hnsw : OneIndex.Vectors.VectorIndexKind = 0
+OneIndex.Vectors.VectorIndexKind.Ivf : OneIndex.Vectors.VectorIndexKind = 1
 OneIndex.Vectors.VectorMetric.Cosine : OneIndex.Vectors.VectorMetric = 0
 OneIndex.Vectors.VectorMetric.DotProduct : OneIndex.Vectors.VectorMetric = 1
 OneIndex.Vectors.VectorMetric.Euclidean : OneIndex.Vectors.VectorMetric = 2
@@ -2097,6 +2111,7 @@ enum OneIndex.Storage.StorageOperationKind : System.IComparable, System.IConvert
 enum OneIndex.Suggest.SuggestMode : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
 enum OneIndex.Vectors.EmbeddingRole : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
 enum OneIndex.Vectors.IvfStorage : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
+enum OneIndex.Vectors.VectorIndexKind : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
 enum OneIndex.Vectors.VectorMetric : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
 enum OneIndex.Vectors.VectorQuantization : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
 interface OneIndex.Browser.IOpfsHost

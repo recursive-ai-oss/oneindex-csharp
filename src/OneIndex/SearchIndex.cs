@@ -256,6 +256,12 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     }
 
     // A read-only view of a committed index: no writer, no lock, so it also opens indexes on read-only storage.
+    /// <summary>
+    /// Where a hybrid search gets its vector list when the index holds no usable vector part, such as a static index answering from its IVF lists.
+    /// Set by the static index for the duration of a query; null on every other index.
+    /// </summary>
+    internal IExternalVectorArm? ExternalVectorArm { get; set; }
+
     internal SearchIndex(IStorage storage, SearchMapping<T> mapping, IndexSnapshot snapshot, IEmbedder? embedder, IReranker? reranker)
     {
         Reranker = reranker;
@@ -517,6 +523,15 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     /// <exception cref="InvalidOperationException">The index does not store source (stored source is on by default).</exception>
     public IEnumerable<T> Documents()
     {
+        foreach ((T document, int _) in DocumentsWithIds())
+        {
+            yield return document;
+        }
+    }
+
+    /// <summary>Like <see cref="Documents"/>, with each document's global document id in the commit (its segment's base plus its id in the segment): what an external vector list names.</summary>
+    internal IEnumerable<(T Document, int DocId)> DocumentsWithIds()
+    {
         Generation? generation = Acquire();
         if (generation is null)
         {
@@ -535,7 +550,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
                     }
 
                     Document stored = Source(generation, leaf, local, out _) ?? throw new InvalidOperationException("The index holds no stored source for its documents.");
-                    yield return _mapping.FromDocument(stored);
+                    yield return (_mapping.FromDocument(stored), leaf.DocBase + local);
                 }
             }
         }

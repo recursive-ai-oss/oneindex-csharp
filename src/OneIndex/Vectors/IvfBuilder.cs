@@ -16,6 +16,12 @@ public enum IvfStorage : byte
     /// Probed lists are scored on the codes, then the best candidates are re-scored from the full-precision region.
     /// </summary>
     EightBit = 1,
+
+    /// <summary>
+    /// 8-bit codes inside the lists and no full-precision region: the file is smaller, probed lists are scored on the codes and the caller
+    /// re-scores candidates from vectors it keeps elsewhere (a segment's vectors file). <see cref="IvfIndex.Search"/> returns code scores.
+    /// </summary>
+    EightBitCodes = 2,
 }
 
 /// <summary>Settings of <see cref="IvfBuilder"/>.</summary>
@@ -115,10 +121,11 @@ public static class IvfBuilder
             order[fill[assign[i]]++] = i;
         }
 
-        bool int8 = options.Storage == IvfStorage.EightBit;
+        bool int8 = options.Storage != IvfStorage.FullPrecision;
+        bool rerank = options.Storage == IvfStorage.EightBit;
         int codeBytes = int8 ? 4 + dimensions : dimensions * 4;
         long listsStart = HeaderBytes + ((long)nlist * dimensions * 4) + ((long)nlist * DirectoryEntryBytes);
-        long total = listsStart + ((long)n * (4 + codeBytes)) + (int8 ? (long)n * dimensions * 4 : 0) + 8;
+        long total = listsStart + ((long)n * (4 + codeBytes)) + (rerank ? (long)n * dimensions * 4 : 0) + 8;
         if (total > int.MaxValue)
         {
             throw new ArgumentException("The index would be larger than 2 GiB.", nameof(vectors));
@@ -134,7 +141,7 @@ public static class IvfBuilder
         BinaryPrimitives.WriteUInt32LittleEndian(f[20..], (uint)n);
         BinaryPrimitives.WriteUInt32LittleEndian(f[24..], (uint)options.Storage);
         long rerankStart = listsStart + ((long)n * (4 + codeBytes));
-        BinaryPrimitives.WriteInt64LittleEndian(f[32..], int8 ? rerankStart : 0);
+        BinaryPrimitives.WriteInt64LittleEndian(f[32..], rerank ? rerankStart : 0);
         int at = HeaderBytes;
         for (int i = 0; i < nlist * dimensions; i++)
         {
@@ -185,7 +192,7 @@ public static class IvfBuilder
             }
         }
 
-        if (int8)
+        if (rerank)
         {
             for (int p = 0; p < n; p++)
             {

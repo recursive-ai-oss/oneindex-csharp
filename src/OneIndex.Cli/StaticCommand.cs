@@ -7,8 +7,8 @@ internal static class StaticCommand
 {
     public static int Run(string[] args, TextWriter output, TextWriter error, CancellationToken ct)
     {
-        var a = new Arguments(args, ["--chunk-kb"], []);
-        a.Expect(2, "oneindex static build <index> <out> [--chunk-kb N]");
+        var a = new Arguments(args, ["--chunk-kb", "--scattered-kb"], []);
+        a.Expect(2, "oneindex static build <index> <out> [--chunk-kb N] [--scattered-kb N]");
         string index = Path.GetFullPath(a.Positionals[0]);
         string outDir = Path.GetFullPath(a.Positionals[1]);
         if (!Directory.Exists(index))
@@ -18,9 +18,10 @@ internal static class StaticCommand
         }
 
         int chunkKb = a.GetInt("--chunk-kb", 16, 1, 65536);
-        StaticManifest m = StaticIndexBuilder.Build<FilePassage>(index, outDir, new StaticBuildOptions { ChunkBytes = chunkKb * 1024 }, ct);
+        int scatteredKb = a.GetInt("--scattered-kb", 4, 1, 65536);
+        StaticManifest m = StaticIndexBuilder.Build<FilePassage>(index, outDir, new StaticBuildOptions { ChunkBytes = chunkKb * 1024, ScatteredChunkBytes = scatteredKb * 1024 }, ct);
         long bytes = m.Files.Sum(static f => f.Size);
-        output.WriteLine($"Static index: {m.Files.Count} files, {bytes:N0} bytes in chunks of {chunkKb} KiB, written to {outDir}");
+        output.WriteLine($"Static index: {m.Files.Count} files, {bytes:N0} bytes in chunks of {chunkKb} KiB ({scatteredKb} KiB for term, posting and stored files), written to {outDir}");
         output.WriteLine("Serve the folder with any static file server; open it with StaticIndex.OpenAsync over an HttpStaticSource.");
         return 0;
     }
