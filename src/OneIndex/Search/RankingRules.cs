@@ -44,6 +44,13 @@ public sealed record RankingRule(RankingRuleKind Kind, string? Field = null, Sor
     /// <summary>The most rules one list may hold.</summary>
     public const int MaxRules = 12;
 
+    /// <summary>Whether a property rule can order by this field: a column of a keyword, bool, numeric or date field.</summary>
+    /// <param name="schema">The schema.</param>
+    /// <param name="field">The field named by the rule.</param>
+    /// <returns><see langword="true"/> when the field exists, has a column and is not text, geo, bytes, vector or JSON.</returns>
+    internal static bool CanOrderBy(Schema schema, string field)
+        => schema.TryGetField(field, out FieldDefinition? def) && def.Column && def.Type is not (FieldType.Text or FieldType.GeoPoint or FieldType.Bytes or FieldType.Vector or FieldType.Json);
+
     /// <summary>The rule as written: <c>words</c>, <c>typo</c>, <c>proximity</c>, <c>attribute</c>, <c>sort</c>, <c>exactness</c> or <c>field:asc</c> / <c>field:desc</c>.</summary>
     /// <returns>The text.</returns>
     public override string ToString() => Kind switch

@@ -10,6 +10,7 @@
 set -u
 WORK=${1:?work dir}; SEED=${2:-1}; LANES=${3:-4}; CYCLES=${4:-250}
 HERE=$(cd "$(dirname "$0")/.." && pwd)
+for d in "$HOME/dotnet10" "$HOME/oneindex/dotnet"; do [ -d "$d" ] && export PATH="$d:$PATH" DOTNET_ROOT="$d" && break; done
 export ONEINDEX_ARTIFACTS=$WORK/artifacts TMPDIR=$WORK/tmp
 mkdir -p "$WORK/tmp" "$WORK/logs"
 dotnet build -m:4 "$HERE/tests/EfDurability" -c Release -v quiet -clp:NoSummary || exit 1

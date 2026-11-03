@@ -171,3 +171,54 @@ BM25F term queries.
 The bonus of docs/scoring.md ("Term proximity") on the gate sets, by weight. The table and its reading are in that section; the default keeps
 every set at or above the no-bonus numbers of the table above (within noise on ArguAna at 1.2/0.75) and adds 0.1 to 0.3 points at the default
 BM25 setting.
+
+## Milestone re-run
+
+The gate sets re-run on the code of the first public version. nDCG@10 under the BEIR convention (a hit whose id equals the query id is dropped); our runner, cross-checked with `pytrec_eval` (largest difference 2.2e-15). Lucene.NET is 4.8.0-beta00018 with matched analysis. The BM25 numbers equal the recorded ones except the proximity default (weight 0.1 on user text, described above and in docs/scoring.md).
+
+### BM25 at k1 = 0.9, b = 0.4
+
+| Set | OneIndex default (BM25F + proximity 0.1) | OneIndex without the bonus | Lucene.NET Flat | Lucene.NET MultiFieldSum | Baseline (multifield) | Default minus baseline |
+|---|---|---|---|---|---|---|
+| SciFact | 0.6918 | 0.6912 | 0.6789 | 0.6647 | 0.665 | +2.7 |
+| ArguAna | 0.4347 | 0.4333 | 0.4118 | 0.4240 | 0.414 | +2.1 |
+| SCIDOCS | 0.1544 | 0.1531 | 0.1509 | 0.1587 | 0.158 | -0.4 |
+| NQ | 0.3452 | 0.3420 | 0.3058 | 0.3252 | 0.329 | +1.6 |
+
+ArguAna without the BEIR own-hit convention: 0.3260 (OneIndex) against 0.3111 (Lucene.NET Flat). Every set is within one point of the baseline or above it, and at or above Lucene.NET Flat. SCIDOCS is read against Flat, as ruled (BM25F is a single-stream model); it sits 0.4 below the per-field-sum layout, which loses on SciFact and NQ when OneIndex runs it (below).
+
+At k1 = 1.2, b = 0.75 (SciFact / ArguAna / SCIDOCS / NQ):
+
+| Run | SciFact | ArguAna | SCIDOCS | NQ |
+|---|---|---|---|---|
+| OneIndex default | 0.7033 | 0.5067 | 0.1615 | 0.3412 |
+| OneIndex without the bonus | 0.6998 | 0.5072 | 0.1601 | 0.3377 |
+| Lucene.NET Flat | 0.6848 | 0.4882 | 0.1566 | 0.2775 |
+| Lucene.NET MultiFieldSum | 0.6628 | 0.4880 | 0.1619 | 0.3051 |
+
+Other layouts, 0.9/0.4 then 1.2/0.75 (SciFact / ArguAna / SCIDOCS / NQ): OneIndex Flat 0.6822 / 0.4181 / 0.1513 / 0.3148 then 0.6891 / 0.4930 / 0.1568 / 0.2891; OneIndex MultiFieldSum 0.6452 / 0.4272 / 0.1552 / 0.3228 then 0.6456 / 0.4818 / 0.1592 / 0.3042; Lucene.NET MultiFieldMax 0.6685 / 0.3784 / 0.1461 / 0.2437 then 0.6684 / 0.4584 / 0.1480 / 0.2309.
+
+### Dense and hybrid
+
+Typed BM25 arm, bge-small dense arm, default hybrid (weighted RRF, rank constant 10, semantic ratio 0.75).
+
+| Set | BM25 | Dense | Hybrid |
+|---|---|---|---|
+| SciFact | 0.6912 | 0.7126 | 0.7257 |
+| ArguAna | 0.4333 | 0.6048 | 0.6100 |
+| SCIDOCS | 0.1531 | 0.2041 | 0.2064 |
+| NQ (recorded, not re-run) | 0.3420 | 0.5018 | 0.5249 |
+| Mean | 0.4049 | 0.5058 | 0.5168 |
+
+Hybrid is above both arms on every set and on the mean. NQ needs GPU-embedded vectors, which this run did not use, so its row is the recorded one (held-out confirmation). Other fusion settings reproduce the recorded numbers to four decimals on the three CPU sets (for example SciFact RRF k 60 ratio 0.5 gives 0.7282 and linear 0.5 gives 0.7377).
+
+### `.Models` rows
+
+| Model | SciFact | ArguAna | SCIDOCS | NQ | State |
+|---|---|---|---|---|---|
+| bge-small dense (int8) | 0.7126 | 0.6048 | 0.2041 | 0.5018 | three sets re-embedded on CPU this run; NQ recorded |
+| multilingual-e5-small (int8) | 0.6782 | 0.3859 | 0.1375 | | re-embedded on CPU this run; card 0.67704 / 0.39063 / 0.13895 |
+| cross-encoder rerank of BM25 | 0.6890 | 0.4164 (0.3112 with own hits kept) | 0.1646 | 0.5404 | scores reused from the cache (the run scored 0 pairs); NQ recorded |
+| OpenSearch sparse | | | | 0.5432 | recorded, not re-run |
+
+What stands as recorded: all NQ model rows, the sparse encoder, and the cross-encoder scores (the cache was valid; the pair scores were not recomputed).

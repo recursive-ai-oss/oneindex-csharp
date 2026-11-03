@@ -46,3 +46,36 @@ Reading the output: `ft` (features) is the number to watch. The host's own `cov`
 ## Findings
 
 Minimize the input, save it under `testdata/fuzz/` (under 1 MB), and add a test that feeds it and asserts a typed result.
+
+## Milestone run
+
+Every target for 600 s, one process at a time. `execs/s` is the average; `ft` is libFuzzer's feature count at the end. 0 findings unless noted. The slow targets (`analysis`, `query`) run few executions because each input does a lot of work.
+
+| Target | Executions | execs/s | ft |
+|---|---|---|---|
+| commit | 25,335,596 | 42,155 | 2,931 |
+| analysis | 51,643 | 85 | 28,490 |
+| terms | 17,199,932 | 28,618 | 5,973 |
+| postings | 10,883,769 | 18,109 | 4,132 |
+| paged | 16,924,002 | 28,159 | 5,779 |
+| segment | 18,201,661 | 30,285 | 1,235 |
+| columns | 27,157,079 | 45,186 | 4,932 |
+| points | 22,209,569 | 36,954 | 5,238 |
+| stored | 687,811 | 1,144 | 6,828 |
+| vectors (including IVF and 1-bit) | 3,810,761 | 6,340 | 9,507 |
+| dynamic | 4,569,108 | 7,602 | 17,239 |
+| wordpiece | 3,613,873 | 6,013 | 2,913 |
+| dictionary | 19,614,974 | 32,637 | 2,535 |
+| asian | 1,259,853 | 2,096 | 9,537 |
+| static | 23,318,661 | 38,799 | 2,099 |
+| query | 198,981 | 331 | 50,568 |
+| usertext | 3,134,198 | 5,214 | 22,623 |
+| strict | 5,643,393 | 9,390 | 39,713 |
+| filter | 21,087,077 | 35,086 | 20,039 |
+| queryjson | 6,337,134 (stopped at the finding) | | |
+
+The first 15 rows ran on the code before more-like-this was added; `query`, `usertext`, `strict`, `filter` and `queryjson` ran after it.
+
+**Finding (`queryjson`).** A query JSON document with a `rankingRules` property rule naming a field that cannot be sorted on, combined with `sort`, escaped as `ArgumentException` instead of a parse error. Fixed: the reader now rejects such a rule as a `QueryParseException` at `$.rankingRules[i]`. Repro: `testdata/fuzz/queryjson-ranking-rule-field.json`, test `QueryDataFormTests.ARankingRuleNamingAnUnsortableFieldIsAParseErrorWithItsPosition`.
+
+**Re-runs after the fix and the later merges.** `queryjson` 600 s: 5,731,105 executions, 9,535/s, ft 52,778, 0 findings. `dynamic` (957,336 executions, ft 16,215) and `stored` (181,471 executions, ft 6,802) 180 s each, 0 findings. `query`, `usertext`, `strict` and `filter` were not re-run after multi-vector encoding at upsert and the MaxSim stage were merged; neither touches those parsers.
