@@ -57,6 +57,8 @@ public static class Mutations
 
     public static string[] Statuses { get; } = ["open", "paid", "overdue", "void"];
 
+    public static string[] Cities { get; } = ["Paris", "Oslo", "Rome", "Lima"];
+
     public static string[] Words { get; } = ["acme", "invoice", "widget", "hosting", "support", "license", "travel", "audit", "refund", "sprocket"];
 
     /// <summary>One save of one to five random changes. Conflicts with the other process are expected and ignored.</summary>
@@ -107,6 +109,7 @@ public static class Mutations
         i.Status = Statuses[rng.Next(Statuses.Length)];
         i.Amount = rng.Next(10_000);
         i.CustomerId = rng.Next(20);
+        i.Billing = new Billing { Contact = Words[rng.Next(Words.Length)], City = Cities[rng.Next(Cities.Length)], Terms = rng.Next(90), Notes = rng.Next(3) == 0 ? [] : [Words[rng.Next(Words.Length)]] };
         i.Meta = System.Text.Json.JsonDocument.Parse("{\"tier\":" + rng.Next(3).ToString(System.Globalization.CultureInfo.InvariantCulture) + "}").RootElement.Clone();
         return i;
     }
@@ -157,21 +160,28 @@ public static class ChildApp
             o.RetainRows = a.Number("retain", 30);
             o.PollInterval = TimeSpan.FromMilliseconds(15);
             o.BatchSize = rng.Next(3, 40);
+            o.LateRowAge = TimeSpan.FromSeconds(a.Number("late", 5));
         });
         rt = OneIndexRuntime.For(first);
         using var cts = new CancellationTokenSource();
         Task? applier = inline ? null : Task.Run(() => rt.RunAsync(cts.Token));
         var clock = Stopwatch.StartNew();
-        int saves = 0;
-        while (clock.ElapsedMilliseconds < ms)
+        int writers = a.Number("writers", 1);
+        var seeds = Enumerable.Range(0, writers).Select(_ => rng.Next()).ToArray();
+        await Task.WhenAll(seeds.Select(seed => Task.Run(async () =>
         {
-            using AppDb w = AppDb.Create(db, Path.Combine(root, inst));
-            await Mutations.SaveSomeAsync(w, rng, rng.Next(2) == 0).ConfigureAwait(false);
-            if (inline && ++saves % 40 == 0)
+            var wrng = new Random(seed);
+            int saves = 0;
+            while (clock.ElapsedMilliseconds < ms)
             {
-                rt.Prune(a.Number("retain", 30));
+                using AppDb w = AppDb.Create(db, Path.Combine(root, inst));
+                await Mutations.SaveSomeAsync(w, wrng, wrng.Next(2) == 0).ConfigureAwait(false);
+                if (inline && ++saves % 40 == 0)
+                {
+                    rt.Prune(a.Number("retain", 30));
+                }
             }
-        }
+        }))).ConfigureAwait(false);
 
         await cts.CancelAsync().ConfigureAwait(false);
         if (applier is not null)
@@ -236,7 +246,7 @@ public static class Verifier
                     }
 
                     Invoice d = hit[0].Document;
-                    if (d.Version != r.Version || d.Title != r.Title || d.Status != r.Status || d.Amount != r.Amount)
+                    if (d.Version != r.Version || d.Title != r.Title || d.Status != r.Status || d.Amount != r.Amount || d.Billing.City != r.Billing.City || d.Billing.Terms != r.Billing.Terms || !d.Billing.Notes.SequenceEqual(r.Billing.Notes))
                     {
                         problems.Add($"{r.Id}: index v{d.Version} '{d.Title}' {d.Status} {d.Amount}; database v{r.Version} '{r.Title}' {r.Status} {r.Amount}");
                     }
@@ -292,7 +302,9 @@ public sealed class KillCampaign(Args a)
         int cycles = a.Number("cycles", 20);
         int seed = a.Number("seed", 1);
         Directory.CreateDirectory(dir);
-        string dbFile = Path.Combine(dir, "app.db");
+        string pg = a.Get("pg");
+        string dbFile = pg.Length > 0 ? pg + ";Database=ef_" + seed.ToString(System.Globalization.CultureInfo.InvariantCulture) : Path.Combine(dir, "app.db");
+        string writers = a.Get("writers", "1");
         if (Directory.GetFileSystemEntries(dir).Length > 0)
         {
             Console.Error.WriteLine("refusing a non-empty directory " + dir);
@@ -323,7 +335,7 @@ public sealed class KillCampaign(Args a)
                     UseShellExecute = false,
                 };
                 foreach (string s in new[] { dll, "app", "--db", dbFile, "--root", dir, "--inst", inst, "--seed", (seed * 100003 + cycle * 7 + inst[0]).ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    "--ms", "2500", "--mode", rng.Next(3) == 0 ? "inline" : "threaded", "--kill", kill, "--retain", (5 + rng.Next(60)).ToString(System.Globalization.CultureInfo.InvariantCulture) })
+                    "--ms", "2500", "--mode", rng.Next(3) == 0 ? "inline" : "threaded", "--writers", writers, "--kill", kill, "--retain", (5 + rng.Next(60)).ToString(System.Globalization.CultureInfo.InvariantCulture) })
                 {
                     psi.ArgumentList.Add(s);
                 }

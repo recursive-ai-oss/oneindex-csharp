@@ -42,7 +42,21 @@ public sealed class OneIndexOptions
     /// </summary>
     public long RetainRows { get; set; } = 100_000;
 
-    /// <summary>The clock of the applier loop's sleeps. Defaults to <see cref="TimeProvider.System"/>.</summary>
+    /// <summary>
+    /// How many positions behind the newest log row a missing position is still waited for. Positions are handed out when a transaction inserts its
+    /// row but rows become visible when it commits, so a database with concurrent writers can show a later position first; the applier remembers the
+    /// missing ones and applies their rows when they appear (docs/entity-framework.md). A missing position this far behind is given up: it was a rollback.
+    /// Default 10,000. Also bounds how many positions one pass looks at.
+    /// </summary>
+    public long LateRowWindow { get; set; } = 10_000;
+
+    /// <summary>
+    /// How long a missing position is waited for, measured from when this process first noticed it, before it is given up as a rollback. Must exceed
+    /// the longest transaction that writes entities. Default 30 seconds. Giving up is the only way a late row can be missed.
+    /// </summary>
+    public TimeSpan LateRowAge { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>The clock of the applier loop's sleeps and of the waiting time of missing positions. Defaults to <see cref="TimeProvider.System"/>.</summary>
     public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
 
     /// <summary>
@@ -161,7 +175,7 @@ public sealed class OneIndexRuntime : IAsyncDisposable, IDisposable
     /// <returns>The position, or <see langword="null"/> when the index has never been built.</returns>
     public OneIndexPosition? GetPosition<T>()
         where T : class
-        => OutboxPosition.TryParse(Index<T>().AppliedPosition.Span, out OutboxPosition p) ? new OneIndexPosition(p.LogId, p.Seq, p.Base, p.Count) : null;
+        => OutboxPosition.TryParse(Index<T>().AppliedPosition.Span, out OutboxPosition p) ? new OneIndexPosition(p.LogId, p.Seq, p.Base, p.Count, p.Gaps.Length) : null;
 
     internal IndexedEntity<T> Entity<T>()
         where T : class
@@ -383,4 +397,5 @@ public sealed class OneIndexRuntime : IAsyncDisposable, IDisposable
 /// <param name="Seq">Every row of the entity type up to this position is in the index's last commit.</param>
 /// <param name="Base">The position of the last full rebuild.</param>
 /// <param name="Count">How many rows of the entity type were applied after <paramref name="Base"/>. After no pruning it equals the number of such rows up to <paramref name="Seq"/>, which makes a row applied twice or skipped visible.</param>
-public readonly record struct OneIndexPosition(Guid LogId, long Seq, long Base, long Count);
+/// <param name="GapCount">How many positions below <paramref name="Seq"/> are still waited for (see <see cref="OneIndexOptions.LateRowWindow"/>).</param>
+public readonly record struct OneIndexPosition(Guid LogId, long Seq, long Base, long Count, int GapCount);

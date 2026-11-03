@@ -88,10 +88,11 @@ internal sealed class IndexedEntity<T> : IndexedEntity
 
     // The index is trusted only when it was built against this log and has applied a position the log can still continue from.
     private static bool Continuable(SearchIndex<T> index, LogState state, out OutboxPosition position)
-        => OutboxPosition.TryParse(index.AppliedPosition.Span, out position)
+        => OutboxPosition.TryParse(index.AppliedPosition.Span, out position!)
            && position.LogId == state.LogId
            && position.Seq >= state.PrunedThrough
-           && position.Seq <= state.MaxSeq;
+           && position.Seq <= state.MaxSeq
+           && (position.Gaps.Length == 0 || position.Gaps[0] > state.PrunedThrough);
 
     // Applies a batch: entities found in the database are upserted, identifiers without one are deleted (the log says "changed", the database says how).
     private void Apply(SearchIndex<T> index, List<string> ids, List<T> found, CancellationToken cancellationToken)
@@ -112,20 +113,7 @@ internal sealed class IndexedEntity<T> : IndexedEntity
         }
     }
 
-    private static List<string> DistinctIds(List<OutboxEntry> rows)
-    {
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var ids = new List<string>();
-        foreach (OutboxEntry r in rows)
-        {
-            if (seen.Add(r.EntityId))
-            {
-                ids.Add(r.EntityId);
-            }
-        }
-
-        return ids;
-    }
+    private readonly Dictionary<long, long> _firstSeen = [];
 
     public override int CatchUp(OneIndexRuntime runtime, CancellationToken cancellationToken)
     {
@@ -139,37 +127,40 @@ internal sealed class IndexedEntity<T> : IndexedEntity
         }
 
         int applied = 0;
-        int batch = runtime.Options.BatchSize;
-        while (position.Seq < state.MaxSeq)
+        var walk = new GapWalk(runtime.Options, Name, position, state.MaxSeq, _firstSeen);
+        while (walk.More)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            List<OutboxEntry> rows = OutboxStore.ReadRows(db, Name, position.Seq, state.MaxSeq, batch);
-            if (OutboxStore.ReadPruned(db) > position.Seq)
+            List<OutboxEntry> window = OutboxStore.ReadWindow(db, walk.Cursor, state.MaxSeq, runtime.Options.BatchSize);
+            List<OutboxEntry> late = walk.OpenGaps.Count == 0 ? [] : OutboxStore.ReadBySeq(db, walk.OpenGaps);
+            long pruned = OutboxStore.ReadPruned(db);
+            WalkStep step = walk.Advance(window, late, pruned);
+            if (step.Rebuild || pruned > walk.Position.Seq)
             {
-                // Retention removed rows between the check and the read: the rows read may have a hole in them.
+                // Retention removed rows this index has not applied (possibly between the check and the read): the rows read may have holes.
                 Reindex(runtime, db, cancellationToken);
                 return applied;
             }
 
-            long next = rows.Count == batch ? rows[^1].Seq : state.MaxSeq;
-            if (rows.Count > 0)
+            if (step.Ids.Count > 0)
             {
                 runtime.Probe("apply.read");
-                List<string> ids = DistinctIds(rows);
-                var found = new List<T>(ids.Count);
-                for (int i = 0; i < ids.Count; i += LoadChunk)
+                var found = new List<T>(step.Ids.Count);
+                for (int i = 0; i < step.Ids.Count; i += LoadChunk)
                 {
-                    found.AddRange(Load(db, ids.GetRange(i, Math.Min(LoadChunk, ids.Count - i)), IdName, null, track: false));
+                    found.AddRange(Load(db, step.Ids.GetRange(i, Math.Min(LoadChunk, step.Ids.Count - i)), IdName, null, track: false));
                 }
 
-                Apply(index, ids, found, cancellationToken);
+                Apply(index, step.Ids, found, cancellationToken);
                 runtime.Probe("apply.before-commit");
             }
 
-            position = position with { Seq = next, Count = position.Count + rows.Count };
-            index.Commit(position.Encode(), cancellationToken);
-            runtime.Probe("apply.after-commit");
-            applied += rows.Count;
+            if (step.Ids.Count > 0 || step.Position is not null && !step.Position.Encode().AsSpan().SequenceEqual(index.AppliedPosition.Span))
+            {
+                index.Commit(step.Position!.Encode(), cancellationToken);
+                runtime.Probe("apply.after-commit");
+                applied += step.Ids.Count;
+            }
         }
 
         return applied;
@@ -187,36 +178,39 @@ internal sealed class IndexedEntity<T> : IndexedEntity
         }
 
         int applied = 0;
-        int batch = runtime.Options.BatchSize;
-        while (position.Seq < state.MaxSeq)
+        var walk = new GapWalk(runtime.Options, Name, position, state.MaxSeq, _firstSeen);
+        while (walk.More)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            List<OutboxEntry> rows = await OutboxStore.ReadRowsAsync(db, Name, position.Seq, state.MaxSeq, batch, cancellationToken).ConfigureAwait(false);
-            if (await OutboxStore.ReadPrunedAsync(db, cancellationToken).ConfigureAwait(false) > position.Seq)
+            List<OutboxEntry> window = await OutboxStore.ReadWindowAsync(db, walk.Cursor, state.MaxSeq, runtime.Options.BatchSize, cancellationToken).ConfigureAwait(false);
+            List<OutboxEntry> late = walk.OpenGaps.Count == 0 ? [] : await OutboxStore.ReadBySeqAsync(db, walk.OpenGaps, cancellationToken).ConfigureAwait(false);
+            long pruned = await OutboxStore.ReadPrunedAsync(db, cancellationToken).ConfigureAwait(false);
+            WalkStep step = walk.Advance(window, late, pruned);
+            if (step.Rebuild || pruned > walk.Position.Seq)
             {
                 await ReindexAsync(runtime, db, cancellationToken).ConfigureAwait(false);
                 return applied;
             }
 
-            long next = rows.Count == batch ? rows[^1].Seq : state.MaxSeq;
-            if (rows.Count > 0)
+            if (step.Ids.Count > 0)
             {
                 runtime.Probe("apply.read");
-                List<string> ids = DistinctIds(rows);
-                var found = new List<T>(ids.Count);
-                for (int i = 0; i < ids.Count; i += LoadChunk)
+                var found = new List<T>(step.Ids.Count);
+                for (int i = 0; i < step.Ids.Count; i += LoadChunk)
                 {
-                    found.AddRange(await LoadAsync(db, ids.GetRange(i, Math.Min(LoadChunk, ids.Count - i)), IdName, null, track: false, cancellationToken).ConfigureAwait(false));
+                    found.AddRange(await LoadAsync(db, step.Ids.GetRange(i, Math.Min(LoadChunk, step.Ids.Count - i)), IdName, null, track: false, cancellationToken).ConfigureAwait(false));
                 }
 
-                Apply(index, ids, found, cancellationToken);
+                Apply(index, step.Ids, found, cancellationToken);
                 runtime.Probe("apply.before-commit");
             }
 
-            position = position with { Seq = next, Count = position.Count + rows.Count };
-            index.Commit(position.Encode(), cancellationToken);
-            runtime.Probe("apply.after-commit");
-            applied += rows.Count;
+            if (step.Ids.Count > 0 || step.Position is not null && !step.Position.Encode().AsSpan().SequenceEqual(index.AppliedPosition.Span))
+            {
+                index.Commit(step.Position!.Encode(), cancellationToken);
+                runtime.Probe("apply.after-commit");
+                applied += step.Ids.Count;
+            }
         }
 
         return applied;
@@ -240,6 +234,7 @@ internal sealed class IndexedEntity<T> : IndexedEntity
     {
         SearchIndex<T> index = Index(runtime);
         LogState state = OutboxStore.ReadState(db);
+        List<long> present = OutboxStore.ReadSeqs(db, Math.Max(state.PrunedThrough, state.MaxSeq - runtime.Options.LateRowWindow), state.MaxSeq);
         runtime.Probe("reindex.start");
         var seen = new HashSet<string>(StringComparer.Ordinal);
         string? last = null;
@@ -270,13 +265,14 @@ internal sealed class IndexedEntity<T> : IndexedEntity
             runtime.Probe("reindex.page");
         }
 
-        FinishReindex(index, state, seen, runtime, cancellationToken);
+        FinishReindex(index, state, present, seen, runtime, cancellationToken);
     }
 
     private async ValueTask ReindexAsync(OneIndexRuntime runtime, DbContext db, CancellationToken cancellationToken)
     {
         SearchIndex<T> index = Index(runtime);
         LogState state = await OutboxStore.ReadStateAsync(db, cancellationToken).ConfigureAwait(false);
+        List<long> present = await OutboxStore.ReadSeqsAsync(db, Math.Max(state.PrunedThrough, state.MaxSeq - runtime.Options.LateRowWindow), state.MaxSeq, cancellationToken).ConfigureAwait(false);
         runtime.Probe("reindex.start");
         var seen = new HashSet<string>(StringComparer.Ordinal);
         string? last = null;
@@ -307,10 +303,10 @@ internal sealed class IndexedEntity<T> : IndexedEntity
             runtime.Probe("reindex.page");
         }
 
-        FinishReindex(index, state, seen, runtime, cancellationToken);
+        FinishReindex(index, state, present, seen, runtime, cancellationToken);
     }
 
-    private static void FinishReindex(SearchIndex<T> index, LogState state, HashSet<string> seen, OneIndexRuntime runtime, CancellationToken cancellationToken)
+    private void FinishReindex(SearchIndex<T> index, LogState state, List<long> present, HashSet<string> seen, OneIndexRuntime runtime, CancellationToken cancellationToken)
     {
         foreach (string id in index.CommittedIds())
         {
@@ -321,8 +317,41 @@ internal sealed class IndexedEntity<T> : IndexedEntity
         }
 
         runtime.Probe("reindex.before-commit");
-        index.Commit(new OutboxPosition(state.LogId, state.MaxSeq, state.MaxSeq, 0).Encode(), cancellationToken);
+        OutboxPosition start = StartAfterRebuild(state, present, runtime.Options);
+        index.Commit(start.Encode(), cancellationToken);
         runtime.Probe("reindex.after-commit");
+    }
+
+    // The position a rebuild commits. The tables were read after the log's highest position was, so a change committed since then is either in the
+    // tables or still in the log after the mark. A position below the mark with no visible row, though, may belong to a transaction that had not
+    // committed when the tables were read, and its change may be in neither: those become gaps, exactly as in a walk.
+    private OutboxPosition StartAfterRebuild(LogState state, List<long> present, OneIndexOptions options)
+    {
+        var have = new HashSet<long>(present);
+        long now = options.TimeProvider.GetUtcNow().UtcTicks;
+        var gaps = new List<long>();
+        long mark = state.MaxSeq;
+        _firstSeen.Clear();
+        for (long g = Math.Max(state.PrunedThrough, state.MaxSeq - options.LateRowWindow) + 1; g <= state.MaxSeq; g++)
+        {
+            if (have.Contains(g))
+            {
+                continue;
+            }
+
+            gaps.Add(g);
+            if (OutboxPosition.SizeOf(state.MaxSeq, gaps) > OutboxPosition.MaxSize)
+            {
+                // No room: stop the mark before this position; the rows after it are applied again by the next pass.
+                gaps.RemoveAt(gaps.Count - 1);
+                mark = g - 1;
+                break;
+            }
+
+            _firstSeen[g] = now;
+        }
+
+        return new OutboxPosition(state.LogId, mark, mark, 0, [.. gaps]);
     }
 
     /// <summary>Re-reads the given entities and upserts them, leaving the position alone.</summary>

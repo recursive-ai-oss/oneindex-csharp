@@ -14,6 +14,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="OneIndex.EntityFrameworkCore.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <!-- The outbox is a relational table; this is the relational layer of EF Core, not another library. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
