@@ -106,7 +106,7 @@ internal static class RerankCommands
         return 0;
     }
 
-    private static double Spearman(float[] a, ReadOnlySpan<float> b)
+    internal static double Spearman(float[] a, ReadOnlySpan<float> b)
     {
         double[] ra = Ranks(a);
         double[] rb = Ranks(b.ToArray());

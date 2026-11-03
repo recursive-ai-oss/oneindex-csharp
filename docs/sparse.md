@@ -100,6 +100,16 @@ Hybrid, same sets, on one on-disk index holding BM25 (title and text), the bge-s
 | text + dense + sparse, rank fusion | 0.7374 | 0.6049 | 0.2063 | 0.5162 |
 | text + dense + sparse, linear fusion | 0.7439 | 0.6149 | 0.2066 | 0.5218 |
 
+NQ (held out; 2,681,468 passages, 3,452 queries; document vectors from the reference fp32 model on a GPU, 550 to 616 passages/s; queries encoded by the shipped int8 path, `ExtraLog1p = 1`; full-corpus index of 10.4 GB with text, dense and sparse parts; `pytrec_eval` equal to four decimals):
+
+| Configuration | NQ | Four-set mean |
+|---|---|---|
+| sparse | 0.5432 (card 0.544, -0.1 point) | 0.4828 |
+| text + sparse | 0.4911 | 0.4701 |
+| text + dense + sparse, rank fusion | 0.5671 | 0.5289 |
+
+Stand-in proof (8,000 random passages, shipped int8 files vs the GPU vectors): cosine minimum 0.9981, nDCG@10 on the sub-corpus 0.9480 (int8) vs 0.9475 (fp32), top-10 overlap 0.984. The sparse gate (within 1 point of the card) is met on NQ. With NQ in, three-way rank fusion has the highest four-set mean among the rank-fusion configurations (0.5289 vs the default hybrid 0.5168), still below the default on ArguAna, so it stays opt-in. Sparse-only query time over the full corpus: 103 s for 3,452 queries on 6 threads (about 30 ms per query, indicative, shared machine).
+
 The sparse arm is opt-in (`Sparse()`); it helps SciFact and is neutral on the other two sets with rank fusion, and it is not part of the default hybrid.
 
 - Reference parity (200 texts, fp32): identical to the reference runtime. int8 weights: document cosine median 0.9991, min 0.9818.

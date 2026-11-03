@@ -4,7 +4,7 @@
 set -u
 export PATH=~/dotnet10:$PATH DOTNET_ROOT=~/dotnet10 DOTNET_CLI_TELEMETRY_OPTOUT=1
 dir=$1; count=$2; shift 2
-out=${ONEINDEX_BENCH_OUT:-$HOME/oneindex/u21/build}
+out=${ONEINDEX_BENCH_OUT:-$HOME/oneindex/bench-build}
 dotnet build -c Release -m:4 -v quiet -clp:NoSummary -o "$out/vb" bench/OneIndex.VectorBench/OneIndex.VectorBench.csproj || exit 1
 for spec in "$@"; do
   label=${spec%%:*}; extra=${spec#*:}
