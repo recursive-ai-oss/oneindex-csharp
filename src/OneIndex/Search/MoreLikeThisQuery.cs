@@ -29,7 +29,7 @@ public sealed record MoreLikeThisQuery : Query
     /// <summary>The text to resemble; exactly one of <see cref="Text"/> and <see cref="DocumentId"/> is set. It is analyzed once per field.</summary>
     public string? Text { get; init; }
 
-    /// <summary>The identifier of the indexed document to resemble. A committed live document with stored source is required, otherwise the query raises a <see cref="QueryException"/>.</summary>
+    /// <summary>The identifier of the indexed document to resemble. A committed live document with stored source is required, otherwise the query raises a <see cref="SourceDocumentNotFoundException"/>.</summary>
     public string? DocumentId { get; init; }
 
     /// <summary>The full-text fields to read from the source and to match in. Empty (default) means every indexed full-text field.</summary>
@@ -138,7 +138,7 @@ internal static class MoreLikeThisExpander
         Document? source = null;
         if (q.DocumentId is { } id)
         {
-            source = FindSource(context, id) ?? throw new QueryException($"No live document '{id}' with stored source was found for more-like-this.");
+            source = FindSource(context, id) ?? throw new SourceDocumentNotFoundException(id);
         }
 
         // Candidate terms with their selection weight tf * idf (field by field: a term is judged against its own field's statistics).

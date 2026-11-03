@@ -1473,6 +1473,8 @@ OneIndex.Search.SortValue.virtual Equals(System.Object obj) : System.Boolean
 OneIndex.Search.SortValue.virtual GetHashCode() : System.Int32
 OneIndex.Search.SortableBits.static Decode(System.Int64 encoded) : System.Double
 OneIndex.Search.SortableBits.static Encode(System.Double value) : System.Int64
+OneIndex.Search.SourceDocumentNotFoundException..ctor(System.String id)
+OneIndex.Search.SourceDocumentNotFoundException.DocumentId : System.String { get; }
 OneIndex.Search.SparseQuery..ctor(System.String Field, OneIndex.Index.SparseVector Vector)
 OneIndex.Search.SparseQuery.Equals(OneIndex.Search.SparseQuery other) : System.Boolean
 OneIndex.Search.SparseQuery.Field : System.String { get; init; }
@@ -2294,6 +2296,7 @@ sealed class OneIndex.Search.ScoreSort : OneIndex.Search.SortCriterion, System.I
 sealed class OneIndex.Search.SearchContext
 sealed class OneIndex.Search.SegmentSearchReader : OneIndex.Search.ISegmentReader, System.IDisposable
 sealed class OneIndex.Search.SortCursor
+sealed class OneIndex.Search.SourceDocumentNotFoundException : OneIndex.Search.QueryException, System.Runtime.Serialization.ISerializable
 sealed class OneIndex.Search.SparseQuery : OneIndex.Search.Query, System.IEquatable<OneIndex.Search.Query>, System.IEquatable<OneIndex.Search.SparseQuery>
 sealed class OneIndex.Search.TermQuery : OneIndex.Search.Query, System.IEquatable<OneIndex.Search.Query>, System.IEquatable<OneIndex.Search.TermQuery>
 sealed class OneIndex.Search.TooManyTermsException : OneIndex.Search.QueryException, System.Runtime.Serialization.ISerializable

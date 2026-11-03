@@ -84,7 +84,7 @@ public sealed class MoreLikeThisTests
     public void UnknownDocumentsAndBadSettingsAreTypedErrors()
     {
         using SearchIndex<MltDoc> index = Corpus();
-        Assert.Throws<QueryException>(() => index.MoreLikeThis("nope").Execute());
+        Assert.Equal("nope", Assert.Throws<SourceDocumentNotFoundException>(() => index.MoreLikeThis("nope").Execute()).DocumentId);
         Assert.Throws<QueryException>(() => index.SearchBy(new MoreLikeThisQuery()).Execute());
         Assert.Throws<QueryException>(() => index.SearchBy(MoreLikeThisQuery.FromText("x") with { MaxQueryTerms = 0 }).Execute());
         Assert.Throws<QueryException>(() => index.SearchBy(MoreLikeThisQuery.FromText("x") with { Fields = ["Id"] }).Execute());

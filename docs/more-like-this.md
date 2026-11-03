@@ -6,7 +6,7 @@ Finds documents that resemble a text or an indexed document. `MoreLikeThisQuery`
 
 The selection is the relevance-feedback term selection of the IR textbooks (a term is a good probe when it is frequent in the source and rare in the collection):
 
-1. The source is the `Text`, or the stored source of the live document with identifier `DocumentId` (a `QueryException` when there is none).
+1. The source is the `Text`, or the stored source of the live document with identifier `DocumentId` (a `SourceDocumentNotFoundException`, a `QueryException`, when there is none).
 2. For each full-text field (`Fields`, default all indexed ones) the source text is analyzed with the field's own analyzer and the terms are counted. Stacked forms (stemmed and unstemmed) count as terms like any other.
 3. A term is a candidate when its count is at least `MinTermFrequency` (default 1) and it occurs in at least `MinDocumentFrequency` indexed documents (default 1; for a document source the source itself is one of them, so a term only the source holds is dropped: it could not find anything else).
 4. Its weight is `count * idf`, with the same idf as scoring (scoring.md), taken from the field's statistics over the snapshot.

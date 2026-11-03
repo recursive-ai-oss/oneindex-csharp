@@ -172,7 +172,7 @@ internal static class QueryTextTargets
                     Require(second.Count <= Math.Max(request.Limit, 0), "second page size");
                 }
             }
-            catch (TooManyTermsException)
+            catch (Exception e) when (e is TooManyTermsException or SourceDocumentNotFoundException)
             {
             }
             catch (ArgumentException)
@@ -193,7 +193,7 @@ internal static class QueryTextTargets
                     Require(second.Count <= Math.Max(request.Limit, 0), "second page size");
                 }
             }
-            catch (TooManyTermsException)
+            catch (Exception e) when (e is TooManyTermsException or SourceDocumentNotFoundException)
             {
             }
         }
@@ -209,6 +209,10 @@ internal static class QueryTextTargets
         catch (TooManyTermsException)
         {
             // A prefix or fuzzy query may legitimately match more terms than the engine expands.
+        }
+        catch (SourceDocumentNotFoundException)
+        {
+            // A more-like-this query may name a document the sample index does not hold.
         }
     }
 
