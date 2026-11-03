@@ -25,8 +25,11 @@ run() { # label dll engine dir count
   dotnet "$2" --engine "$3" --dir "$4" --count "$5" --grid "$grid" --passes 3 | grep -E '^#|^@|^oneindex|^hnsw|^curiosity'
   echo "# load after $1: $(uptime | sed 's/.*load average[s]*: *//')"
 }
+# DIMS=384 or DIMS=768 runs one dimension only (a bench-class group must fit in 20 minutes); default both.
+want=" ${DIMS:-384 768} "
 for spec in "384 small-384 150000" "768 base-768 75000"; do
   set -- $spec
+  case "$want" in *" $1 "*) ;; *) continue ;; esac
   run "$1 oneindex"   "$out/vb/OneIndex.VectorBench.dll"  oneindex  "$sets/$2" "$3"
   run "$1 hnswnet"    "$out/vb/OneIndex.VectorBench.dll"  hnswnet   "$sets/$2" "$3"
   run "$1 curiosity"  "$out/vbc/OneIndex.VectorBench.Curiosity.dll" curiosity "$sets/$2" "$3"
@@ -35,6 +38,7 @@ if [ "$native" = native ]; then
   py="$HOME/oneindex/oracles/venv/bin/python"
   for spec in "384 small-384 150000" "768 base-768 75000"; do
     set -- $spec
+    case "$want" in *" $1 "*) ;; *) continue ;; esac
     for lib in hnswlib faiss; do echo "== $1 $lib (information)"; "$py" tools/native/vector_rows.py "$sets/$2" "$3" $lib; done
   done
 fi
