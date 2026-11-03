@@ -845,6 +845,7 @@ OneIndex.Index.SegmentReader.TryFindId(System.ReadOnlySpan<System.Char> id, out 
 OneIndex.Index.SegmentReader.static LoadLiveDocs(OneIndex.Storage.IStorage storage, OneIndex.Index.SegmentInfo info, OneIndex.Storage.IndexLimits limits, System.Threading.CancellationToken cancellationToken = null) : OneIndex.Index.LiveDocs
 OneIndex.Index.SegmentReader.static Open(OneIndex.Storage.IStorage storage, OneIndex.Index.Schema schema, OneIndex.Index.SegmentInfo info, System.Collections.Generic.IReadOnlyList<OneIndex.Index.ISegmentCodec> codecs, OneIndex.Storage.IndexLimits limits, OneIndex.Index.LiveDocs live = null, System.Threading.CancellationToken cancellationToken = null) : OneIndex.Index.SegmentReader
 OneIndex.Index.SegmentReaderContext..ctor(OneIndex.Storage.IStorage storage, OneIndex.Index.Schema schema, OneIndex.Index.SegmentInfo info, OneIndex.Storage.IndexLimits limits)
+OneIndex.Index.SegmentReaderContext.DeferOptionalParts : System.Boolean { get; }
 OneIndex.Index.SegmentReaderContext.Info : OneIndex.Index.SegmentInfo { get; }
 OneIndex.Index.SegmentReaderContext.Limits : OneIndex.Storage.IndexLimits { get; }
 OneIndex.Index.SegmentReaderContext.OpenPart(System.String part, out OneIndex.Index.SegmentFile file, System.Threading.CancellationToken cancellationToken = null) : OneIndex.Storage.IRangeReader
@@ -921,6 +922,8 @@ OneIndex.MappedMember.Oversample : System.Single { get; }
 OneIndex.MappedMember.Quantization : OneIndex.Vectors.VectorQuantization { get; }
 OneIndex.MappedMember.Rerank : System.Boolean { get; }
 OneIndex.MappedMember.Type : OneIndex.Index.FieldType { get; }
+OneIndex.MultiVectorAttribute..ctor()
+OneIndex.MultiVectorAttribute.Dimensions : System.Int32 { get; set; }
 OneIndex.OneWaySynonymsAttribute..ctor(System.String word, System.String[] synonyms)
 OneIndex.OneWaySynonymsAttribute.Synonyms : System.String[] { get; }
 OneIndex.OneWaySynonymsAttribute.Word : System.String { get; }
@@ -1989,12 +1992,16 @@ OneIndex.Vectors.IvfOptions.TrainingPerList : System.Int32 { get; init; }
 OneIndex.Vectors.IvfStorage.EightBit : OneIndex.Vectors.IvfStorage = 1
 OneIndex.Vectors.IvfStorage.FullPrecision : OneIndex.Vectors.IvfStorage = 0
 OneIndex.Vectors.MaxSim.static Rerank<T>(System.Collections.Generic.IEnumerable<OneIndex.SearchHit<T>> hits, System.Func<T,System.Byte[]> multiVector, System.Collections.Generic.IReadOnlyList<System.Single[]> queryVectors, System.Int32? take = null) : System.Collections.Generic.List<OneIndex.Vectors.MaxSimHit<T>>
+OneIndex.Vectors.MaxSim.static Rerank<T>(System.Collections.Generic.IEnumerable<OneIndex.SearchHit<T>> hits, System.Func<T,System.Single[][]> multiVector, System.Collections.Generic.IReadOnlyList<System.Single[]> queryVectors, System.Int32? take = null) : System.Collections.Generic.List<OneIndex.Vectors.MaxSimHit<T>>
 OneIndex.Vectors.MaxSim.static Score(System.ReadOnlySpan<System.Single> query, System.ReadOnlySpan<System.Single> document, System.Int32 dimension) : System.Double
 OneIndex.Vectors.MaxSim.static Search<T>(OneIndex.SearchQuery<T> candidates, System.Func<T,System.Byte[]> multiVector, System.Collections.Generic.IReadOnlyList<System.Single[]> queryVectors, System.Int32 k) : System.Collections.Generic.List<OneIndex.Vectors.MaxSimHit<T>>
+OneIndex.Vectors.MaxSim.static Search<T>(OneIndex.SearchQuery<T> candidates, System.Func<T,System.Single[][]> multiVector, System.Collections.Generic.IReadOnlyList<System.Single[]> queryVectors, System.Int32 k) : System.Collections.Generic.List<OneIndex.Vectors.MaxSimHit<T>>
 OneIndex.Vectors.MaxSimHit<T>..ctor(OneIndex.SearchHit<T> Hit, System.Double Score)
 OneIndex.Vectors.MaxSimHit<T>.Hit : OneIndex.SearchHit<T> { get; init; }
 OneIndex.Vectors.MaxSimHit<T>.Score : System.Double { get; init; }
 OneIndex.Vectors.MultiVector.static Pack(System.Collections.Generic.IReadOnlyList<System.Single[]> vectors) : System.Byte[]
+OneIndex.Vectors.MultiVector.static Pack(System.Collections.Generic.IReadOnlyList<System.Single[]> vectors, System.Int32 dimension) : System.Byte[]
+OneIndex.Vectors.MultiVector.static ToRows(System.ReadOnlySpan<System.Byte> packed) : System.Single[][]
 OneIndex.Vectors.MultiVector.static Unpack(System.ReadOnlySpan<System.Byte> packed, out System.Int32 count, out System.Int32 dimension) : System.Single[]
 OneIndex.Vectors.RerankException..ctor(System.String message, System.Exception inner = null)
 OneIndex.Vectors.RerankerExtensions.static Score(OneIndex.Vectors.IReranker reranker, System.String query, System.Collections.Generic.IReadOnlyList<System.String> passages, System.Threading.CancellationToken cancellationToken = null) : System.Single[]
@@ -2216,6 +2223,7 @@ sealed class OneIndex.KeywordAttribute : System.Attribute
 sealed class OneIndex.Linq.FilterTranslator<T>
 sealed class OneIndex.Linq.UnsupportedExpressionException : System.NotSupportedException, System.Runtime.Serialization.ISerializable
 sealed class OneIndex.MappedMember
+sealed class OneIndex.MultiVectorAttribute : System.Attribute
 sealed class OneIndex.OneWaySynonymsAttribute : System.Attribute
 sealed class OneIndex.PrefixSearchAttribute : System.Attribute
 sealed class OneIndex.ProximityAttribute : System.Attribute
