@@ -89,7 +89,122 @@ shared or loaded host, or on a development machine, are indicative only and are 
 At most 1.0x Lucene.NET's time as a geometric mean over the rows, no row worse than 1.25x; memory and index size are reported next
 to every row. Rows with no managed comparator pass, with the reason recorded.
 
-## Results: text rows, 302,567 abstracts
+## Milestone rows (final code of the first public version)
+
+The numbers a release quotes. Method: [Procedure](#procedure) with the scripts `tools/bench_text_run.sh` (text rows), `tools/vector_bench_group.sh` and
+`tools/vector_ratios.py` (vector rows) and `tools/bench_summary.py` (the tables below); every group ran as an exclusive benchmark-class job on its
+machine (the queue starts it only when nothing else runs and waits for the CPU to settle), at most 20 minutes each, one engine after another.
+
+**Machines.** x64: AMD Ryzen 9 7950X3D, 16 cores / 32 threads (SSE4.2, AVX, AVX2, FMA, BMI2, AVX-512 F/BW), NVMe, Linux, .NET SDK 10.0.402 /
+runtime 10.0.13, workstation GC. arm64: Apple M2, 8 cores, APFS, macOS, .NET SDK 10.0.403 / runtime 10.0.14. Pins: Lucene.NET 4.8.0-beta00018, Hnsw.Net 0.1.4,
+curiosity-ai HNSW 26.9.5494; corpus SHA-256 `1759e651...4893` (302,567 abstracts), seed 1, 200 queries per row. Indexes were written by the
+running process, so reads came from the page cache (warm).
+
+**Load.** One-minute load average before / after the runs (the queue waits for the CPU to be idle, so these are the decay of earlier work): x64 text
+repetitions 8.3 / 5.8, 3.0 / 2.4 and 2.7 / 2.5 for OneIndex, 5.8 / 4.1, 2.4 / 2.3 and 2.5 / 2.1 for Lucene.NET; vector groups 1.9 / 1.5 (384) and 1.4 / 1.6 (768).
+arm64 text repetitions 11.4 / 8.5, 4.4 / 3.6 and 2.7 / 2.6 for OneIndex, 8.5 / 6.5, 3.6 / 3.0 and 2.6 / 2.4 for Lucene.NET (the first repetition started right
+after an unrelated job, and its figures are not different from the other two beyond noise); vector groups 2.9 / 2.5 and 2.1 / 1.8. A Mac's baseline load is 2 to 4.
+
+### Text rows: OneIndex against Lucene.NET
+
+Three repetitions of the corpus driver per engine, interleaved (OneIndex, Lucene.NET, the matched as-you-type typo run), each driver run a warm-up plus three
+timed passes; the table gives the median of the three medians. Ratios are ours over theirs in time (index: theirs over ours in throughput), so below 1.0 is
+faster than Lucene.NET.
+
+| Row | OneIndex x64 | Lucene.NET x64 | ratio | OneIndex arm64 | Lucene.NET arm64 | ratio |
+|---|---|---|---|---|---|---|
+| index (docs/s, incl. bulk commit) | 60,590 | 37,232 | 0.61 | 64,544 | 38,080 | 0.59 |
+| commit (median ms, 5 x 200 docs) | 30.7 | 50.3 | 0.61 | 13.0 | 15.5 | 0.84 |
+| Terms1 (ms/query) | 0.131 | 0.246 | 0.53 | 0.183 | 0.320 | 0.57 |
+| Terms2 | 0.196 | 0.450 | 0.43 | 0.221 | 0.503 | 0.44 |
+| Terms5 | 0.525 | 0.636 | 0.82 | 0.631 | 0.690 | 0.91 |
+| Phrase | 0.190 | 0.162 | 1.17 | 0.245 | 0.341 | 0.72 |
+| Prefix | 0.111 | 0.330 | 0.34 | 0.121 | 0.387 | 0.31 |
+| AsYouType | 0.158 | 0.203 | 0.78 | 0.222 | 0.241 | 0.92 |
+| Fuzzy1 | 0.255 | 0.553 | 0.46 | 0.284 | 0.873 | 0.33 |
+| Fuzzy2 | 1.298 | 2.138 | 0.61 | 1.433 | 3.909 | 0.37 |
+| Typo | 0.220 | 0.506 | 0.43 | 0.238 | 0.665 | 0.36 |
+| TypoAsYouType (matched semantics; gates) | 0.084 | 0.184 | 0.46 | 0.087 | 0.257 | 0.34 |
+| TypoAsYouType (documented semantics; information) | 0.256 | 0.184 | 1.39 | 0.294 | 0.257 | 1.14 |
+| Filtered | 1.626 | 1.914 | 0.85 | 1.892 | 2.297 | 0.82 |
+| Facets | 0.458 | 0.602 | 0.76 | 0.507 | 0.701 | 0.72 |
+| Stats | 0.288 | 0.543 | 0.53 | 0.319 | 9.731 | 0.03 |
+| Sort | 0.379 | 0.673 | 0.56 | 0.438 | 11.847 | 0.04 |
+| FunctionScore | 0.961 | 0.841 | 1.14 | 1.157 | 1.114 | 1.04 |
+
+**Geometric mean** of the 17 gating rows: x64 **0.62**, arm64 **0.41** (0.57 without Stats and Sort, where Lucene.NET's arm64 times are outliers). The bar
+(at most 1.0) is met on both machines. **No row is above 1.25**; the highest are Phrase on x64 (1.17) and FunctionScore on x64 (1.14) and arm64 (1.04). Phrase
+is a per-segment cost (the settled index has six segments; see "Phrase on x64 and the segment count" below). FunctionScore visits every match in both engines;
+OneIndex evaluates the decay through a delegate over the column.
+
+The documented-semantics as-you-type typo row matches the beginning of a word with typos (prefix Levenshtein); Lucene.NET has no counterpart, so its query
+matches fewer documents and the comparison is information (1.39x on x64, 1.14x on arm64; the matched row gates).
+
+| Memory and size (x64) | OneIndex | Lucene.NET |
+|---|---|---|
+| index size after the settled merges (bytes) | 60,589,958 | 45,426,027 |
+| index size after the bulk commit (bytes) | 70,161,632 | 45,094,841 |
+| peak resident set, index row / query rows (MiB; includes the 120 MB corpus held by the driver) | 1,394 / 500 to 1,153 | 1,027 / 434 to 603 |
+| allocated bytes per document, index row | 5,461 | 18,120 |
+| allocated bytes per query: Terms1 / Terms2 / Terms5 | 4,918 / 9,185 / 21,054 | 59,203 / 805,364 / 970,469 |
+| Phrase / Prefix / AsYouType / Fuzzy1 / Fuzzy2 / Typo | 9,377 / 62,868 / 57,659 / 19,456 / 120,550 / 19,311 | 210,850 / 153,187 / 189,797 / 703,984 / 2,281,455 / 1,244,174 |
+| Filtered / Facets / Stats / Sort / FunctionScore | 61,684 / 23,414 / 8,990 / 12,743 / 9,318 | 650,116 / 856,043 / 799,404 / 806,659 / 604,315 |
+
+The index is larger because OneIndex stores each document's source and keeps an identifier table and a point index for the numeric column. Peak resident
+set was not captured on arm64 (the file-backed index rows are the same sizes there). Match checksums: Phrase, AsYouType, TypoAsYouType (matched) and Filtered
+agree exactly; Terms1, Facets, Stats, Sort and FunctionScore agree to within 2 to 9 documents (the U+202F tokenization difference below); the other rows differ by design
+(block-max WAND reports a lower bound, prefix queries are constant-score, fuzzy expansion is limited).
+
+### Vector rows: OneIndex against the faster managed comparator at matched recall
+
+`tools/vector_bench_group.sh`, 150,000 x 384 (bge-small) and 75,000 x 768 (bge-base) vectors of the abstracts, M=16, efConstruction=100, one thread, recall@10
+against exact search, ef on a grid, queries per second the median of three passes, queries per second linearly interpolated to the target recall
+(`tools/vector_ratios.py`). Ratio is ours over the faster comparator's throughput: above 1.0 is faster. Hnsw.Net is the faster comparator at every target both reach.
+
+| Row | x64 ours / Hnsw.Net (qps) | ratio | arm64 ours / Hnsw.Net (qps) | ratio |
+|---|---|---|---|---|
+| 384 @0.90 | 1586 / 1412 | 1.12 | 1433 / 1239 | 1.16 |
+| 384 @0.95 | 745 / 597 | 1.25 | 678 / 549 | 1.23 |
+| 384 @0.99 | not reached by either (ours 0.9839, Hnsw.Net 0.9806 at ef 1300) | | same | |
+| 384 best both reach (0.9806) | 311 / 260 | 1.20 | 284 / 242 | 1.17 |
+| 768 @0.90 | 1701 / 1455 | 1.17 | 1532 / 1361 | 1.13 |
+| 768 @0.95 | 831 / 681 | 1.22 | 748 / 647 | 1.16 |
+| 768 @0.99 | 241 / 207 | 1.16 | 216 / 207 | 1.04 |
+| build 384 (s; ours / Hnsw.Net) | 76.7 / 81.9 | 0.94 | 82.4 / 109.4 | 0.75 |
+| build 768 | 57.3 / 60.3 | 0.95 | 53.5 / 86.5 | 0.62 |
+
+curiosity-ai HNSW reaches 0.90 only at ef 900 (384: 377 qps x64, 307 arm64) and 450 (768: 518 qps on x64; on arm64 ef 640, 331 qps), and never reaches 0.95 on 384 (best 0.9318
+x64, 0.9269 arm64) nor 0.99 on either; at 768 it reaches 0.95 only at ef 1300 on x64 (213 qps against ours 831). It builds faster than ours (ours / curiosity: 1.57 and
+1.79 on x64, 1.32 and 1.18 on arm64) but is far slower at matched recall, so Hnsw.Net is the comparator that gates and the build ratio against curiosity is information.
+Peak resident set while building (x64): ours 512 MB (384) and 505 MB (768), Hnsw.Net 592 and 578 MB, curiosity 678 and 679 MB; the index files are 250.6 MB (384) and
+240.5 MB (768) for ours, 253.4 and 241.9 MB for Hnsw.Net. Everything is at or above 1.0 in throughput and at or below 1.0 in build time against Hnsw.Net. Geometric mean
+of the throughput ratios (the six reached rows, with the 384 best-both-reach row): x64 1.19, arm64 1.15.
+
+### Native engines (information only)
+
+Run as ordinary shared-queue jobs on a busy x64 machine (one-minute load 13 to 26 before and after the runs) and labelled indicative: they are the native
+libraries run through their Python bindings or command-line tool, not gates, and their absolute numbers move with the load. tantivy-py 0.27.0 (Python binding
+overhead included), SQLite 3.54.1 FTS5 (each row one `sqlite3` invocation, so a process start-up share is in every figure), hnswlib 0.8.0 and faiss-cpu 1.15.1.
+
+| Row (ms/query unless noted) | OneIndex (exclusive run) | tantivy-py | SQLite FTS5 |
+|---|---|---|---|
+| index (docs/s) | 60,590 | 95,223 | 73,914 (4.09 s) |
+| Terms1 / Terms2 / Terms5 | 0.131 / 0.196 / 0.525 | 0.053 / 0.112 / 0.265 | 4.57 / 10.5 / 28.9 |
+| Phrase | 0.190 | 0.060 | 0.72 |
+| Prefix / AsYouType | 0.111 / 0.158 | 0.303 / 0.117 | 18.4 / 2.70 |
+| Fuzzy1 / Fuzzy2 | 0.255 / 1.298 | 0.887 / 2.905 | n/a |
+| Filtered | 1.626 | 0.459 | n/a |
+| index size (bytes) | 60.6 M settled | 49.0 M | 156.7 M |
+
+Against tantivy-py OneIndex is 2.0 to 3.2 times slower on Terms and Phrase and faster on Prefix, Fuzzy and Filtered here (the 1.5x target is for information and is
+missed on Terms1 to Terms5 and Phrase; the loaded host and the Python overhead make the comparison coarse). Vectors, hnswlib / faiss (recall at ef 270 / 640 and best
+throughput near 0.90 / 0.95): 384: hnswlib 0.9069 / 0.9534 (765 / 498 qps), faiss 0.9120 at ef 270; 768: hnswlib 0.9047 at ef 180 (1105 qps), 0.9579 at ef 450 (505), 0.9910 at ef 1800 (201);
+faiss 0.9072 at ef 180 (1279), 0.9505 at ef 380 (740), 0.9902 at ef 1800 (199). Build: hnswlib 46.5 s (384), faiss 48.2 s (384) and 26.2 s (768),
+OneIndex 76.7 s and 57.3 s on an idle machine (both libraries are native, with the Python binding's own overhead around the calls, and ran loaded, so none of this is a gate).
+
+## Earlier results (superseded by the milestone rows above)
+
+### Text rows, 302,567 abstracts
 
 All Wikipedia abstracts of the corpus above, one run per machine of the corpus driver (`tools/run_bench_sample.sh`, rows
 `Terms1,Terms2,Terms5,Phrase,Filtered,Facets,Stats`, 200 queries per row, warm-up plus three timed passes, median), run alone on the
