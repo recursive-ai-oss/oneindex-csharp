@@ -31,7 +31,7 @@ public class StaticIndexTests
     private static readonly string[] Words = ["river", "garden", "engine", "market", "winter", "signal", "harbor", "lantern", "meadow", "copper", "violin", "glacier", "orchard", "compass", "thunder", "saffron"];
     private static readonly string[] Topics = ["travel", "music", "tech", "food"];
 
-    private static List<StaticDoc> Corpus(int n)
+    internal static List<StaticDoc> Corpus(int n)
     {
         var rng = new Random(5);
         var docs = new List<StaticDoc>();
