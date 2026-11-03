@@ -181,6 +181,12 @@ public sealed class OneIndexRuntime : IAsyncDisposable, IDisposable
         where T : class
         => _entities.TryGetValue(typeof(T), out IndexedEntity? e) ? (IndexedEntity<T>)e : throw new InvalidOperationException($"{typeof(T).FullName} is not registered with OneIndexOptions.Index<T>().");
 
+    /// <summary>
+    /// How many log rows this process applied only because they became visible after the index had moved past their position (a transaction that
+    /// committed late). Nonzero shows the gap handling at work; it is a diagnostic, not part of any guarantee.
+    /// </summary>
+    public long LateRowsApplied => _entities.Values.Sum(e => e.LateRowsApplied);
+
     /// <summary>The most recent error of an inline apply (see <see cref="OneIndexOptions.ApplyInline"/>), or <see langword="null"/>. Inline apply never throws into <c>SaveChanges</c>, because the database change has already committed.</summary>
     public Exception? LastApplyError { get; internal set; }
 

@@ -21,6 +21,9 @@ internal abstract class IndexedEntity : IDisposable
 
     public abstract ValueTask ReindexAsync(OneIndexRuntime runtime, CancellationToken cancellationToken);
 
+    /// <summary>How many log rows this index applied only because they became visible below its high-water mark (see GapWalk).</summary>
+    public long LateRowsApplied { get; protected set; }
+
     public abstract void Dispose();
 }
 
@@ -135,6 +138,7 @@ internal sealed class IndexedEntity<T> : IndexedEntity
             List<OutboxEntry> late = walk.OpenGaps.Count == 0 ? [] : OutboxStore.ReadBySeq(db, walk.OpenGaps);
             long pruned = OutboxStore.ReadPruned(db);
             WalkStep step = walk.Advance(window, late, pruned);
+            LateRowsApplied += step.Late;
             if (step.Rebuild || pruned > walk.Position.Seq)
             {
                 // Retention removed rows this index has not applied (possibly between the check and the read): the rows read may have holes.
@@ -186,6 +190,7 @@ internal sealed class IndexedEntity<T> : IndexedEntity
             List<OutboxEntry> late = walk.OpenGaps.Count == 0 ? [] : await OutboxStore.ReadBySeqAsync(db, walk.OpenGaps, cancellationToken).ConfigureAwait(false);
             long pruned = await OutboxStore.ReadPrunedAsync(db, cancellationToken).ConfigureAwait(false);
             WalkStep step = walk.Advance(window, late, pruned);
+            LateRowsApplied += step.Late;
             if (step.Rebuild || pruned > walk.Position.Seq)
             {
                 await ReindexAsync(runtime, db, cancellationToken).ConfigureAwait(false);

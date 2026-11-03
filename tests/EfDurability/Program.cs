@@ -148,7 +148,7 @@ public static class ChildApp
                 if (stage is "apply.after-commit" or "reindex.after-commit" && rt?.GetPosition<Invoice>() is { } p)
                 {
                     // Acknowledged: this commit returned, so a later open must show at least this position.
-                    File.AppendAllText(ackFile, p.LogId.ToString("N") + " " + p.Seq.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\n");
+                    File.AppendAllText(ackFile, p.LogId.ToString("N") + " " + p.Seq.ToString(System.Globalization.CultureInfo.InvariantCulture) + " " + p.GapCount.ToString(System.Globalization.CultureInfo.InvariantCulture) + " " + rt.LateRowsApplied.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\n");
                 }
             }
         }
@@ -296,6 +296,39 @@ public sealed class KillCampaign(Args a)
         ("reindex.start", 2), ("reindex.page", 3), ("reindex.before-commit", 2), ("reindex.after-commit", 2),
     ];
 
+    // Read from the acknowledgement files the application processes wrote after each commit: lines "log seq gaps late", where late counts per process.
+    private static (long WithGaps, long Late, long MaxGaps) GapEvidence(string dir)
+    {
+        long withGaps = 0, late = 0, maxGaps = 0;
+        foreach (string f in Directory.GetFiles(dir, "*.ack"))
+        {
+            long run = 0;
+            foreach (string line in File.ReadAllLines(f))
+            {
+                string[] parts = line.Split(' ');
+                if (parts.Length < 4)
+                {
+                    continue;
+                }
+
+                long g = long.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture);
+                long l = long.Parse(parts[3], System.Globalization.CultureInfo.InvariantCulture);
+                withGaps += g > 0 ? 1 : 0;
+                maxGaps = Math.Max(maxGaps, g);
+                if (l < run)
+                {
+                    late += run; // a new process started counting again
+                }
+
+                run = l;
+            }
+
+            late += run;
+        }
+
+        return (withGaps, late, maxGaps);
+    }
+
     public async Task<int> RunAsync()
     {
         string dir = Path.GetFullPath(a.Get("dir"));
@@ -425,6 +458,8 @@ public sealed class KillCampaign(Args a)
             }
         }
 
+        (long withGaps, long late, long maxGaps) = GapEvidence(dir);
+        Console.WriteLine($"gap handling: commits with open gaps {withGaps}, most gaps open at once {maxGaps}, rows applied late (below the mark) {late}");
         Console.WriteLine($"cycles {cycles} seed {seed}: kills {killsByHook + killsByTimer} (named stage {killsByHook}, timer {killsByTimer}), clean exits {exited}, checks {checks}, rebuilds {rebuilds}, lagged cycles {laggedCycles}, failures {failures}, {clock.Elapsed.TotalSeconds:F0}s");
         foreach (KeyValuePair<string, int> s in byStage)
         {

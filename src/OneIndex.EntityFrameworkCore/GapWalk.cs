@@ -9,6 +9,9 @@ internal sealed class WalkStep
 
     /// <summary>A position that an unresolved gap sits at or below the pruning mark: a row may have been deleted unseen.</summary>
     public bool Rebuild { get; set; }
+
+    /// <summary>How many rows of this entity type were applied because they appeared at a recorded gap.</summary>
+    public int Late { get; set; }
 }
 
 /// <summary>
@@ -87,6 +90,7 @@ internal sealed class GapWalk
                 if (r.EntityType == _entityType)
                 {
                     count++;
+                    step.Late++;
                     if (apply.Add(r.EntityId))
                     {
                         step.Ids.Add(r.EntityId);
