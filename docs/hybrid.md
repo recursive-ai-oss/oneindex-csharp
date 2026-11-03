@@ -76,9 +76,23 @@ nDCG@10 under the BEIR convention (a document with the query's id is dropped), c
 * The defaults pass the gate: the mean 0.5140 is above the better arm's mean (dense, 0.5072), and on every set hybrid is above both arms (the weaker arm everywhere is BM25).
 * The paper setting passes the weaker-arm test everywhere but misses the mean test by 1.3 points, and is below the dense arm on ArguAna and SCIDOCS.
 * `pytrec_eval` on the run files gives the same four-decimal values for BM25, dense and the default hybrid on all three sets.
-* NQ is not included: its dense arm needs 2.68 million passages embedded at the model's CPU throughput (docs/models.md).
+* NQ was held out of the tuning and is confirmed below.
 * Other settings on the same index, for information (nDCG@10 SciFact / ArguAna / SCIDOCS): RRF k 10 ratio 0.5 0.7349 / 0.5677 / 0.1970; RRF k 10 ratio 0.3 0.7175 / 0.5140 / 0.1766; linear ratio 0.3 0.7254 / 0.5649 / 0.1805; linear 0.5 0.7377 / 0.6008 / 0.1994 (mean 0.5126); linear 0.7 0.7291 / 0.6055 / 0.2069 (mean 0.5138).
 * The plateau behind the defaults (mean over the three sets, RRF, window 100): ratio 0.75 with k 3, 5, 10, 20 gives 0.5150, 0.5151, 0.5140, 0.5117; ratio 0.7 gives 0.5141, 0.5149, 0.5115, 0.5093; ratio 0.5 gives 0.5013, 0.5005, 0.5000, 0.4965 for all k. Window 100, 300 and 1,000 differ by under 0.0005.
+
+### NQ: the held-out confirmation
+
+The defaults were tuned on the three sets above; NQ (2.68 million passages, 3,452 queries, dense vectors from the reference fp32 model on a GPU, docs/models.md) was run once with them and **not retuned**. Same engine arms, exact kNN:
+
+| Set | BM25 | Dense | Hybrid, defaults | Hybrid, paper setting (k 60, ratio 0.5) |
+|---|---|---|---|---|
+| SciFact | 0.6912 | 0.7126 | **0.7257** | 0.7282 |
+| ArguAna | 0.4333 | 0.6048 | **0.6100** | 0.5616 |
+| SCIDOCS | 0.1531 | 0.2041 | **0.2064** | 0.1919 |
+| NQ | 0.3420 | 0.5018 | **0.5249** | 0.4862 |
+| Mean of four | 0.4049 | 0.5058 | **0.5168** | 0.4920 |
+
+**Gate verdict, as-is: pass.** The four-set mean 0.5168 is above the better arm's mean (dense, 0.5058), and the hybrid is above both arms on every set. Other NQ settings, for information: RRF k 10 ratio 0.5 0.5008; linear fusion ratio 0.3 / 0.5 / 0.7: 0.4461 / 0.5133 / 0.5292 (min-max per arm). The engine's default hybrid and an offline computation of the same formula from the cached windows agree on the top-10 set for 3,448 of 3,452 queries and on its order for 3,395 (ties and window edges). With the sparse arm (opt-in; docs/sparse.md) NQ text + sparse is 0.4911 and text + dense + sparse 0.5671. The stand-in proof for the vectors is in docs/models.md.
 
 ## Related
 

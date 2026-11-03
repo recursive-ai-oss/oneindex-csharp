@@ -91,7 +91,17 @@ machine. The published figures are the `ndcg_at_10` values in the model card's m
 | ArguAna (8,674, 1,406) | 0.59550 | 0.6035 | 0.6046 | +0.8 / +0.9 points |
 | SCIDOCS (25,657, 1,000) | 0.20522 | not run | 0.2041 | -0.1 points |
 
-NQ (2.68 million passages) was not run: at the measured 15 to 25 passages per second it is far outside the chunk budget.
+### NQ (held out from the hybrid tuning)
+
+NQ (BEIR, 2,681,468 passages, 3,452 test queries; data hashes: corpus.jsonl f7e3588d..., queries 72f08f0c..., qrels 6df0cd2c...) cannot be embedded at the CPU rate of the shipped int8 path, so the document encodings come from the **reference fp32 models on a GPU** (RTX 4070, PyTorch, the revisions `.Models` ships; `tools/models/gpu_reference.py`). Everything else (indexing, BM25F, exact kNN, sparse scoring, fusion, nDCG) is our engine. A stand-in proof (below) shows the shipped int8 files agree with those encodings, which is what lets the NQ rows count for the int8 path. GPU numbers are marked as such.
+
+| Set | Published | Ours (GPU fp32 vectors, exact kNN over all passages) | Difference |
+|---|---|---|---|
+| NQ (2,681,468 passages, 3,452 queries) | 0.50178 | 0.5018 | +0.0 |
+
+`pytrec_eval` on the run file gives 0.5018. Encoding: 1,680 passages/s on the 4070 (about 23 minutes for the corpus), against 15 to 25 passages/s for the int8 path on the CPU.
+
+**Stand-in proof, dense** (random 20,000 passages with the 3,452 queries, int8 OneModel vs the GPU fp32 vectors of the same texts): cosine minimum 0.9988 (passages) and 0.9993 (queries); nDCG@10 on the 20,000-passage sub-corpus 0.9284 with the int8 vectors against 0.9285 with the fp32 ones; top-10 overlap 0.974. So the NQ figure above stands for the shipped weights within 0.1 point; the dense `.Models` gate (within 1 point of published) is met on NQ.
 
 Quantization effect on the vectors themselves, 800 texts (adversarial strings, queries and passages) against ONNX Runtime fp32 run one
 text at a time (cosine similarity of unit vectors; documents / queries with the instruction):
@@ -154,7 +164,9 @@ identical-id convention, so the last column drops no hit.
 
 ArguAna's gap is the convention, not the model: its queries are documents of the corpus, so the paper counted the query's own copy as a (never relevant) top hit; the same run scored
 that way gives 0.3112 against the published 0.311 (first stage 0.3253 against the paper's BM25 0.315). All three sets are within 1 point of the published figures. NQ (published 0.533)
-was not run: 3,452 queries x 100 pairs at the measured rate is about four hours of the shared queue plus an index of 2.68 million passages.
+is below.
+
+**NQ** (3,452 queries, BM25F top-100 from the 2.68-million-passage index, 345,101 pairs scored by the reference fp32 cross-encoder on the GPU in 310 s, 1,113 pairs/s): first stage 0.3419, reranked **0.5404** against the published 0.533 (+0.7 point; `pytrec_eval` 0.5404). Stand-in proof: 60 queries x 100 pairs scored by the shipped int8 model vs the GPU fp32 scores: score difference max 0.1572, mean 0.0231, Spearman 0.99998; nDCG@10 of those 60 queries reranked 0.5993 (int8) vs 0.5971 (fp32), top-10 overlap 0.9917. The rerank gate (within 1 point) is met on NQ for the shipped weights.
 
 Information, SciFact: the default hybrid list (docs/hybrid.md; 0.7257) reranked gives 0.6894. On this set the cross-encoder does not improve on the hybrid first stage.
 
