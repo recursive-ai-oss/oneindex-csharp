@@ -123,6 +123,12 @@ public sealed class MultiVectorAttribute : Attribute
 {
     /// <summary>The length of every token vector, from 1 to 65,536. There is no default.</summary>
     public int Dimensions { get; set; }
+
+    /// <summary>
+    /// The name of a text property to encode automatically with the index's <see cref="Vectors.IMultiVectorEncoder"/> when the document is upserted with this
+    /// property left null (docs/multi-vector.md). The encoder's dimension must equal <see cref="Dimensions"/>. Default none: the application supplies the token vectors.
+    /// </summary>
+    public string? From { get; set; }
 }
 
 /// <summary>

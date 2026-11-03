@@ -929,6 +929,7 @@ OneIndex.MappedMember.Type : OneIndex.Index.FieldType { get; }
 OneIndex.MappedMember.VectorIndex : OneIndex.Vectors.VectorIndexKind { get; }
 OneIndex.MultiVectorAttribute..ctor()
 OneIndex.MultiVectorAttribute.Dimensions : System.Int32 { get; set; }
+OneIndex.MultiVectorAttribute.From : System.String { get; set; }
 OneIndex.OneWaySynonymsAttribute..ctor(System.String word, System.String[] synonyms)
 OneIndex.OneWaySynonymsAttribute.Synonyms : System.String[] { get; }
 OneIndex.OneWaySynonymsAttribute.Word : System.String { get; }
@@ -1555,12 +1556,14 @@ OneIndex.SearchIndex.static InMemory<T>() : OneIndex.SearchIndex<T>
 OneIndex.SearchIndex.static InMemory<T>(OneIndex.Vectors.IEmbedder embedder) : OneIndex.SearchIndex<T>
 OneIndex.SearchIndex.static InMemory<T>(OneIndex.Vectors.IEmbedder embedder, OneIndex.Vectors.ISparseEncoder sparseEncoder) : OneIndex.SearchIndex<T>
 OneIndex.SearchIndex.static InMemory<T>(OneIndex.Vectors.IEmbedder embedder, OneIndex.Vectors.ISparseEncoder sparseEncoder, OneIndex.Vectors.IReranker reranker) : OneIndex.SearchIndex<T>
+OneIndex.SearchIndex.static InMemory<T>(OneIndex.Vectors.IEmbedder embedder, OneIndex.Vectors.ISparseEncoder sparseEncoder, OneIndex.Vectors.IReranker reranker, OneIndex.Vectors.IMultiVectorEncoder multiVectorEncoder) : OneIndex.SearchIndex<T>
 OneIndex.SearchIndex.static InMemoryMapped<T>(OneIndex.SearchMapping<T> mapping) : OneIndex.SearchIndex<T>
 OneIndex.SearchIndex.static InMemorySizedToEmbedder<T>(OneIndex.Vectors.IEmbedder embedder) : OneIndex.SearchIndex<T>
 OneIndex.SearchIndex.static Open<T>(System.String path) : OneIndex.SearchIndex<T>
 OneIndex.SearchIndex.static Open<T>(System.String path, OneIndex.Vectors.IEmbedder embedder) : OneIndex.SearchIndex<T>
 OneIndex.SearchIndex.static Open<T>(System.String path, OneIndex.Vectors.IEmbedder embedder, OneIndex.Vectors.ISparseEncoder sparseEncoder) : OneIndex.SearchIndex<T>
 OneIndex.SearchIndex.static Open<T>(System.String path, OneIndex.Vectors.IEmbedder embedder, OneIndex.Vectors.ISparseEncoder sparseEncoder, OneIndex.Vectors.IReranker reranker) : OneIndex.SearchIndex<T>
+OneIndex.SearchIndex.static Open<T>(System.String path, OneIndex.Vectors.IEmbedder embedder, OneIndex.Vectors.ISparseEncoder sparseEncoder, OneIndex.Vectors.IReranker reranker, OneIndex.Vectors.IMultiVectorEncoder multiVectorEncoder) : OneIndex.SearchIndex<T>
 OneIndex.SearchIndex.static OpenMapped<T>(System.String path, OneIndex.SearchMapping<T> mapping) : OneIndex.SearchIndex<T>
 OneIndex.SearchIndex.static OpenReadOnly<T>(OneIndex.Storage.IStorage storage, OneIndex.Vectors.IEmbedder embedder = null) : OneIndex.SearchIndex<T>
 OneIndex.SearchIndex.static OpenReadOnly<T>(System.String path, OneIndex.Vectors.IEmbedder embedder = null) : OneIndex.SearchIndex<T>
@@ -1583,6 +1586,7 @@ OneIndex.SearchIndex<T>.Documents() : System.Collections.Generic.IEnumerable<T>
 OneIndex.SearchIndex<T>.Embedder : OneIndex.Vectors.IEmbedder { get; }
 OneIndex.SearchIndex<T>.MoreLikeThis(System.String id, System.Linq.Expressions.Expression<System.Func<T,System.String>>[] fields) : OneIndex.SearchQuery<T>
 OneIndex.SearchIndex<T>.MoreLikeThisText(System.String text, System.Linq.Expressions.Expression<System.Func<T,System.String>>[] fields) : OneIndex.SearchQuery<T>
+OneIndex.SearchIndex<T>.MultiVectorEncoder : OneIndex.Vectors.IMultiVectorEncoder { get; }
 OneIndex.SearchIndex<T>.Parse(System.String queryJson) : OneIndex.SearchQuery<T>
 OneIndex.SearchIndex<T>.ReembedStale(System.Threading.CancellationToken cancellationToken = null) : System.Int32
 OneIndex.SearchIndex<T>.ReembedStaleAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<System.Int32>
@@ -1633,6 +1637,8 @@ OneIndex.SearchQuery<T>.Hybrid(System.String vectorMember, System.Single[] vecto
 OneIndex.SearchQuery<T>.Hybrid<TVector>(System.Linq.Expressions.Expression<System.Func<T,TVector>> member, System.Double semanticRatio = 0.75, OneIndex.Search.FusionMethod fusion = ReciprocalRank, System.Int32 rankConstant = 10, System.Int32 window = 100) : OneIndex.SearchQuery<T>
 OneIndex.SearchQuery<T>.Hybrid<TVector>(System.Linq.Expressions.Expression<System.Func<T,TVector>> member, System.Single[] vector, System.Double semanticRatio = 0.75, OneIndex.Search.FusionMethod fusion = ReciprocalRank, System.Int32 rankConstant = 10, System.Int32 window = 100) : OneIndex.SearchQuery<T>
 OneIndex.SearchQuery<T>.MaxResultWindow : System.Int32 = 10000
+OneIndex.SearchQuery<T>.MaxSim(System.Int32 window = 100, OneIndex.Vectors.IMultiVectorEncoder encoder = null, System.String query = null) : OneIndex.SearchQuery<T>
+OneIndex.SearchQuery<T>.MaxSim<TField>(System.Linq.Expressions.Expression<System.Func<T,TField>> tokens, System.Int32 window = 100, OneIndex.Vectors.IMultiVectorEncoder encoder = null, System.String query = null) : OneIndex.SearchQuery<T>
 OneIndex.SearchQuery<T>.OrderBy<TKey>(System.Linq.Expressions.Expression<System.Func<T,TKey>> member, OneIndex.Search.MissingValuePlacement missing = Last) : OneIndex.SearchQuery<T>
 OneIndex.SearchQuery<T>.OrderByDescending<TKey>(System.Linq.Expressions.Expression<System.Func<T,TKey>> member, OneIndex.Search.MissingValuePlacement missing = Last) : OneIndex.SearchQuery<T>
 OneIndex.SearchQuery<T>.OrderByDistance<TPoint>(System.Linq.Expressions.Expression<System.Func<T,TPoint>> member, System.Double latitude, System.Double longitude, OneIndex.Search.SortDirection direction = Ascending) : OneIndex.SearchQuery<T>
@@ -1991,6 +1997,8 @@ OneIndex.Vectors.IEmbedder.abstract EmbedAsync(System.Collections.Generic.IReadO
 OneIndex.Vectors.IMultiVectorEncoder.Dimension : System.Int32 { get; }
 OneIndex.Vectors.IMultiVectorEncoder.ModelId : System.String { get; }
 OneIndex.Vectors.IMultiVectorEncoder.abstract Encode(System.String text, OneIndex.Vectors.EmbeddingRole role, System.Threading.CancellationToken cancellationToken = null) : System.Single[][]
+OneIndex.Vectors.IMultiVectorEncoder.virtual Encode(System.Collections.Generic.IReadOnlyList<System.String> texts, OneIndex.Vectors.EmbeddingRole role, System.Span<System.Single[][]> destination, System.Threading.CancellationToken cancellationToken = null) : System.Void
+OneIndex.Vectors.IMultiVectorEncoder.virtual EncodeAsync(System.Collections.Generic.IReadOnlyList<System.String> texts, OneIndex.Vectors.EmbeddingRole role, System.Memory<System.Single[][]> destination, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
 OneIndex.Vectors.IReranker.ModelId : System.String { get; }
 OneIndex.Vectors.IReranker.abstract Score(System.String query, System.Collections.Generic.IReadOnlyList<System.String> passages, System.Span<System.Single> scores, System.Threading.CancellationToken cancellationToken = null) : System.Void
 OneIndex.Vectors.IReranker.abstract ScoreAsync(System.String query, System.Collections.Generic.IReadOnlyList<System.String> passages, System.Memory<System.Single> scores, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
@@ -2041,6 +2049,7 @@ OneIndex.Vectors.RerankException..ctor(System.String message, System.Exception i
 OneIndex.Vectors.RerankerExtensions.static Score(OneIndex.Vectors.IReranker reranker, System.String query, System.Collections.Generic.IReadOnlyList<System.String> passages, System.Threading.CancellationToken cancellationToken = null) : System.Single[]
 OneIndex.Vectors.RerankerExtensions.static ScoreAsync(OneIndex.Vectors.IReranker reranker, System.String query, System.Collections.Generic.IReadOnlyList<System.String> passages, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<System.Single[]>
 OneIndex.Vectors.SearchEmbedders.static Default : OneIndex.Vectors.IEmbedder { get; set; }
+OneIndex.Vectors.SearchMultiVectorEncoders.static Default : OneIndex.Vectors.IMultiVectorEncoder { get; set; }
 OneIndex.Vectors.SearchRerankers.static Default : OneIndex.Vectors.IReranker { get; set; }
 OneIndex.Vectors.SearchSparseEncoders.static Default : OneIndex.Vectors.ISparseEncoder { get; set; }
 OneIndex.Vectors.SparseEncoderExtensions.static Encode(OneIndex.Vectors.ISparseEncoder encoder, System.String text, OneIndex.Vectors.EmbeddingRole role = Document, System.Threading.CancellationToken cancellationToken = null) : OneIndex.Index.SparseVector
@@ -2401,6 +2410,7 @@ static class OneIndex.Vectors.MaxSim
 static class OneIndex.Vectors.MultiVector
 static class OneIndex.Vectors.RerankerExtensions
 static class OneIndex.Vectors.SearchEmbedders
+static class OneIndex.Vectors.SearchMultiVectorEncoders
 static class OneIndex.Vectors.SearchRerankers
 static class OneIndex.Vectors.SearchSparseEncoders
 static class OneIndex.Vectors.SparseEncoderExtensions
