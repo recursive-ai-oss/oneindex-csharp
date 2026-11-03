@@ -66,6 +66,30 @@ public static class SearchIndex
         return new SearchIndex<T>(new FileSystemStorage(path), SearchMappings.Require<T>(), embedder, sparseEncoder, reranker);
     }
 
+    /// <summary>Opens or creates an index in a directory with a mapping built at run time instead of the generated one, for adapters whose document shape is not known at compile time.</summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="path">The index directory.</param>
+    /// <param name="mapping">The mapping, which must be deterministic: the schema it builds is recorded in the index.</param>
+    /// <returns>The index. It has no embedder, sparse encoder or reranker.</returns>
+    public static SearchIndex<T> Open<T>(string path, SearchMapping<T> mapping)
+        where T : class
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        ArgumentNullException.ThrowIfNull(mapping);
+        return new SearchIndex<T>(new FileSystemStorage(path), mapping);
+    }
+
+    /// <summary>Creates an in-memory index with a mapping built at run time (see <see cref="Open{T}(string, SearchMapping{T})"/>).</summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="mapping">The mapping.</param>
+    /// <returns>The index.</returns>
+    public static SearchIndex<T> InMemory<T>(SearchMapping<T> mapping)
+        where T : class
+    {
+        ArgumentNullException.ThrowIfNull(mapping);
+        return new SearchIndex<T>(new MemoryStorage(), mapping);
+    }
+
     /// <summary>Opens or creates an index in a directory whose automatically embedded vector members take the embedder's dimension instead of the length their attribute declares.</summary>
     /// <typeparam name="T">The document type.</typeparam>
     /// <param name="path">The index directory.</param>
@@ -576,9 +600,32 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(vector);
         MappedMember m = MemberNames.Resolve(_mapping, member, nameof(SearchVector));
+        return SearchVectorCore(m, vector, neighbors);
+    }
+
+    /// <summary>Like <see cref="SearchVector{TVector}(Expression{Func{T, TVector}}, float[], int)"/> for a vector property named by a string, for callers that learn the property at run time.</summary>
+    /// <param name="vectorMember">The property name.</param>
+    /// <param name="vector">The query vector, as long as the property's <c>Dimensions</c> and finite.</param>
+    /// <param name="neighbors">How many nearest documents to find, 1 to 10,000. Default 20.</param>
+    /// <returns>The search.</returns>
+    /// <exception cref="ArgumentException">The name is not a vector property, or the vector has the wrong length or holds a NaN or infinity.</exception>
+    public SearchQuery<T> SearchVector(string vectorMember, float[] vector, int neighbors = 20)
+    {
+        ArgumentNullException.ThrowIfNull(vectorMember);
+        ArgumentNullException.ThrowIfNull(vector);
+        if (!_mapping.TryGetMember(vectorMember, out MappedMember? m))
+        {
+            throw new ArgumentException($"SearchVector: {typeof(T).Name} has no property '{vectorMember}'.", nameof(vectorMember));
+        }
+
+        return SearchVectorCore(m, vector, neighbors);
+    }
+
+    private SearchQuery<T> SearchVectorCore(MappedMember m, float[] vector, int neighbors)
+    {
         if (m.Type != FieldType.Vector)
         {
-            throw new ArgumentException($"SearchVector: '{m.Name}' is not a [Vector] property.", nameof(member));
+            throw new ArgumentException($"SearchVector: '{m.Name}' is not a [Vector] property.", nameof(m));
         }
 
         if (vector.Length != m.Dimensions || vector.Any(x => !float.IsFinite(x)))
