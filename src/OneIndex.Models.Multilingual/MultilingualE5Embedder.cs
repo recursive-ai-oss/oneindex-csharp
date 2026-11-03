@@ -6,7 +6,7 @@ using RecursiveAI.OneModel;
 using RecursiveAI.OneModel.Graph;
 using RecursiveAI.OneModel.Tensors;
 
-namespace OneIndex.Models;
+namespace OneIndex.Models.Multilingual;
 
 /// <summary>
 /// A multilingual sentence embedder for the E5 family (multilingual-e5-small, MIT licence, 384 dimensions): SentencePiece tokens through
@@ -75,10 +75,30 @@ public sealed class MultilingualE5Embedder : IEmbedder, IDisposable
     {
         ArgumentNullException.ThrowIfNull(modelPath);
         ArgumentNullException.ThrowIfNull(sentencePiecePath);
+        using FileStream model = File.OpenRead(modelPath);
+        return Open(model, File.ReadAllBytes(sentencePiecePath), variant, maxTokens, exactArithmetic);
+    }
+
+    /// <summary>Opens the embedder with the weights packed in this package (int8).</summary>
+    /// <returns>The embedder; dispose it to release the model.</returns>
+    /// <exception cref="FileNotFoundException">The assembly was built without the packed weights; use <see cref="Open(string, string, string, int, bool)"/> with model files.</exception>
+    public static MultilingualE5Embedder Load()
+    {
+        System.Reflection.Assembly assembly = typeof(MultilingualE5Embedder).Assembly;
+        using Stream model = assembly.GetManifestResourceStream("OneIndex.Models.Weights.multilingual-e5-small.onemodel")
+            ?? throw new FileNotFoundException("This build of OneIndex.Models.Multilingual does not contain the multilingual-e5-small weights; use MultilingualE5Embedder.Open with model files.");
+        using Stream spm = assembly.GetManifestResourceStream("OneIndex.Models.Weights.multilingual-e5-small.sentencepiece.bpe.model")
+            ?? throw new FileNotFoundException("This build of OneIndex.Models.Multilingual does not contain the SentencePiece model.");
+        using var bytes = new MemoryStream();
+        spm.CopyTo(bytes);
+        return Open(model, bytes.ToArray(), "int8");
+    }
+
+    private static MultilingualE5Embedder Open(Stream model, byte[] sentencePieceBytes, string variant, int maxTokens = 512, bool exactArithmetic = false)
+    {
         ArgumentException.ThrowIfNullOrEmpty(variant);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxTokens, 3);
-        SentencePieceTokenizer tokenizer = SentencePieceTokenizer.Create(SentencePieceModel.Load(File.ReadAllBytes(sentencePiecePath)));
-        using FileStream model = File.OpenRead(modelPath);
+        SentencePieceTokenizer tokenizer = SentencePieceTokenizer.Create(SentencePieceModel.Load(sentencePieceBytes));
         var options = new ModelOptions { Mode = exactArithmetic ? ArithmeticMode.Exact : ArithmeticMode.Fast, MaxCachedPlans = 24 };
         Session session = Session.Load(model, options);
         try

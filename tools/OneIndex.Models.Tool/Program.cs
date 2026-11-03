@@ -23,6 +23,7 @@ using OneIndex.Index;
 using OneIndex.Search;
 using OneIndex.Storage;
 using OneIndex.Models;
+using OneIndex.Models.Multilingual;
 using OneIndex.Models.Tool;
 using OneIndex.Vectors;
 using RecursiveAI.OneModel.Format;
