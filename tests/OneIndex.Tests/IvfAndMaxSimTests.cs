@@ -225,6 +225,25 @@ public class MaxSimTests
     }
 
     [Fact]
+    public void ListEntryPastTheVectorCountIsCorruptionNotAnOverflow()
+    {
+        // Found by the static-index fuzz target (testdata/fuzz/static-ivf-list-id-overflow.bin): a list names a vector number above int.MaxValue.
+        byte[] input = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(ThisFile())!, "..", "..", "testdata", "fuzz", "static-ivf-list-id-overflow.bin"));
+        var mem = new MemoryStorage();
+        using (IStorageWriter w = mem.Create("x.ivf"))
+        {
+            w.Write(input.AsSpan(1));
+        }
+
+        using IvfIndex index = IvfIndex.Open(mem.OpenRead("x.ivf"), verifyChecksum: (input[0] & 4) != 0);
+        var q = new float[index.Dimensions];
+        q[0] = 1;
+        Assert.Throws<CorruptIndexException>(() => index.Search(q, 5, index.Lists));
+    }
+
+    private static string ThisFile([System.Runtime.CompilerServices.CallerFilePath] string path = "") => path;
+
+    [Fact]
     public void UnpackRefusesDamagedBytes()
     {
         byte[] packed = MultiVector.Pack([[1f, 2f], [3f, 4f]]);

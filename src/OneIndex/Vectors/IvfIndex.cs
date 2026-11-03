@@ -423,11 +423,13 @@ public sealed class IvfIndex : IDisposable
         var code = new sbyte[dims];
         for (int i = 0; i < count; i++)
         {
-            int id = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(i * 4, 4)));
-            if (id >= Count)
+            uint raw = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(i * 4, 4));
+            if (raw >= (uint)Count)
             {
-                throw new CorruptIndexException(_reader.Name, $"list {list} names vector {id} of {Count}");
+                throw new CorruptIndexException(_reader.Name, $"list {list} names vector {raw} of {Count}");
             }
+
+            int id = (int)raw;
 
             if (accept is not null && !accept(id))
             {
