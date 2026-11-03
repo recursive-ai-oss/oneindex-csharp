@@ -261,6 +261,15 @@ public class QueryDataFormTests
     }
 
     [Fact]
+    public void AnUnpairedSurrogateEscapeIsAParseErrorNotAnInvalidOperation()
+    {
+        // Found by the query JSON fuzz target (testdata/fuzz/queryjson-lone-surrogate.json): the parser accepts the escape, reading the string threw.
+        string path = Path.Combine(Path.GetDirectoryName(ThisFile())!, "..", "..", "testdata", "fuzz", "queryjson-lone-surrogate.json");
+        Assert.False(QueryJson.TryRead(File.ReadAllText(path), Schema, out _, out QueryParseException? error));
+        Assert.Contains("surrogate", error!.Message);
+    }
+
+    [Fact]
     public void JsonSugarThatExpandsPastTheDepthLimitIsRejectedAtRead()
     {
         // Found by the query JSON fuzz target: a strict text of stacked NOTs is within the input depth but writes a much deeper tree.

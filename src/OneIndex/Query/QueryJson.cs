@@ -244,7 +244,17 @@ public static partial class QueryJson
 
         using (doc)
         {
-            QueryRequest request = new QueryJsonReader(schema).ReadRequest(doc.RootElement);
+            QueryRequest request;
+            try
+            {
+                request = new QueryJsonReader(schema).ReadRequest(doc.RootElement);
+            }
+            catch (InvalidOperationException)
+            {
+                // JsonDocument decodes strings lazily; an escape such as "\ud800" that is not half of a surrogate pair only fails when the string is read.
+                throw QueryParseException.AtPath("$", "A string holds an unpaired surrogate escape, which cannot be text.", null, null);
+            }
+
             CheckWrittenDepth(request, schema);
             return request;
         }
