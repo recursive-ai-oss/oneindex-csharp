@@ -4,6 +4,9 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+- Multi-vector auto-encoding: `[MultiVector(From = ...)]` encodes the source text at upsert through an `IMultiVectorEncoder` (`SearchIndex.Open<T>(path, embedder, sparse, reranker, multiVectorEncoder)` or `SearchMultiVectorEncoders.Default`), caches by model identity and text in stored source, re-encodes stale entries in `ReembedStale()`, and `SearchQuery<T>.MaxSim(...)` is the late-interaction query stage beside `Rerank`. `IMultiVectorEncoder` gains batch `Encode`/`EncodeAsync` with default implementations.
+- Durability harness: the campaigns start their child processes correctly whether run through `dotnet run`, `dotnet Durability.dll` or the application host.
+
 - `RecursiveAI.OneIndex.Analysis.Asian`: Japanese and Korean lattice segmentation (IPADIC, mecab-ko-dic), Chinese most-probable-path segmentation (jieba word list) and Thai, Lao, Khmer and Myanmar maximal matching (ICU word lists), as the analyzers `ja`, `ko`, `zh`, `th`, `lo`, `km` and `my` (`AsianAnalyzers.Register()`; core gains `AnalyzerRegistry.Register`). Dictionaries are a checksummed container format (`OIDICT` 1) with typed errors.
 - Decompounding in core: `CompoundSplitter` (Koehn and Knight splitting, fewest parts first), `DecompoundFilter`, packed word lists for de, nl, sv, da, no, fi and is, and the analyzers `<code>-compound` and `<code>-compound-both`.
 - `RecursiveAI.OneIndex.Models`: SentencePiece unigram tokenizer (`SentencePieceModel`, `SentencePieceTokenizer`) with the nmt_nfkc normalizer.

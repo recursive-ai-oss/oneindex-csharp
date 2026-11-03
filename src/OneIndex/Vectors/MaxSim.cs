@@ -21,6 +21,32 @@ public interface IMultiVectorEncoder
     /// <param name="cancellationToken">Cancels the encoding.</param>
     /// <returns>One vector of <see cref="Dimension"/> floats per token, in text order; may be empty.</returns>
     float[][] Encode(string text, EmbeddingRole role, CancellationToken cancellationToken = default);
+
+    /// <summary>Encodes several texts. The default calls <see cref="Encode(string, EmbeddingRole, CancellationToken)"/> for each; a model that batches overrides it.</summary>
+    /// <param name="texts">The texts.</param>
+    /// <param name="role">Whether the texts are documents or queries.</param>
+    /// <param name="destination">Receives one array of token vectors per text, in order; at least as long as <paramref name="texts"/>.</param>
+    /// <param name="cancellationToken">Cancels the encoding.</param>
+    void Encode(IReadOnlyList<string> texts, EmbeddingRole role, Span<float[][]> destination, CancellationToken cancellationToken = default)
+    {
+        for (int i = 0; i < texts.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            destination[i] = Encode(texts[i], role, cancellationToken);
+        }
+    }
+
+    /// <summary>The asynchronous twin of the batch <c>Encode</c>. The default runs it on the calling thread.</summary>
+    /// <param name="texts">The texts.</param>
+    /// <param name="role">Whether the texts are documents or queries.</param>
+    /// <param name="destination">Receives one array of token vectors per text, in order.</param>
+    /// <param name="cancellationToken">Cancels the encoding.</param>
+    /// <returns>A task that completes when the destination is filled.</returns>
+    ValueTask EncodeAsync(IReadOnlyList<string> texts, EmbeddingRole role, Memory<float[][]> destination, CancellationToken cancellationToken = default)
+    {
+        Encode(texts, role, destination.Span, cancellationToken);
+        return ValueTask.CompletedTask;
+    }
 }
 
 /// <summary>

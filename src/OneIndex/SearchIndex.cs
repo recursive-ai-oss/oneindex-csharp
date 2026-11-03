@@ -26,7 +26,7 @@ public static class SearchIndex
     /// <exception cref="CorruptIndexException">The newest commit or a file it lists is damaged.</exception>
     public static SearchIndex<T> Open<T>(string path)
         where T : class
-        => Open<T>(path, SearchEmbedders.Default, SearchSparseEncoders.Default, SearchRerankers.Default);
+        => Open<T>(path, SearchEmbedders.Default, SearchSparseEncoders.Default, SearchRerankers.Default, SearchMultiVectorEncoders.Default);
 
     /// <summary>Opens an index in a directory with an explicit embedder for <c>[Vector(From = ...)]</c> members (see <see cref="SearchEmbedders"/> and docs/auto-embedding.md).</summary>
     /// <typeparam name="T">The attributed document type.</typeparam>
@@ -36,7 +36,7 @@ public static class SearchIndex
     /// <exception cref="InvalidOperationException">The embedder's dimension differs from a member's <c>Dimensions</c>, or the type has no generated mapping.</exception>
     public static SearchIndex<T> Open<T>(string path, IEmbedder? embedder)
         where T : class
-        => Open<T>(path, embedder, SearchSparseEncoders.Default, SearchRerankers.Default);
+        => Open<T>(path, embedder, SearchSparseEncoders.Default, SearchRerankers.Default, SearchMultiVectorEncoders.Default);
 
     /// <summary>Opens an index in a directory with explicit embedder and sparse encoder, for <c>[Vector(From = ...)]</c> and <c>[Sparse(From = ...)]</c> members.</summary>
     /// <typeparam name="T">The attributed document type.</typeparam>
@@ -46,7 +46,7 @@ public static class SearchIndex
     /// <returns>The index.</returns>
     public static SearchIndex<T> Open<T>(string path, IEmbedder? embedder, ISparseEncoder? sparseEncoder)
         where T : class
-        => Open<T>(path, embedder, sparseEncoder, SearchRerankers.Default);
+        => Open<T>(path, embedder, sparseEncoder, SearchRerankers.Default, SearchMultiVectorEncoders.Default);
 
     /// <summary>
     /// Opens an index in a directory with every model given: embedder, sparse encoder and reranker (see <see cref="SearchRerankers"/> and docs/rerank.md). The shorter
@@ -61,9 +61,25 @@ public static class SearchIndex
     /// <returns>The index.</returns>
     public static SearchIndex<T> Open<T>(string path, IEmbedder? embedder, ISparseEncoder? sparseEncoder, IReranker? reranker)
         where T : class
+        => Open<T>(path, embedder, sparseEncoder, reranker, null);
+
+    /// <summary>
+    /// Opens an index in a directory with every model given, including the multi-vector encoder of <c>[MultiVector(From = ...)]</c> members and the
+    /// <c>MaxSim</c> stage (docs/multi-vector.md). Uses exactly what it is given, <see langword="null"/> meaning none.
+    /// </summary>
+    /// <typeparam name="T">The attributed document type.</typeparam>
+    /// <param name="path">The directory, created if missing.</param>
+    /// <param name="embedder">The embedder, or <see langword="null"/> for none.</param>
+    /// <param name="sparseEncoder">The sparse encoder, or <see langword="null"/> for none.</param>
+    /// <param name="reranker">The reranker, or <see langword="null"/> for none.</param>
+    /// <param name="multiVectorEncoder">The multi-vector encoder, or <see langword="null"/> for none: token vectors are then supplied by the application.</param>
+    /// <returns>The index.</returns>
+    /// <exception cref="InvalidOperationException">The encoder's dimension differs from a member's <c>Dimensions</c>.</exception>
+    public static SearchIndex<T> Open<T>(string path, IEmbedder? embedder, ISparseEncoder? sparseEncoder, IReranker? reranker, IMultiVectorEncoder? multiVectorEncoder)
+        where T : class
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
-        return new SearchIndex<T>(new FileSystemStorage(path), SearchMappings.Require<T>(), embedder, sparseEncoder, reranker);
+        return new SearchIndex<T>(new FileSystemStorage(path), SearchMappings.Require<T>(), embedder, sparseEncoder, reranker, multiVectorEncoder);
     }
 
     /// <summary>Opens or creates an index in a directory with a mapping built at run time instead of the generated one, for adapters whose document shape is not known at compile time.</summary>
@@ -101,7 +117,7 @@ public static class SearchIndex
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
         ArgumentNullException.ThrowIfNull(embedder);
-        return new SearchIndex<T>(new FileSystemStorage(path), SearchMappings.Require<T>().WithEmbeddedVectorDimensions(embedder.Dimension), embedder, SearchSparseEncoders.Default, SearchRerankers.Default);
+        return new SearchIndex<T>(new FileSystemStorage(path), SearchMappings.Require<T>().WithEmbeddedVectorDimensions(embedder.Dimension), embedder, SearchSparseEncoders.Default, SearchRerankers.Default, SearchMultiVectorEncoders.Default);
     }
 
     /// <summary>Creates an in-memory index whose automatically embedded vector members take the embedder's dimension.</summary>
@@ -113,7 +129,7 @@ public static class SearchIndex
         where T : class
     {
         ArgumentNullException.ThrowIfNull(embedder);
-        return new SearchIndex<T>(new MemoryStorage(), SearchMappings.Require<T>().WithEmbeddedVectorDimensions(embedder.Dimension), embedder, SearchSparseEncoders.Default, SearchRerankers.Default);
+        return new SearchIndex<T>(new MemoryStorage(), SearchMappings.Require<T>().WithEmbeddedVectorDimensions(embedder.Dimension), embedder, SearchSparseEncoders.Default, SearchRerankers.Default, SearchMultiVectorEncoders.Default);
     }
 
     /// <summary>
@@ -167,7 +183,7 @@ public static class SearchIndex
     /// <returns>The index.</returns>
     public static SearchIndex<T> InMemory<T>(IEmbedder? embedder, ISparseEncoder? sparseEncoder)
         where T : class
-        => new(new MemoryStorage(), SearchMappings.Require<T>(), embedder, sparseEncoder, SearchRerankers.Default);
+        => new(new MemoryStorage(), SearchMappings.Require<T>(), embedder, sparseEncoder, SearchRerankers.Default, SearchMultiVectorEncoders.Default);
 
     /// <summary>Creates an in-memory index with every model given; <see langword="null"/> means none (see <see cref="Open{T}(string, IEmbedder, ISparseEncoder, IReranker)"/>).</summary>
     /// <typeparam name="T">The attributed document type.</typeparam>
@@ -179,13 +195,24 @@ public static class SearchIndex
         where T : class
         => new(new MemoryStorage(), SearchMappings.Require<T>(), embedder, sparseEncoder, reranker);
 
+    /// <summary>Creates an in-memory index with every model given, including the multi-vector encoder; <see langword="null"/> means none.</summary>
+    /// <typeparam name="T">The attributed document type.</typeparam>
+    /// <param name="embedder">The embedder, or <see langword="null"/> for none.</param>
+    /// <param name="sparseEncoder">The sparse encoder, or <see langword="null"/> for none.</param>
+    /// <param name="reranker">The reranker, or <see langword="null"/> for none.</param>
+    /// <param name="multiVectorEncoder">The multi-vector encoder, or <see langword="null"/> for none.</param>
+    /// <returns>The index.</returns>
+    public static SearchIndex<T> InMemory<T>(IEmbedder? embedder, ISparseEncoder? sparseEncoder, IReranker? reranker, IMultiVectorEncoder? multiVectorEncoder)
+        where T : class
+        => new(new MemoryStorage(), SearchMappings.Require<T>(), embedder, sparseEncoder, reranker, multiVectorEncoder);
+
     /// <summary>Creates an index that lives in memory only and disappears when disposed.</summary>
     /// <typeparam name="T">The attributed document type.</typeparam>
     /// <returns>The index.</returns>
     /// <exception cref="InvalidOperationException">The type has no generated mapping or no <see cref="SearchIdAttribute"/> member.</exception>
     public static SearchIndex<T> InMemory<T>()
         where T : class
-        => new(new MemoryStorage(), SearchMappings.Require<T>(), SearchEmbedders.Default, SearchSparseEncoders.Default, SearchRerankers.Default);
+        => new(new MemoryStorage(), SearchMappings.Require<T>(), SearchEmbedders.Default, SearchSparseEncoders.Default, SearchRerankers.Default, SearchMultiVectorEncoders.Default);
 
     /// <summary>Creates an in-memory index with an explicit embedder (see <see cref="Open{T}(string, IEmbedder)"/>).</summary>
     /// <typeparam name="T">The attributed document type.</typeparam>
@@ -193,7 +220,7 @@ public static class SearchIndex
     /// <returns>The index.</returns>
     public static SearchIndex<T> InMemory<T>(IEmbedder? embedder)
         where T : class
-        => new(new MemoryStorage(), SearchMappings.Require<T>(), embedder, SearchSparseEncoders.Default, SearchRerankers.Default);
+        => new(new MemoryStorage(), SearchMappings.Require<T>(), embedder, SearchSparseEncoders.Default, SearchRerankers.Default, SearchMultiVectorEncoders.Default);
 }
 
 /// <summary>
@@ -221,8 +248,9 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     private volatile bool _disposed;
     private readonly AutoEmbedding? _auto;
     private readonly AutoSparse? _autoSparse;
+    private readonly AutoMultiVector? _autoMultiVector;
 
-    internal SearchIndex(IStorage storage, SearchMapping<T> mapping, IEmbedder? embedder = null, ISparseEncoder? sparseEncoder = null, IReranker? reranker = null)
+    internal SearchIndex(IStorage storage, SearchMapping<T> mapping, IEmbedder? embedder = null, ISparseEncoder? sparseEncoder = null, IReranker? reranker = null, IMultiVectorEncoder? multiVectorEncoder = null)
     {
         Reranker = reranker;
         _storage = storage;
@@ -236,6 +264,15 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         if (sparseEncoder is not null && mapping.Members.Any(static m => m.From is not null && m.Type == FieldType.Sparse))
         {
             _autoSparse = new AutoSparse(sparseEncoder, mapping.Members);
+        }
+
+        if (multiVectorEncoder is not null)
+        {
+            _autoMultiVector = new AutoMultiVector(multiVectorEncoder, mapping.Members);
+            if (_autoMultiVector.Slots.Length == 0 && !mapping.Members.Any(static m => m.IsMultiVector))
+            {
+                _autoMultiVector = null;
+            }
         }
 
         var options = new IndexWriterOptions();
@@ -299,6 +336,11 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
 
     internal AutoSparse? AutoSparse => _autoSparse;
 
+    internal AutoMultiVector? AutoMultiVector => _autoMultiVector;
+
+    /// <summary>The multi-vector encoder that fills <c>[MultiVector(From = ...)]</c> members and encodes the query of <c>MaxSim</c>, or <see langword="null"/> when the index has none.</summary>
+    public IMultiVectorEncoder? MultiVectorEncoder => _autoMultiVector?.Encoder;
+
     /// <summary>The sparse encoder that fills <c>[Sparse(From = ...)]</c> members and encodes search text, or <see langword="null"/> when the index has none.</summary>
     public ISparseEncoder? SparseEncoder => _autoSparse?.Encoder;
 
@@ -323,6 +365,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         Document doc = _mapping.ToDocument(document);
         _auto?.Fill([doc], _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken);
         _autoSparse?.Fill([doc], _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken);
+        _autoMultiVector?.Fill([doc], _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken);
         Write(document, doc, cancellationToken);
     }
 
@@ -380,6 +423,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
 
         _auto?.Fill(docs, _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken);
         _autoSparse?.Fill(docs, _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken);
+        _autoMultiVector?.Fill(docs, _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken);
         for (int i = 0; i < docs.Count; i++)
         {
             Write(batch[i], docs[i], cancellationToken);
@@ -432,6 +476,11 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
             await _autoSparse.FillAsync(docs, _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken).ConfigureAwait(false);
         }
 
+        if (_autoMultiVector is not null)
+        {
+            await _autoMultiVector.FillAsync(docs, _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken).ConfigureAwait(false);
+        }
+
         for (int i = 0; i < docs.Count; i++)
         {
             Write(batch[i], docs[i], cancellationToken);
@@ -456,11 +505,16 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
             await _autoSparse.FillAsync([doc], _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken).ConfigureAwait(false);
         }
 
+        if (_autoMultiVector is not null)
+        {
+            await _autoMultiVector.FillAsync([doc], _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken).ConfigureAwait(false);
+        }
+
         Write(document, doc, cancellationToken);
     }
 
     /// <summary>
-    /// Embeds again every committed document whose stored vector was made by a different model or from different text, or is missing, then
+    /// Embeds again every committed document whose stored vector (or sparse or multi-vector) was made by a different model or from different text, or is missing, then
     /// buffers the changes for the next commit. Call it after changing the embedder (its <see cref="IEmbedder.ModelId"/>); unchanged documents
     /// cost nothing. Documents upserted since the last commit are not touched.
     /// </summary>
@@ -471,9 +525,10 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     {
         AutoEmbedding? auto = _auto;
         AutoSparse? sparse = _autoSparse;
-        if (auto is null && sparse is null)
+        AutoMultiVector? multi = _autoMultiVector is { Slots.Length: > 0 } ? _autoMultiVector : null;
+        if (auto is null && sparse is null && multi is null)
         {
-            throw new InvalidOperationException("The index has no embedder or sparse encoder, so there is nothing to embed with.");
+            throw new InvalidOperationException("The index has no embedder, sparse encoder or multi-vector encoder, so there is nothing to embed with.");
         }
 
         Generation? generation = Acquire();
@@ -496,19 +551,19 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
                     }
 
                     Document? stored = Source(generation, leaf, local, out _);
-                    if (stored is not null && ((auto?.IsStale(stored) ?? false) || (sparse?.IsStale(stored) ?? false)))
+                    if (stored is not null && ((auto?.IsStale(stored) ?? false) || (sparse?.IsStale(stored) ?? false) || (multi?.IsStale(stored) ?? false)))
                     {
                         batch.Add(stored);
                         if (batch.Count == UpsertBatch)
                         {
-                            total += Reembed(auto, sparse, batch, cancellationToken);
+                            total += Reembed(auto, sparse, multi, batch, cancellationToken);
                             batch.Clear();
                         }
                     }
                 }
             }
 
-            total += Reembed(auto, sparse, batch, cancellationToken);
+            total += Reembed(auto, sparse, multi, batch, cancellationToken);
         }
         finally
         {
@@ -560,7 +615,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         }
     }
 
-    private int Reembed(AutoEmbedding? auto, AutoSparse? sparse, List<Document> batch, CancellationToken cancellationToken)
+    private int Reembed(AutoEmbedding? auto, AutoSparse? sparse, AutoMultiVector? multi, List<Document> batch, CancellationToken cancellationToken)
     {
         if (batch.Count == 0)
         {
@@ -582,6 +637,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
 
         auto?.Fill(copies, _mapping.Schema.IdField!, static _ => null, replace: true, cancellationToken);
         sparse?.Fill(copies, _mapping.Schema.IdField!, static _ => null, replace: true, cancellationToken);
+        multi?.Fill(copies, _mapping.Schema.IdField!, static _ => null, replace: true, cancellationToken);
         foreach (Document c in copies)
         {
             Write(null, c, cancellationToken);
@@ -1355,6 +1411,11 @@ public sealed partial class SearchQuery<T> : IEnumerable<SearchHit<T>>
     /// <exception cref="InvalidOperationException">The stored source of a hit is missing (an index reopened before stored source is available).</exception>
     public SearchResults<T> Execute(CancellationToken cancellationToken = default)
     {
+        if (_take > 0 && EffectiveMaxSim() is { } maxSim)
+        {
+            return ExecuteMaxSim(maxSim, cancellationToken);
+        }
+
         if (_take > 0 && EffectiveRerank() is { } rerank)
         {
             return ExecuteReranked(rerank.Spec, rerank.Reranker, rerank.Query, cancellationToken);
@@ -1413,7 +1474,9 @@ public sealed partial class SearchQuery<T> : IEnumerable<SearchHit<T>>
     /// <param name="cancellationToken">Cancels the search.</param>
     /// <returns>The results.</returns>
     public ValueTask<SearchResults<T>> ExecuteAsync(CancellationToken cancellationToken = default)
-        => _take > 0 && EffectiveRerank() is { } rerank
+        => _take > 0 && _extras?.MaxSim is not null
+            ? ValueTask.FromResult(Execute(cancellationToken))
+            : _take > 0 && EffectiveRerank() is { } rerank
             ? ExecuteRerankedAsync(rerank.Spec, rerank.Reranker, rerank.Query, cancellationToken)
             : ValueTask.FromResult(Execute(cancellationToken));
 

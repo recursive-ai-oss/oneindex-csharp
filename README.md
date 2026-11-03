@@ -20,7 +20,7 @@ OneIndex is unaffiliated with other products named OneIndex, OneSearch or simila
 | `[Dynamic]` fields and schema evolution from stored source | Working ([docs/schema-evolution.md](docs/schema-evolution.md)) |
 | Strict query syntax, filter strings, versioned query JSON, `SearchTool.For<T>()`, the LINQ builder (comparisons, `null`, `Contains`, `Any`) | Working, fuzzed ([docs/linq.md](docs/linq.md)) |
 | Vectors: HNSW and exact flat search, int8, int4 and sign-bit codecs with float rerank, filtered traversal, graph merge, learned sparse vectors, rank fusion, reranking, auto-embedding with an embedding cache | Working ([docs/vectors.md](docs/vectors.md), [docs/hybrid.md](docs/hybrid.md)) |
-| Multi-vector fields (`[MultiVector]`) with MaxSim as a rerank and as an exact scan | Working ([docs/multi-vector.md](docs/multi-vector.md)) |
+| Multi-vector fields (`[MultiVector]`, encoded at upsert with `From`) with MaxSim as a query stage, a rerank and an exact scan | Working ([docs/multi-vector.md](docs/multi-vector.md)) |
 | `RecursiveAI.OneIndex.Models`: WordPiece tokenizer, bge-small-en-v1.5 embedder (int8), cross-encoder reranker, learned sparse encoder | Working ([docs/models.md](docs/models.md)) |
 | `RecursiveAI.OneIndex.Analysis.Asian` (ja, zh, ko, th, lo, km, my), decompounding (de, nl, sv, da, no, fi, is), `RecursiveAI.OneIndex.Models.Multilingual` (multilingual-e5-small, SentencePiece) | Working |
 | `RecursiveAI.OneIndex.EntityFrameworkCore`: transactional outbox, applier, pushdown with over-fetch, `ReindexAsync` | Working on SQLite and PostgreSQL ([docs/entity-framework.md](docs/entity-framework.md)). |
