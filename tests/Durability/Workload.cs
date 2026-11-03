@@ -16,6 +16,7 @@ public static class Workload
         .Text("body")
         .Integral("n")
         .Add(new FieldDefinition("v", FieldType.Vector) { Dimensions = VectorDimensions, FlatThreshold = 3, HnswM = 4, EfConstruction = 16, Quantization = VectorQuantization.Scalar4 })
+        .Add(new FieldDefinition("w", FieldType.Vector) { Dimensions = VectorDimensions, FlatThreshold = 3, VectorIndex = VectorIndexKind.Ivf, IvfLists = 2 })
         .Build();
 
     /// <summary>The length of the vector every document carries; its content is a function of the document's number.</summary>
@@ -45,6 +46,7 @@ public static class Workload
         .Integral("n")
         .Keyword("extra")
         .Add(new FieldDefinition("v", FieldType.Vector) { Dimensions = VectorDimensions, FlatThreshold = 3, HnswM = 6, EfConstruction = 16 })
+        .Add(new FieldDefinition("w", FieldType.Vector) { Dimensions = VectorDimensions, FlatThreshold = 3, VectorIndex = VectorIndexKind.Ivf, IvfLists = 3 })
         .Build();
 
     /// <summary>The schema of an evolution campaign cycle: 1 is <see cref="Schema"/>, 2 is <see cref="SchemaV2"/>.</summary>
@@ -83,7 +85,7 @@ public static class Workload
 
     public readonly record struct Op(Kind Kind, string Id, string Tag, string Body, long N);
 
-    public static Document ToDocument(Op op) => new Document().Add("id", op.Id).Add("tag", op.Tag).Add("body", op.Body).Add("n", op.N).Add("v", VectorOf(op.N));
+    public static Document ToDocument(Op op) => new Document().Add("id", op.Id).Add("tag", op.Tag).Add("body", op.Body).Add("n", op.N).Add("v", VectorOf(op.N)).Add("w", VectorOf(op.N));
 
     public static string Fingerprint(string tag, string body, long n) => $"{tag}|{body}|{n}";
 
@@ -234,6 +236,17 @@ public static class Workload
     /// </summary>
     private static void CheckVectors(IndexSnapshot snapshot, SortedDictionary<string, string> rows)
     {
+        foreach (string field in new[] { "v", "w" })
+        {
+            if (snapshot.Schema.TryGetField(field, out _))
+            {
+                CheckVectorField(snapshot, rows, field);
+            }
+        }
+    }
+
+    private static void CheckVectorField(IndexSnapshot snapshot, SortedDictionary<string, string> rows, string field)
+    {
         SearchContext context = SnapshotSearch.CreateContext(snapshot);
         var searcher = new IndexSearcher(context, new QueryEngine());
         var vectorOf = new Dictionary<string, float[]>(StringComparer.Ordinal);
@@ -244,7 +257,7 @@ public static class Workload
 
         foreach (LeafContext leaf in context.Leaves)
         {
-            IVectorFieldReader? reader = leaf.Reader.GetVectors("v");
+            IVectorFieldReader? reader = leaf.Reader.GetVectors(field);
             var buffer = new float[VectorDimensions];
             for (int d = 0; d < leaf.Reader.MaxDoc; d++)
             {
@@ -269,7 +282,7 @@ public static class Workload
             double[] expected = vectorOf.Values.Select(v => Score(v, unit)).OrderByDescending(x => x).Take(5).ToArray();
             foreach (bool exact in new[] { true, false })
             {
-                TopDocs top = searcher.Search(new KnnQuery("v", query, 5) { Exact = exact }, 5);
+                TopDocs top = searcher.Search(new KnnQuery(field, query, 5) { Exact = exact }, 5);
                 if (top.Hits.Count != expected.Length)
                 {
                     throw new InvalidDataException($"nearest-neighbour search returned {top.Hits.Count} of {expected.Length} documents");
@@ -294,7 +307,7 @@ public static class Workload
 
         if (rows.Count > 0)
         {
-            CheckFilteredVectors(context, searcher, rows, vectorOf);
+            CheckFilteredVectors(context, searcher, rows, vectorOf, field);
         }
     }
 
@@ -302,7 +315,7 @@ public static class Workload
     /// Filtered nearest-neighbour search after recovery: a keyword filter and a numeric range filter. Every hit must satisfy the filter and
     /// be a live document; the exact search must equal brute force over the matching documents, and the graph search must return a full page.
     /// </summary>
-    private static void CheckFilteredVectors(SearchContext context, IndexSearcher searcher, SortedDictionary<string, string> rows, Dictionary<string, float[]> vectorOf)
+    private static void CheckFilteredVectors(SearchContext context, IndexSearcher searcher, SortedDictionary<string, string> rows, Dictionary<string, float[]> vectorOf, string field)
     {
         var rng = new Random(rows.Count + 7);
         var filters = new (string Name, Query Filter, Func<string, bool> Matches)[]
@@ -318,7 +331,7 @@ public static class Workload
             double[] expected = matching.Select(id => Score(vectorOf[id], unit)).OrderByDescending(x => x).Take(5).ToArray();
             foreach (bool exact in new[] { true, false })
             {
-                TopDocs top = searcher.Search(new KnnQuery("v", query, 5) { Exact = exact, Filter = filter }, 5);
+                TopDocs top = searcher.Search(new KnnQuery(field, query, 5) { Exact = exact, Filter = filter }, 5);
                 if (top.Hits.Count != expected.Length)
                 {
                     throw new InvalidDataException($"filtered ({name}) nearest-neighbour search returned {top.Hits.Count} of {expected.Length} documents");
