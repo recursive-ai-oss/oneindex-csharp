@@ -16,6 +16,8 @@
     <Project Path="tests/OneIndex.VectorData.Tests/OneIndex.VectorData.Tests.csproj" />
     <Project Path="tests/OneIndex.Cli.Tests/OneIndex.Cli.Tests.csproj" />
     <Project Path="tests/Durability/Durability.csproj" />
+    <Project Path="tests/EfDurability/EfDurability.csproj" />
+    <Project Path="tests/OneIndex.EntityFrameworkCore.Tests/OneIndex.EntityFrameworkCore.Tests.csproj" />
     <Project Path="tests/Relevance/Relevance.csproj" />
     <Project Path="tests/Differential/Differential.csproj" />
     <Project Path="tests/AotSmoke/AotSmoke.csproj" />

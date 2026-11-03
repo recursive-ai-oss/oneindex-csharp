@@ -660,6 +660,78 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         return ValueTask.CompletedTask;
     }
 
+    /// <summary>
+    /// The application's marker stored in the last commit (empty until one is set): for example how far an external change log has been applied.
+    /// It changes only with a commit, so it always describes exactly the documents that commit holds.
+    /// </summary>
+    public ReadOnlyMemory<byte> AppliedPosition
+    {
+        get
+        {
+            lock (_readGate)
+            {
+                ThrowIfDisposed();
+                return _current?.Snapshot.Commit.AppliedPosition ?? ReadOnlyMemory<byte>.Empty;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Commits like <see cref="Commit(CancellationToken)"/> and stores an application marker in the same commit, so the marker and the documents
+    /// become durable together or not at all (see <see cref="AppliedPosition"/>). A commit with nothing else changed still publishes the marker.
+    /// </summary>
+    /// <param name="appliedPosition">At most 1,024 bytes.</param>
+    /// <param name="cancellationToken">Cancels before the commit file is published.</param>
+    /// <returns>The commit's generation number.</returns>
+    /// <exception cref="ArgumentException">The marker is too long.</exception>
+    public long Commit(ReadOnlySpan<byte> appliedPosition, CancellationToken cancellationToken = default)
+    {
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            _writer.SetAppliedPosition(appliedPosition);
+            return Commit(cancellationToken);
+        }
+    }
+
+    /// <summary>The identifiers of every live document in the last commit, in no particular order.</summary>
+    /// <returns>The identifiers; empty before the first commit.</returns>
+    public List<string> CommittedIds()
+    {
+        Generation? generation = Acquire();
+        var result = new List<string>();
+        if (generation is null)
+        {
+            return result;
+        }
+
+        try
+        {
+            for (int s = 0; s < generation.Snapshot.SegmentCount; s++)
+            {
+                SegmentReader segment = generation.Snapshot.GetSegment(s);
+                if (segment.Ids is null)
+                {
+                    continue;
+                }
+
+                foreach (KeyValuePair<byte[], int> entry in segment.Ids.ReadAll())
+                {
+                    if (segment.Live.IsLive(entry.Value))
+                    {
+                        result.Add(System.Text.Encoding.UTF8.GetString(entry.Key));
+                    }
+                }
+            }
+
+            return result;
+        }
+        finally
+        {
+            generation.Release();
+        }
+    }
+
     /// <summary>Commits (see <see cref="Commit(CancellationToken)"/>).</summary>
     /// <param name="cancellationToken">Cancels before the commit file is published.</param>
     /// <returns>The commit's generation number.</returns>

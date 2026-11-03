@@ -10,6 +10,7 @@
     <PackageVersion Include="RecursiveAI.OneOcr" Version="1.0.0" />
     <PackageVersion Include="RecursiveAI.OneOcr.Pdf" Version="1.0.0" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.0" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.VectorData.Abstractions" Version="10.11.0" />
     <PackageVersion Include="Microsoft.Extensions.VectorData.ConformanceTests" Version="10.11.0" />
   </ItemGroup>
@@ -20,6 +21,10 @@
     <PackageVersion Include="xunit.v3" Version="4.0.2" />
     <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
     <PackageVersion Include="SharpFuzz" Version="2.2.0" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.0" />
+    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
+    <!-- The SQLite provider brings 2.1.11 of the native library, which has a published advisory; take the patched release. -->
+    <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.14" />
     <!-- Renders the text of the scanned-page fixtures. -->
     <PackageVersion Include="RecursiveAI.OneImage.Text" Version="1.10.4" />
   </ItemGroup>

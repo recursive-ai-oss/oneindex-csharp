@@ -2,6 +2,9 @@
 
   <PropertyGroup>
     <RootNamespace>OneIndex.EntityFrameworkCore</RootNamespace>
+    <!-- EF Core itself is not trim- or AOT-clean (model building and query compilation use reflection), so this adapter does not claim it. -->
+    <IsAotCompatible>false</IsAotCompatible>
+    <IsTrimmable>false</IsTrimmable>
     <PackageId>$(PackagePrefix).EntityFrameworkCore</PackageId>
     <Description>Entity Framework Core integration for OneIndex: keeps a search index in step with SaveChanges through a transactional outbox. Part of the OneIndex embedded search engine; unaffiliated with other products named OneIndex, OneSearch or similar.</Description>
   </PropertyGroup>
@@ -11,7 +14,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="OneIndex.EntityFrameworkCore.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <!-- The outbox is a relational table; this is the relational layer of EF Core, not another library. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
   </ItemGroup>
 
 </Project>
