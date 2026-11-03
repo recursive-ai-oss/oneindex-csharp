@@ -14,6 +14,8 @@ Parts:
 | `deletes` | the index | the deleted documents of one generation (below) |
 | `terms`, `postings`, `lengths`, `columns`, `points`, `stored` | codecs | defined by the codec |
 
+A small flush writes most of these parts into one `<segment>.pack` file instead (see "Pack files" in `commit-format.md`); which parts share it is recorded in the commit, and readers see no difference.
+
 Every file uses the frame of `commit-format.md` (magic, version, checksummed footer). The commit records each file's length, footer checksum, part and codec version, so a file replaced after the commit is noticed when the index opens.
 
 Document ids are dense and local to a segment. Deleting a document does not renumber anything; a merge renumbers.

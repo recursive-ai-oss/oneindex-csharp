@@ -17,9 +17,9 @@ CRC-32C is the Castagnoli polynomial (reflected 0x82F63B78), initial value and f
 
 The footer checksum doubles as the file's identity: a commit records it for each file it lists, so a file replaced by different bytes of the same length is noticed from 12 bytes at the end.
 
-## Commit file, versions 1 and 2
+## Commit file, versions 1, 2 and 3
 
-A commit is written as version 1 unless the index has been through a schema change that needed its segments rebuilt (see schema-evolution.md), in which case it is written as version 2, which adds the epoch fields and the pending-rebuild section marked below. Both versions are read. A version 2 commit whose epochs are all 0 and that has no pending rebuild is refused: version 1 is its canonical form.
+A commit is written as version 1 unless the index has been through a schema change that needed its segments rebuilt (see schema-evolution.md), in which case it is written as version 2, which adds the epoch fields and the pending-rebuild section marked below. A commit that lists a part stored inside a pack file (below) is written as version 3: version 2's layout, always with the epoch fields and the pending-rebuild flag, plus one varint after each file's checksum. All three versions are read. A version 2 commit whose epochs are all 0 and that has no pending rebuild is refused: version 1 is its canonical form. A version 3 commit that lists no file at a nonzero offset is refused for the same reason.
 
 File name `commit-<generation as 16 lowercase hex digits>.oic`. Body:
 
@@ -37,11 +37,12 @@ File name `commit-<generation as 16 lowercase hex digits>.oic`. Body:
       varint  delete generation   0 when the segment has no delete bitmap
       varint  file count       at most 1,024
         string part            "terms", "postings", "lengths", "columns", "points", "stored", "deletes", "ids"
-        string file name       a valid storage name; no file is listed twice in a commit
+        string file name       a valid storage name; no file is listed twice in a commit (a pack file is listed once per part it holds, each at its own offset, and never also as a plain file)
         string codec name
         varint codec version
         varint file length
         u32    file checksum    the footer checksum of that file
+        varint offset          version 3 only: 0 for a file that holds the part alone; otherwise the part is inside the pack file named above, and its framed bytes (header to footer, `file length` of them) start at this offset, which is at least 8
       varint  schema epoch     version 2 only: the epoch the segment was written under; at most the commit's
 
 Version 2 then ends with the pending-rebuild section (schema-evolution.md):
@@ -57,6 +58,10 @@ Version 2 then ends with the pending-rebuild section (schema-evolution.md):
 The segments listed first are the served ones; rebuilt segments are never read until a later commit makes them the served set.
 
 Segment names are unique within a commit (rebuilt segments and all file names included). A parsed commit that is serialized again gives the same bytes: the format is canonical, which the fuzz target checks.
+
+### Pack files
+
+Writing a small segment as seven files costs seven creates and seven fsyncs, which on some file systems (macOS most of all) dominates a small commit. A flush therefore collects the text, column, point, stored and identifier parts in memory and writes them as one *pack file* named `<segment>.pack`: the frame of this document (magic `OIXK`, version 1, footer checksum over the whole file) around the parts' complete files laid end to end. Each part keeps its own header, footer and checksum, so everything that checks a part (the commit's recorded length and checksum, `Verify`) checks it in place through a window over the pack; a pack that ends before a listed part does is corrupt and named. Vector parts and delete files are never packed. If the parts held back exceed 4 MiB, the part that crosses it is written to a file of its own as before, and a flush with a single part left writes it as a plain file. Merges write plain files. Packs are immutable like every segment file and are deleted with their segment.
 
 ### Codec registry
 

@@ -136,6 +136,7 @@ internal abstract class NodeScorer
 
     /// <summary>The distance between two nodes.</summary>
     public abstract float Between(int a, int b);
+
 }
 
 /// <summary>Full-precision scoring over a <see cref="VectorValues"/>.</summary>
@@ -186,6 +187,7 @@ internal sealed class HnswScratch
     public static HnswScratch Current => s_current ??= new HnswScratch();
 
     private float[] _query = [];
+    private QuantizedNodeScorer? _quantized;
     private FloatNodeScorer? _dot;
     private FloatNodeScorer? _l2;
 
@@ -199,6 +201,9 @@ internal sealed class HnswScratch
 
         return _query;
     }
+
+    /// <summary>The thread's scorer over compressed vectors.</summary>
+    public QuantizedNodeScorer QuantizedScorer => _quantized ??= new QuantizedNodeScorer();
 
     /// <summary>The thread's scorer for a distance kind.</summary>
     public FloatNodeScorer Scorer(DistanceKind kind) => kind == DistanceKind.NegativeDot ? (_dot ??= new FloatNodeScorer(kind)) : (_l2 ??= new FloatNodeScorer(kind));
@@ -309,7 +314,9 @@ internal static class HnswSearch
         }
 
         long visited = 1;
-        complete = Layer(graph, scorer, 0, Math.Max(ef, k), accept, visitLimit, scratch, ref visited);
+        complete = accept is null
+            ? Layer(graph, scorer, 0, Math.Max(ef, k), null, visitLimit, scratch, ref visited)
+            : FilteredLayer(graph, scorer, Math.Max(ef, k), accept, visitLimit, scratch, ref visited);
         return Drain(scratch.Results, k, output);
     }
 
@@ -381,6 +388,101 @@ internal static class HnswSearch
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// How many accepted neighbours an expanded node collects before it stops looking through its rejected neighbours (the second hop).
+    /// Bounds the work per expansion the way the paper truncates its expanded neighbour lists; a node whose own neighbours pass the
+    /// filter never takes the second hop.
+    /// </summary>
+    internal static int ExpansionCap { get; set; } = 32;
+
+    /// <summary>
+    /// Filtered layer-0 search after Patel et al., "ACORN", SIGMOD 2024, section 5 (search over the predicate subgraph): only accepted
+    /// nodes are scored, queued and returned. Where a neighbour is rejected, its own neighbours are looked at instead (neighbours of
+    /// neighbours), so a selective filter does not cut the walk off from the accepted nodes behind rejected ones, and no distance is
+    /// computed for a rejected node. The graph is the ordinary one (the paper's denser build, gamma, is not used), so the second hop is
+    /// what restores connectivity; it is capped per expanded node by <see cref="ExpansionCap"/>. The entry node seeds the walk even
+    /// when rejected.
+    /// </summary>
+    /// <returns><see langword="false"/> if the visit limit stopped it.</returns>
+    public static bool FilteredLayer(HnswGraph graph, NodeScorer scorer, int ef, IOrdinalFilter accept, long visitLimit, HnswScratch scratch, ref long visited)
+    {
+        CandidateHeap candidates = scratch.Candidates;
+        CandidateHeap results = scratch.Results;
+        int cap = ExpansionCap;
+        long count = visited;
+        while (candidates.Count > 0)
+        {
+            Candidate c = candidates.Pop();
+            if (results.Count >= ef && c.Key > results.Peek.Key)
+            {
+                break;
+            }
+
+            int taken = 0;
+            foreach (int nb in graph.Neighbors(c.Id, 0))
+            {
+                if (accept.Accepts(nb))
+                {
+                    Consider(nb);
+                    taken++;
+                    continue;
+                }
+
+                // Second hop through a rejected neighbour (never scored; looked at again by each node that links to it).
+                if (taken >= cap)
+                {
+                    continue;
+                }
+
+                foreach (int nb2 in graph.Neighbors(nb, 0))
+                {
+                    if (taken >= cap)
+                    {
+                        break;
+                    }
+
+                    if (nb2 != c.Id && accept.Accepts(nb2))
+                    {
+                        Consider(nb2);
+                        taken++;
+                    }
+                }
+            }
+
+            if (visitLimit > 0 && count > visitLimit)
+            {
+                visited = count;
+                return false;
+            }
+        }
+
+        visited = count;
+        return true;
+
+        bool Consider(int node)
+        {
+            if (!scratch.Visit(node))
+            {
+                return false;
+            }
+
+            float d = scorer.ToQuery(node);
+            count++;
+            if (results.Count < ef || d < results.Peek.Key)
+            {
+                var cand = new Candidate(d, node);
+                candidates.Push(cand);
+                results.Push(cand);
+                if (results.Count > ef)
+                {
+                    results.Pop();
+                }
+            }
+
+            return true;
+        }
     }
 
     /// <summary>Empties a result heap into <paramref name="output"/>, nearest first, keeping the best <paramref name="k"/>.</summary>

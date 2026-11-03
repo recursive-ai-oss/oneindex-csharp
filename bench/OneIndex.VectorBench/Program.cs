@@ -21,7 +21,7 @@ internal interface IEngine : IDisposable
 
 internal static class Program
 {
-    private static readonly int[] EfGrid = [10, 14, 20, 28, 40, 56, 80, 110, 140, 180, 220, 270, 320, 380, 450, 540, 640, 760, 900, 1100, 1300, 1800];
+    private static int[] _efGrid = [10, 14, 20, 28, 40, 56, 80, 110, 140, 180, 220, 270, 320, 380, 450, 540, 640, 760, 900, 1100, 1300, 1800];
 
     private static int Main(string[] args)
     {
@@ -40,7 +40,10 @@ internal static class Program
         int passes = int.Parse(Option("passes", "3"), CultureInfo.InvariantCulture);
         string scratch = Option("scratch", Path.GetTempPath());
         const int K = 10;
+        Engines.Oversample = float.Parse(Option("oversample", "0"), CultureInfo.InvariantCulture);
+        Engines.Quantization = Option("quant", "none") switch { "8" => OneIndex.Vectors.VectorQuantization.Scalar8, "4" => OneIndex.Vectors.VectorQuantization.Scalar4, "1" => OneIndex.Vectors.VectorQuantization.OneBit, _ => OneIndex.Vectors.VectorQuantization.None };
         OneIndex.Vectors.HnswBuilder.KeepPruned = Option("keep-pruned", "0") == "1";
+        OneIndex.Vectors.HnswBuilder.Layer0EfFactor = float.Parse(Option("ef0", "1.5"), CultureInfo.InvariantCulture);
 
         JsonElement manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, "manifest.json"))).RootElement;
         int dims = manifest.GetProperty("dimensions").GetInt32();
@@ -54,6 +57,11 @@ internal static class Program
         for (int q = 0; q < queryCount; q++)
         {
             exact[q] = [.. truthTop[q]];
+        }
+
+        if (Option("mode", "search") == "filtered")
+        {
+            return FilteredRun.Run(data, count, dims, queries, Option("selectivities", "0.5,0.1,0.01,0.001"), Option("efs", "100"), float.Parse(Option("flat-factor", "20"), CultureInfo.InvariantCulture), int.Parse(Option("cap", "32"), CultureInfo.InvariantCulture), m, efc, scratch);
         }
 
         if (Option("mode", "search") == "merge")
@@ -70,9 +78,14 @@ internal static class Program
         long peakRss = Process.GetCurrentProcess().PeakWorkingSet64;
         Console.WriteLine($"# engine {engine.Name} n={count} d={dims} M={m} efConstruction={efc} build {buildSeconds:F1}s managed-after-build {managed >> 20} MB peak-RSS {peakRss >> 20} MB index-bytes {engine.IndexBytes} (data {(long)count * dims * 4 >> 20} MB)");
 
+        if (Option("grid", "") is { Length: > 0 } grid)
+        {
+            _efGrid = grid.Split(',').Select(int.Parse).ToArray();
+        }
+
         var ids = new int[K];
         var results = new List<(int Ef, double Recall, double Qps)>();
-        foreach (int ef in EfGrid)
+        foreach (int ef in _efGrid)
         {
             if (ef < K)
             {

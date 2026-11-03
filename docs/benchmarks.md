@@ -135,10 +135,43 @@ for the numeric column; Lucene.NET stores only the identifier. Phrase and Filter
 agree to within 2 and 4 documents for the tokenization reason in the next section. Terms rows differ by design: OneIndex prunes with
 block-max WAND and reports a lower bound.
 
-**Commit on arm64.** A small commit writes the buffered documents as a new segment (text, column, point, stored and identifier files) and
-fsyncs them together with the commit file: 9 fsyncs per commit against 8 for Lucene.NET, counted with a system-call trace on x64. On the
-x64 disk that is faster than Lucene.NET; on the M2 it is 7 ms slower and the rest of the gap was not found. Fsyncing the segment files one
-after another instead of together did not help (23.7 to 31.2 ms against 30.0 to 31.8 ms, interleaved, noisy).
+**Commit on arm64.** A small commit used to write the buffered documents as a new segment of seven files (text, column, point, stored,
+identifier and length parts) and fsync them together with the commit file: 8 new files and 8 fsyncs per commit against 4 files for
+Lucene.NET (a compound `.cfs`, `.cfe`, `.si` and the segments file). On an M2 under APFS one flush-to-disk of a 30 KB file measured
+about 2.9 ms, eight in sequence 22 ms (7 ms in parallel), so the cost of a commit there is the number of files times the cost of making
+each durable, and the x64 NVMe disk hides it. A flush now writes its text, column, point, stored and identifier parts into one pack
+file (commit format 3, docs/commit-format.md), so a small commit adds two files: the pack and the commit file. Durability is
+unchanged: the same files are fsynced before the commit file is renamed, and the pack is checksummed like any segment file. Fsyncing
+the files one after another instead of together did not help (23.7 to 31.2 ms against 30.0 to 31.8 ms, interleaved, noisy).
+
+Final rows for that change, from the corpus driver on 50,000 abstracts (one bulk commit of 49,000, five commits of 200), three runs
+per engine interleaved on each machine, the median of the three medians, run alone under the benchmark queue. "Before" is the same
+harness on the code before the pack file.
+
+| Row | machine | OneIndex now | OneIndex before | Lucene.NET | ratio now | ratio before |
+|---|---|---|---|---|---|---|
+| commit (median ms) | x64 | 23.5 | 30.3 | 40.7 | 0.58 | 0.74 |
+| commit (median ms) | arm64 | 19.5 | 23.7 | 16.5 | **1.18** | 1.43 |
+| index (docs/s, incl. bulk commit) | x64 | 38,360 | 39,490 | 17,960 | 0.47 (inverted) | 0.45 |
+| index (docs/s, incl. bulk commit) | arm64 | 39,680 | 38,670 | 16,490 | 0.42 (inverted) | 0.43 |
+| Terms1 (ms/query) | x64 | 0.155 | 0.157 | 0.193 | 0.80 | 0.81 |
+| Terms1 (ms/query) | arm64 | 0.159 | 0.160 | 0.157 | 1.01 | 1.02 |
+| files added per small commit | both | 2 | 8 | 4 | | |
+| allocated bytes per document, index row | both | 5,694 | 5,091 | 21,040 | | |
+| peak resident set, x64 (MiB) | x64 | 238 | 237 | 218 | | |
+| index size, index row (bytes) | both | 11.64 M | 11.64 M | 8.16 M | | |
+
+Where a small commit spent its time on the M2 before the change (milliseconds, indicative, a stopwatch around each step on a loaded
+host): the flush 13 to 30 (text parts 6 to 11, stored 3 to 4, columns 0.3 to 11, and 7 to 13 of syncing the parts), the commit
+protocol about 4 (temporary file sync 1.3 to 3, final sync 1.1 to 3). The syncs of seven part files were the largest single share. With
+one pack file the whole five-commit sequence measured 21.7 ms against Lucene.NET's 22.0 on that host, and 19.5 against 16.5 in the
+final rows above; the steps were not timed again after the change.
+
+The arm64 commit row is inside the 1.25 bar and not yet at 1.0: what remains is one pack plus one commit file (two fsyncs and a
+rename) against Lucene.NET's one compound file plus its small files, and the segment's own write. Index throughput on x64 is within
+run-to-run spread of before (38.4k against 39.5k; the three runs span 36.6k to 38.5k and 38.7k to 39.6k), and the 12% rise in
+allocation per document is the pack buffer. Peak resident set was not captured on arm64. Load average before / after: x64 3.05 /
+1.96 (one-minute), arm64 1.81 / 1.68, flat during the runs.
 
 **Phrase on x64 and the segment count.** The same index merged to one segment answers Phrase in 0.169 ms (Lucene.NET 0.165 to 0.168); with
 the 12 segments of the settled index it is 0.20, so about 3 microseconds per segment per query is the per-segment cost of looking up two

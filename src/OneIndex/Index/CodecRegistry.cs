@@ -34,6 +34,9 @@ public static class SegmentParts
     /// <summary>The HNSW graphs of the vector fields.</summary>
     public const string Graph = "hnsw";
 
+    /// <summary>The compressed copies (int8, int4, sign-bit) of the vector fields that ask for one, which graph search runs on.</summary>
+    public const string Quantized = "vecq";
+
     /// <summary>The delete bitmap of one generation.</summary>
     public const string Deletes = "deletes";
 
@@ -66,6 +69,8 @@ public static class CodecRegistry
         new(SegmentParts.Vectors, 1),
 
         new(SegmentParts.Graph, 1),
+
+        new(SegmentParts.Quantized, 1),
 
         new(SegmentParts.Deletes, 1),
 

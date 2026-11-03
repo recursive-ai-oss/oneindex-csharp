@@ -18,6 +18,13 @@ public sealed class FullTextAttribute : Attribute
 
     /// <summary>The name of a registered analyzer; overrides <see cref="Language"/>. Default none.</summary>
     public string? Analyzer { get; set; }
+
+    /// <summary>
+    /// Whether a cross-encoder reranker reads this field. Default <see langword="false"/>. When any field of a type sets it and the index has a reranker
+    /// (<see cref="Vectors.SearchRerankers"/>), searches of plain text rerank their best hits without a call to <c>Rerank()</c>, reading these fields
+    /// (in declaration order, joined by a space) as the passage; <c>WithoutRerank()</c> turns that off. See docs/rerank.md.
+    /// </summary>
+    public bool Rerank { get; set; }
 }
 
 /// <summary>Marks a property as a keyword: the whole value is matched exactly (tags, categories, codes).</summary>
@@ -71,6 +78,30 @@ public sealed class VectorAttribute : Attribute
 
     /// <summary>A segment with fewer vectors than this is searched exactly and gets no graph. Default 1000.</summary>
     public int FlatThreshold { get; set; } = 1000;
+
+    /// <summary>
+    /// A compressed copy for graph search: <see cref="Vectors.VectorQuantization.Scalar8"/> (4 times smaller), <see cref="Vectors.VectorQuantization.Scalar4"/>
+    /// (8 times) or the sign-bit <see cref="Vectors.VectorQuantization.OneBit"/> (32 times, cosine or dot product only). The full-precision
+    /// vectors are kept and rerank the candidates. Default <see cref="Vectors.VectorQuantization.None"/>.
+    /// </summary>
+    public Vectors.VectorQuantization Quantization { get; set; }
+
+    /// <summary>
+    /// With a <see cref="Quantization"/>: the candidates kept by compressed distance, as a multiple of the results asked for, before the
+    /// full-precision rerank, 1 to 100. Default 0, which means the codec's own default (2, 3 and 5 for the three codecs).
+    /// </summary>
+    public float Oversample { get; set; }
+}
+
+/// <summary>
+/// Marks an <see cref="Index.SparseVector"/> property as a learned sparse vector (token to weight), searched by dot product. With
+/// <see cref="From"/> the index encodes the named text member automatically when a sparse encoder is configured (docs/sparse.md).
+/// </summary>
+[AttributeUsage(AttributeTargets.Property | AttributeTargets.Field, AllowMultiple = false, Inherited = true)]
+public sealed class SparseAttribute : Attribute
+{
+    /// <summary>The name of a text property to encode automatically. Default none: the application supplies the vector.</summary>
+    public string? From { get; set; }
 }
 
 /// <summary>

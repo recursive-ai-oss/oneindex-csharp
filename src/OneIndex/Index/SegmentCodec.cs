@@ -253,7 +253,7 @@ public sealed class SegmentReaderContext
         IRangeReader reader;
         try
         {
-            reader = Storage.OpenRead(file.FileName, cancellationToken);
+            reader = PackedFiles.Open(Storage, file, cancellationToken);
         }
         catch (FileNotFoundException e)
         {
@@ -300,6 +300,22 @@ public sealed class SegmentFileSink
     /// </summary>
     internal bool DeferSync { get; init; }
 
+    /// <summary>
+    /// With <see cref="DeferSync"/>, keeps the small parts of a text segment in memory and writes them into one pack file in
+    /// <see cref="SyncPending"/>, so a small flush creates and fsyncs one file instead of seven. A part that would take the memory in
+    /// use past <see cref="PackLimitBytes"/> goes to its own file as before. Default off.
+    /// </summary>
+    internal bool Pack { get; init; }
+
+    /// <summary>The most bytes of parts held back for the pack file.</summary>
+    internal const long PackLimitBytes = 4L * 1024 * 1024;
+
+    private readonly List<MemoryPartWriter> _memoryParts = [];
+    private long _memoryBytes;
+
+    private static bool IsPackable(string part) => part is SegmentParts.Terms or SegmentParts.Postings or SegmentParts.Lengths
+        or SegmentParts.Columns or SegmentParts.Points or SegmentParts.Stored or SegmentParts.Ids;
+
     internal IReadOnlyList<SegmentFile> Files => _files;
 
     internal IReadOnlyList<string> CreatedNames => _created;
@@ -334,13 +350,24 @@ public sealed class SegmentFileSink
         }
 
         string name = FileNameFor(part);
-        if (_created.Contains(name))
+        if (_created.Contains(name) || _memoryParts.Exists(m => string.Equals(m.Name, name, StringComparison.Ordinal)))
         {
             throw new ArgumentException($"Part '{part}' is already being written for segment {_segmentName}.", nameof(part));
         }
 
-        IStorageWriter writer = _storage.Create(name, cancellationToken);
-        _created.Add(name);
+        IStorageWriter writer;
+        if (Pack && DeferSync && IsPackable(part))
+        {
+            var held = new MemoryPartWriter(this, name);
+            _memoryParts.Add(held);
+            writer = held;
+        }
+        else
+        {
+            writer = _storage.Create(name, cancellationToken);
+            _created.Add(name);
+        }
+
         return new SegmentFileBuilder(this, part, name, codec, new IndexFileWriter(writer, IndexFile.Magic(magicTag), version));
     }
 
@@ -351,9 +378,11 @@ public sealed class SegmentFileSink
     /// <summary>Syncs and closes every file completed with deferred sync.</summary>
     internal void SyncPending(CancellationToken cancellationToken)
     {
-        IStorageWriter[] writers = [.. _unsynced];
+        IStorageWriter[] writers;
         try
         {
+            PackHeldParts(cancellationToken);
+            writers = [.. _unsynced];
             if (writers.Length > 1 && _storage.SupportsConcurrentSync)
             {
                 // Concurrent fsyncs of different files let the file system fold their journal flushes together.
@@ -379,6 +408,54 @@ public sealed class SegmentFileSink
         }
     }
 
+    // Writes the parts still held in memory into one pack file: the frame, then each part's complete bytes (its own header and
+    // footer included, so its checksum stays checkable), recording where each landed. The pack is left open and unsynced like
+    // any other deferred file. A single held part is simply written as its own file.
+    private void PackHeldParts(CancellationToken cancellationToken)
+    {
+        List<MemoryPartWriter> held = _memoryParts.FindAll(static m => !m.Spilled);
+        if (held.Count == 0)
+        {
+            return;
+        }
+
+        if (held.Count == 1)
+        {
+            held[0].Spill(cancellationToken);
+            return;
+        }
+
+        string packName = FileNameFor("pack");
+        IStorageWriter file = _storage.Create(packName, cancellationToken);
+        _created.Add(packName);
+        var pack = new IndexFileWriter(file, IndexFile.Magic(PackedFiles.MagicTag), PackedFiles.FormatVersion);
+        var placed = new Dictionary<string, long>(StringComparer.Ordinal);
+        foreach (MemoryPartWriter m in held)
+        {
+            placed[m.Name] = pack.Position;
+            pack.Write(m.Bytes, cancellationToken);
+        }
+
+        pack.FinishUnsynced(out IStorageWriter open, cancellationToken);
+        for (int i = 0; i < _files.Count; i++)
+        {
+            SegmentFile f = _files[i];
+            if (placed.TryGetValue(f.FileName, out long offset))
+            {
+                _files[i] = f with { FileName = packName, Offset = offset };
+            }
+        }
+
+        foreach (MemoryPartWriter m in held)
+        {
+            _unsynced.Remove(m);
+        }
+
+        _unsynced.Add(open);
+        _memoryParts.Clear();
+        _memoryBytes = 0;
+    }
+
     /// <summary>Closes files that were completed but not synced (after a failure), so they can be deleted.</summary>
     internal void AbortPending()
     {
@@ -391,6 +468,75 @@ public sealed class SegmentFileSink
     }
 
     internal void Account(long bytes) => _onBytes?.Invoke(bytes);
+
+    /// <summary>A part's bytes held in memory until the pack is written, or spilled to a file of its own once memory is over the limit.</summary>
+    private sealed class MemoryPartWriter(SegmentFileSink sink, string name) : IStorageWriter
+    {
+        private byte[] _buffer = new byte[4096];
+        private int _length;
+        private IStorageWriter? _file;
+
+        public string Name => name;
+
+        public bool Spilled => _file is not null;
+
+        public ReadOnlySpan<byte> Bytes => _buffer.AsSpan(0, _length);
+
+        public long Position => _file?.Position ?? _length;
+
+        public void Write(ReadOnlySpan<byte> data, CancellationToken cancellationToken = default)
+        {
+            if (_file is not null)
+            {
+                _file.Write(data, cancellationToken);
+                return;
+            }
+
+            if (_buffer.Length - _length < data.Length)
+            {
+                Array.Resize(ref _buffer, (int)Math.Max((long)_buffer.Length * 2, (long)_length + data.Length));
+            }
+
+            data.CopyTo(_buffer.AsSpan(_length));
+            _length += data.Length;
+            sink._memoryBytes += data.Length;
+            if (sink._memoryBytes > PackLimitBytes)
+            {
+                Spill(cancellationToken);
+            }
+        }
+
+        public ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+        {
+            Write(data.Span, cancellationToken);
+            return ValueTask.CompletedTask;
+        }
+
+        /// <summary>Moves what was written so far into a file of its own; later writes go there.</summary>
+        public void Spill(CancellationToken cancellationToken)
+        {
+            if (_file is not null)
+            {
+                return;
+            }
+
+            _file = sink._storage.Create(name, cancellationToken);
+            sink._created.Add(name);
+            _file.Write(_buffer.AsSpan(0, _length), cancellationToken);
+            sink._memoryBytes -= _length;
+            sink._memoryParts.Remove(this);
+            _buffer = [];
+            _length = 0;
+        }
+
+        public void Sync(CancellationToken cancellationToken = default) => _file?.Sync(cancellationToken);
+
+        public ValueTask SyncAsync(CancellationToken cancellationToken = default) => _file?.SyncAsync(cancellationToken) ?? ValueTask.CompletedTask;
+
+        public void Dispose() => _file?.Dispose();
+
+        public ValueTask DisposeAsync() => _file?.DisposeAsync() ?? ValueTask.CompletedTask;
+    }
 }
 
 /// <summary>One segment file being written: header, body, footer and fsync are handled here.</summary>

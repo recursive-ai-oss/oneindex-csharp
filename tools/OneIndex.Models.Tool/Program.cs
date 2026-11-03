@@ -4,6 +4,10 @@
 //   parity   --model <file> --vocab <vocab.txt> --texts <texts.jsonl> --reference <vectors.f32> [--role document|query] [--prefix <text>]
 //   beir     --model <file> --vocab <vocab.txt> --data <beir root> --set <name> --work <dir> [--instruction on|off] [--budget-seconds N]
 //            [--threads N] [--run <file>]
+//   pair-ids      --vocab <vocab.txt> --pairs <pairs.jsonl>: pair token ids against the reference tokenizer's
+//   rerank-parity --model <file> --vocab <vocab.txt> --pairs <scored.jsonl> --reference <scores.f32> [--threads N]
+//   rerank-beir   --model <file> --vocab <vocab.txt> --data <beir root> --set <name> --work <dir> [--embedder <onemodel> [--vectors <dir>]]: BM25
+//                 (and hybrid) top-100 reranked by the cross-encoder, nDCG@10 before and after; resumable
 //   hybrid   as beir (the corpus vectors of a finished beir run are reused), plus --out <dir>: BM25, dense (exact), and hybrid runs
 //            through the engine's own query objects; one run file per configuration
 //
@@ -19,6 +23,7 @@ using OneIndex.Index;
 using OneIndex.Search;
 using OneIndex.Storage;
 using OneIndex.Models;
+using OneIndex.Models.Tool;
 using OneIndex.Vectors;
 using RecursiveAI.OneModel.Format;
 
@@ -51,8 +56,22 @@ switch (args[0])
     case "beir":
         return Beir();
 
+    case "sparse-parity":
+        return SparseCommands.Parity(n => options.GetValueOrDefault(n));
+
+    case "sparse-beir":
+        return SparseCommands.Beir(n => options.GetValueOrDefault(n));
+
+    case "sparse-hybrid":
+        return SparseCommands.Hybrid(n => options.GetValueOrDefault(n));
+
     case "hybrid":
         return HybridGate();
+
+    case "pair-ids":
+    case "rerank-parity":
+    case "rerank-beir":
+        return RerankCommands.Run(args[0], options);
 
     default:
         Console.Error.WriteLine("unknown command");

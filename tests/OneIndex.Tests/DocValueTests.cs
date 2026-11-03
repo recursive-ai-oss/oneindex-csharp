@@ -204,8 +204,8 @@ public sealed class DocValueTests
             Assert.Equal(1, b.SegmentCount);
             foreach (string part in new[] { SegmentParts.Columns, SegmentParts.Points, SegmentParts.Stored })
             {
-                byte[] x = TestHelpers.ReadAll(merged, a.GetSegment(0).Info.FindPart(part)!.FileName);
-                byte[] y = TestHelpers.ReadAll(flushed, b.GetSegment(0).Info.FindPart(part)!.FileName);
+                byte[] x = TestHelpers.ReadPart(merged, a.GetSegment(0).Info.FindPart(part)!);
+                byte[] y = TestHelpers.ReadPart(flushed, b.GetSegment(0).Info.FindPart(part)!);
                 Assert.True(x.AsSpan().SequenceEqual(y), $"part '{part}' differs between merge and flush for seed {seed}");
             }
         }
@@ -563,6 +563,10 @@ public sealed class DocValueTests
     {
         // A length prefix that fits the document before the prefix itself is read, but not after (found by the stored-source fuzz target).
         string path = Path.Combine(Path.GetDirectoryName(ThisFile())!, "..", "..", "testdata", "fuzz", "stored-block-length.bin");
+        DocValuesTarget.Run(File.ReadAllBytes(path), 2);
+
+        // A field-name table that lists an empty name (found by the same target once sparse fields joined its corpus).
+        path = Path.Combine(Path.GetDirectoryName(ThisFile())!, "..", "..", "testdata", "fuzz", "stored-empty-field-name.bin");
         DocValuesTarget.Run(File.ReadAllBytes(path), 2);
     }
 
