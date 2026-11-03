@@ -222,10 +222,19 @@ public class StaticIndexTests
             }
 
             StaticIndexBuilder.Build<StaticDoc>(idx, stat, new StaticBuildOptions { ChunkBytes = 4096 });
-            string victim = Directory.EnumerateFiles(stat).First(static f => !f.EndsWith(".json", StringComparison.Ordinal) && !Path.GetFileName(f).StartsWith("commit-", StringComparison.Ordinal));
-            byte[] bytes = File.ReadAllBytes(victim);
-            bytes[bytes.Length / 2] ^= 0x40;
-            File.WriteAllBytes(victim, bytes);
+            // Directory enumeration order differs between file systems, so no single file is picked: one byte is flipped in every 4 KiB
+            // chunk of every part file, and whichever chunk the queries fetch first must be refused.
+            foreach (string victim in Directory.EnumerateFiles(stat).Where(static f => !f.EndsWith(".json", StringComparison.Ordinal) && !Path.GetFileName(f).StartsWith("commit-", StringComparison.Ordinal)))
+            {
+                byte[] bytes = File.ReadAllBytes(victim);
+                for (int at = bytes.Length / 2 % 4096; at < bytes.Length; at += 4096)
+                {
+                    bytes[at] ^= 0x40;
+                }
+
+                File.WriteAllBytes(victim, bytes);
+            }
+
             StaticIndex<StaticDoc> remote = await StaticIndex.OpenAsync<StaticDoc>(new DirectoryStaticSource(stat));
             await Assert.ThrowsAnyAsync<CorruptIndexException>(async () =>
             {

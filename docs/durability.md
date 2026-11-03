@@ -17,7 +17,7 @@ What OneIndex promises about your data when a process is killed, a disk call fai
 - A local file system on one machine that honours `fsync` and atomic `rename`: ext4, XFS, btrfs, APFS, NTFS. Network and FUSE file systems are not supported: they may not implement the exclusive lock, or may lose a rename they acknowledged.
 - The index directory is changed only by OneIndex. Files edited or truncated by something else are detected by checksum when read (promise 4), but the index is then damaged.
 - Hardware that does not lie about flushing. A disk that acknowledges a flush it did not perform breaks every database's promises, this one's included.
-- Windows locking and share-mode behaviour follow the documentation and have not been run; Linux (x64) and macOS (arm64) are tested. See [processes.md](processes.md).
+- Linux (x64, arm64), macOS (arm64) and Windows (x64, NTFS) run the full test suite on every change; the kill and fault-injection campaigns run on Linux and macOS only. See [processes.md](processes.md).
 
 ## What is not promised
 
