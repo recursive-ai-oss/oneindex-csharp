@@ -23,6 +23,7 @@ const { chromium } = require('playwright-core')
 
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.json': 'application/json', '.html': 'text/html', '.dll': 'application/octet-stream', '.pdb': 'application/octet-stream' }
 let sent = { bytes: 0, requests: 0, indexBytes: 0, appBytes: 0 }
+let perFile = new Map() // index bytes by file (chunk suffix removed), for the report
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost')
@@ -38,7 +39,7 @@ const server = http.createServer((req, res) => {
   if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404).end(); return }
   const data = fs.readFileSync(file)
   sent.requests++; sent.bytes += data.length
-  if (root === appDir) sent.appBytes += data.length; else sent.indexBytes += data.length
+  if (root === appDir) sent.appBytes += data.length; else { sent.indexBytes += data.length; const f = rel.replace(/\.c\d+$/, ''); perFile.set(f, (perFile.get(f) ?? 0) + data.length) }
   res.writeHead(200, { 'content-type': types[path.extname(file)] ?? 'application/octet-stream', 'content-length': data.length, 'access-control-allow-origin': '*', 'cache-control': 'no-store' })
   res.end(data)
 })
@@ -51,6 +52,7 @@ const report = []
 let failed = false
 for (const mode of modes) {
   sent = { bytes: 0, requests: 0, indexBytes: 0, appBytes: 0 }
+  perFile = new Map()
   const context = await browser.newContext()
   const page = await context.newPage()
   const lines = []
@@ -78,7 +80,20 @@ for (const mode of modes) {
   const median = latencies.length ? latencies[Math.floor(latencies.length / 2)] : 0
   const p95 = latencies.length ? latencies[Math.min(latencies.length - 1, Math.floor(latencies.length * 0.95))] : 0
   const bytesPer = stats.map((s) => s[2]); const reqPer = stats.map((s) => s[3])
-  const row = { mode, queries: results.length, compared, matched, ok: compared > 0 && matched === compared && !lines.some((l) => l.startsWith('PAGEERROR')),
+  // Per query kind (the second field of a result line): median latency, average bytes and requests.
+  const kinds = {}
+  for (const r of results) {
+    const [i, kind] = r.split('|')
+    const st = stats.find((s) => s[0] === Number(i))
+    if (!st || Number(i) === 0) continue // the first query pays for opening; it is reported as firstQueryBytes
+    ;(kinds[kind] ??= []).push(st)
+  }
+  const byKind = Object.fromEntries(Object.entries(kinds).map(([k, v]) => {
+    const ms = v.map((s) => s[1]).sort((a, b) => a - b)
+    return [k, { n: v.length, medianMs: ms[Math.floor(ms.length / 2)], avgBytes: Math.round(v.reduce((a, s) => a + s[2], 0) / v.length), avgRequests: +(v.reduce((a, s) => a + s[3], 0) / v.length).toFixed(1) }]
+  }))
+  const topFiles = [...perFile.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
+  const row = { mode, byKind, topFiles, queries: results.length, compared, matched, ok: compared > 0 && matched === compared && !lines.some((l) => l.startsWith('PAGEERROR')),
     wallMs: wall, medianMs: median, p95Ms: p95, bytesPerQueryAvg: bytesPer.length ? Math.round(bytesPer.reduce((a, b) => a + b, 0) / bytesPer.length) : 0,
     requestsPerQueryAvg: reqPer.length ? +(reqPer.reduce((a, b) => a + b, 0) / reqPer.length).toFixed(2) : 0, firstQueryBytes: bytesPer[0] ?? 0,
     total, indexBytesSent: sent.indexBytes, appPayloadBytes: sent.appBytes, diffs: diffs.slice(0, 3) }
