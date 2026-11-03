@@ -252,4 +252,15 @@ public class MaxSimTests
         packed[0] = 99;
         Assert.Throws<FormatException>(() => MultiVector.Unpack(packed, out _, out _));
     }
+
+    [Fact]
+    public void ToRowsRefusesAHeaderWithTokensAndNoValues()
+    {
+        // Found by the static fuzz target: the size check passes for any token count when the dimension is zero.
+        byte[] header = new byte[8];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(header, 0xFFFF_FFFFu);
+        Assert.Throws<FormatException>(() => MultiVector.ToRows(header));
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(header, 1u << 30);
+        Assert.Throws<FormatException>(() => MultiVector.ToRows(header));
+    }
 }

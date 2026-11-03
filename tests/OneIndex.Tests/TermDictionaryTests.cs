@@ -512,4 +512,37 @@ public sealed class TermDictionaryTests
 
         public int GetHashCode(byte[] obj) => obj.Length;
     }
+
+    [Theory]
+    [InlineData(5, 3000)]
+    [InlineData(6, 200)]
+    public void PagedReaderAnswersLikeTheResidentOne(int seed, int vocabulary)
+    {
+        var rng = new Random(seed);
+        string[] words = TextCorpus.MakeVocabulary(rng, vocabulary);
+        var sorted = new SortedSet<byte[]>(TextCorpus.ByteOrder);
+        foreach (string w in words)
+        {
+            sorted.Add(Encoding.UTF8.GetBytes(w));
+        }
+
+        var storage = new MemoryStorage();
+        WriteTerms(storage, sorted, rng, 2);
+        using TextSegmentReader resident = TextSegmentReader.Open(storage, "d.terms", "d.postings", "d.lengths");
+        using TextSegmentReader paged = TextSegmentReader.Open(storage.OpenRead("d.terms"), storage.OpenRead("d.postings"), storage.OpenRead("d.lengths"), null, paged: true, default);
+        ITextFieldReader a = resident.GetTextField("f")!;
+        ITextFieldReader b = paged.GetTextField("f")!;
+        Assert.True(Collect(b.GetTerms(default)).SequenceEqual(Collect(a.GetTerms(default)), new ByteArrayEquality()));
+        foreach (byte[] t in sorted.Take(400))
+        {
+            Assert.True(a.TryGetTerm(t, out TermInfo ia));
+            Assert.True(b.TryGetTerm(t, out TermInfo ib));
+            Assert.Equal(ia, ib);
+            Assert.Equal(a.GetFieldLength(0), b.GetFieldLength(0));
+            byte[] prefix = t.AsSpan(0, Math.Min(2, t.Length)).ToArray();
+            Assert.True(Collect(b.GetTerms(prefix)).SequenceEqual(Collect(a.GetTerms(prefix)), new ByteArrayEquality()));
+        }
+
+        Assert.False(b.TryGetTerm("zzzzzzzz"u8, out _));
+    }
 }

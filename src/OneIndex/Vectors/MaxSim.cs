@@ -118,6 +118,12 @@ public static class MultiVector
             throw new FormatException("The packed multi-vector's size does not match its header.");
         }
 
+        // A header with tokens but no values would pass the size check at any count; ToRows would then allocate a row per token.
+        if (c > int.MaxValue || d > int.MaxValue || (c > 0 && d == 0))
+        {
+            throw new FormatException("The packed multi-vector's header is out of range.");
+        }
+
         count = (int)c;
         dimension = (int)d;
         var values = new float[(int)(c * d)];

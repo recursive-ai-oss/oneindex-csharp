@@ -83,6 +83,48 @@ public static class IndexFile
     }
 
     /// <summary>
+    /// Checks the frame of a file whose body is read by page: the header and the footer, but not the checksum. Used on storage where
+    /// every chunk is verified against a manifest as it arrives, so a whole-file checksum would fetch the file for nothing.
+    /// </summary>
+    /// <param name="fileName">The file name, for the exception.</param>
+    /// <param name="length">The file length.</param>
+    /// <param name="header">The first <see cref="HeaderLength"/> bytes.</param>
+    /// <param name="footer">The last <see cref="FooterLength"/> bytes.</param>
+    /// <param name="magic">The expected file-type magic.</param>
+    /// <param name="maxVersion">The newest format version this reader understands.</param>
+    /// <returns>The format version found in the header.</returns>
+    internal static int ValidateFrame(string fileName, long length, ReadOnlySpan<byte> header, ReadOnlySpan<byte> footer, uint magic, int maxVersion)
+    {
+        if (length < HeaderLength + FooterLength)
+        {
+            throw new CorruptIndexException(fileName, $"{length} bytes is shorter than a header and footer");
+        }
+
+        if (BinaryPrimitives.ReadUInt32LittleEndian(header) != magic)
+        {
+            throw new CorruptIndexException(fileName, "wrong magic: not a file of this type");
+        }
+
+        uint version = BinaryPrimitives.ReadUInt32LittleEndian(header[4..]);
+        if (BinaryPrimitives.ReadUInt32LittleEndian(footer) != FooterMagic)
+        {
+            throw new CorruptIndexException(fileName, "footer magic missing: the file is truncated or overwritten");
+        }
+
+        if (BinaryPrimitives.ReadUInt32LittleEndian(footer[4..]) != AlgorithmCrc32C)
+        {
+            throw new UnsupportedFormatException(fileName, "unknown checksum algorithm");
+        }
+
+        if (version == 0 || version > (uint)maxVersion)
+        {
+            throw new UnsupportedFormatException(fileName, $"format version {version} is not supported (newest understood: {maxVersion})");
+        }
+
+        return (int)version;
+    }
+
+    /// <summary>
     /// Reads and checks only the footer of a file, which is enough to tell that it is complete and is the file a commit recorded.
     /// </summary>
     /// <param name="reader">The open file.</param>

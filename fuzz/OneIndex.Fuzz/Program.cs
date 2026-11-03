@@ -19,6 +19,7 @@ internal static class Program
         ["analysis"] = AnalysisTarget.Run,
         ["terms"] = TextIndexTarget.RunTerms,
         ["postings"] = TextIndexTarget.RunPostings,
+        ["paged"] = TextIndexTarget.RunPaged,
         ["segment"] = SegmentTarget.Run,
         ["query"] = QueryTarget.Run,
         ["columns"] = DocValuesTarget.RunColumns,
@@ -63,6 +64,9 @@ internal static class Program
                     break;
                 case "postings":
                     TextIndexTarget.WriteSeeds(args[2], terms: false);
+                    break;
+                case "paged":
+                    TextIndexTarget.WritePagedSeeds(args[2]);
                     break;
                 case "segment":
                     SegmentTarget.WriteSeeds(args[2]);

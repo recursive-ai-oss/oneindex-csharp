@@ -19,6 +19,7 @@ Console.WriteLine($"open: {afterOpen} bytes in {source.Requests} requests");
 using JsonDocument doc = JsonDocument.Parse(queries);
 var kinds = new Dictionary<string, (int N, long Bytes, int Requests)>();
 var byFile = new Dictionary<string, long>();
+var byKindFile = new Dictionary<string, long>();
 int i = 0;
 foreach (JsonElement q in doc.RootElement.EnumerateArray())
 {
@@ -44,6 +45,10 @@ foreach (JsonElement q in doc.RootElement.EnumerateArray())
     {
         string ext = Path.GetExtension(f.Split(".c0")[0]);
         byFile[ext] = byFile.GetValueOrDefault(ext) + (i == 0 ? 0 : v);
+        if (i != 0)
+        {
+            byKindFile[kind + ext] = byKindFile.GetValueOrDefault(kind + ext) + v;
+        }
     }
 
     i++;
@@ -75,6 +80,12 @@ if (indexDir is not null)
     }
 
     Console.WriteLine($"equal to the ordinary index: {equal} of {compared} queries (vector queries use the IVF file and are not in the comparison)");
+}
+
+foreach (string kind in kinds.Keys.Where(static k => k != "first"))
+{
+    int n = kinds[kind].N;
+    Console.WriteLine($"  {kind,-10} per query, KB by file kind: " + string.Join(", ", byKindFile.Where(kv => kv.Key.StartsWith(kind + ".", StringComparison.Ordinal)).OrderByDescending(static kv => kv.Value).Select(kv => kv.Key[kind.Length..] + "=" + (kv.Value / n / 1024.0).ToString("F1", System.Globalization.CultureInfo.InvariantCulture))));
 }
 
 Console.WriteLine("later queries, bytes by file kind: " + string.Join(", ", byFile.OrderByDescending(static kv => kv.Value).Select(static kv => kv.Key + "=" + kv.Value / 1024 + "KB")));

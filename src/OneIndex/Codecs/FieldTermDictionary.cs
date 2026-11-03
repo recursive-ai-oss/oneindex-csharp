@@ -14,6 +14,7 @@ internal sealed class FieldTermDictionary
     private const int MaxArcsPerNode = 256;
     private readonly int _version;
     private readonly byte[] _data;
+    private readonly PagedBytes? _pages;
     private readonly int _fstStart;
     private readonly int _fstLength;
     private readonly int _root;
@@ -22,11 +23,12 @@ internal sealed class FieldTermDictionary
     private readonly int _samplesStart;
     private readonly long _sampleCount;
 
-    public FieldTermDictionary(string fileName, int version, byte[] data, int fstStart, int fstLength, int root, int tableStart, int tableLength, int samplesStart, long sampleCount, long termCount, long totalTermBytes, int maxTermBytes)
+    public FieldTermDictionary(string fileName, int version, PagedBytes body, int fstStart, int fstLength, int root, int tableStart, int tableLength, int samplesStart, long sampleCount, long termCount, long totalTermBytes, int maxTermBytes)
     {
         FileName = fileName;
         _version = version;
-        _data = data;
+        _data = body.Data;
+        _pages = body.IsPaged ? body : null;
         _fstStart = fstStart;
         _fstLength = fstLength;
         _root = root;
@@ -37,6 +39,11 @@ internal sealed class FieldTermDictionary
         TermCount = termCount;
         TotalTermBytes = totalTermBytes;
         MaxTermBytes = maxTermBytes;
+        if (_version < 2)
+        {
+            // Version 1 automata are read arc by arc in sequence, so there is no node extent to page by: read the automaton whole.
+            _pages?.Ensure(fstStart, fstLength);
+        }
     }
 
     public string FileName { get; }
@@ -201,6 +208,8 @@ internal sealed class FieldTermDictionary
             throw Corrupt("a node lies outside the automaton");
         }
 
+        // A node is at most 10 + 256 * 9 bytes; the first read finds its size, the second covers the rest of it.
+        _pages?.Ensure(_fstStart + node, 11);
         byte head = fst[node];
         view.IsFinal = (head & 1) != 0;
         view.CumWidth = ((head >> 1) & 3) + 1;
@@ -229,6 +238,8 @@ internal sealed class FieldTermDictionary
         {
             throw Corrupt("a node runs past the end of the automaton");
         }
+
+        _pages?.Ensure(_fstStart + node, view.Delta + ((long)view.ArcCount * view.DeltaWidth) - node);
     }
 
     // Reads arc i of a version 2 node: its label, the words before it, the words through it and its child. The node was bounds
@@ -351,6 +362,7 @@ internal sealed class FieldTermDictionary
                 throw Corrupt("term statistics sample is missing");
             }
 
+            _pages?.Ensure(_samplesStart + (group * 12), 12);
             ReadOnlySpan<byte> sample = _data.AsSpan(_samplesStart + (int)(group * 12), 12);
             long tablePos = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(sample);
             if (tablePos >= _tableLength)
@@ -368,6 +380,7 @@ internal sealed class FieldTermDictionary
         {
             c.Ordinal++;
             ReadEntryHead(table, ref c);
+            _pages?.Ensure(_tableStart + (long)c.Position, 10);
             ulong delta = ReadVarUInt(table, ref c.Position);
             if (delta > long.MaxValue || c.Offset + (long)delta < c.Offset)
             {
@@ -382,6 +395,8 @@ internal sealed class FieldTermDictionary
 
     private void ReadEntryHead(ReadOnlySpan<byte> table, ref InfoCursor c)
     {
+        // An entry is three varints of at most 10 bytes each.
+        _pages?.Ensure(_tableStart + (long)c.Position, 30);
         ulong df = ReadVarUInt(table, ref c.Position);
         ulong extra = ReadVarUInt(table, ref c.Position);
         if (df == 0 || df > int.MaxValue || extra > long.MaxValue / 2)

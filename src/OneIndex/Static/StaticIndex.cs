@@ -12,6 +12,13 @@ public sealed class StaticBuildOptions
     /// <summary>The chunk size in bytes, 1 KiB to 64 MiB. Default 16 KiB: a query fetches about the chunks it touches, so smaller chunks mean fewer bytes and more requests (docs/static-index.md has the measurements: on 30,000 abstracts a text query after the first costs 209 KB in 13 requests at 16 KiB and 675 KB in 3 requests at 256 KiB).</summary>
     public int ChunkBytes { get; init; } = 16 * 1024;
 
+    /// <summary>
+    /// The chunk size in bytes, 1 KiB to 64 MiB, of the files a query probes at scattered places: term dictionaries, postings, stored documents,
+    /// field lengths, identifier tables, columns, points and small-part packs. A lookup in these touches a few bytes in many places, so a smaller chunk
+    /// fetches less. Default 4 KiB. Set it equal to <see cref="ChunkBytes"/> for one size everywhere.
+    /// </summary>
+    public int ScatteredChunkBytes { get; init; } = 4 * 1024;
+
     /// <summary>The IVF settings of every vector field of the type. Default: cosine lists of 8-bit codes with full-precision rerank, about the square root of the count.</summary>
     public IvfOptions Ivf { get; init; } = new() { Storage = IvfStorage.EightBit };
 }
@@ -40,6 +47,8 @@ public static class StaticIndexBuilder
         options ??= new StaticBuildOptions();
         ArgumentOutOfRangeException.ThrowIfLessThan(options.ChunkBytes, 1024);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(options.ChunkBytes, 1 << 26);
+        ArgumentOutOfRangeException.ThrowIfLessThan(options.ScatteredChunkBytes, 1024);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(options.ScatteredChunkBytes, 1 << 26);
         Directory.CreateDirectory(outDirectory);
         if (File.Exists(Path.Combine(outDirectory, StaticManifest.FileName)))
         {
@@ -74,7 +83,7 @@ public static class StaticIndexBuilder
             }
 
             using IRangeReader reader = source.OpenRead(name, cancellationToken);
-            files.Add(WriteChunks(outDirectory, name, options.ChunkBytes, reader.Length, (offset, buffer) => reader.ReadExactly(offset, buffer, cancellationToken)));
+            files.Add(WriteChunks(outDirectory, name, IsScattered(name) ? options.ScatteredChunkBytes : options.ChunkBytes, options.ChunkBytes, reader.Length, (offset, buffer) => reader.ReadExactly(offset, buffer, cancellationToken)));
         }
 
         // Vector fields: an IVF file over the stored vectors, and the identifier of each vector.
@@ -108,9 +117,9 @@ public static class StaticIndexBuilder
                 var withMetric = new IvfOptions { Metric = m.Metric, Lists = o.Lists, Iterations = o.Iterations, Seed = o.Seed, Storage = o.Storage, TrainingPerList = o.TrainingPerList };
                 // The length comes from the stored vectors: an index built with another embedder may differ from the attribute.
                 byte[] ivf = IvfBuilder.Build(vectors.ToArray(), vectors.Count / ids.Count, withMetric);
-                files.Add(WriteChunks(outDirectory, IvfFileName(m.Name), options.ChunkBytes, ivf.Length, (offset, buffer) => ivf.AsSpan((int)offset, buffer.Length).CopyTo(buffer)));
+                files.Add(WriteChunks(outDirectory, IvfFileName(m.Name), options.ChunkBytes, options.ChunkBytes, ivf.Length, (offset, buffer) => ivf.AsSpan((int)offset, buffer.Length).CopyTo(buffer)));
                 byte[] table = IdTable(ids);
-                files.Add(WriteChunks(outDirectory, IdsFileName(m.Name), options.ChunkBytes, table.Length, (offset, buffer) => table.AsSpan((int)offset, buffer.Length).CopyTo(buffer)));
+                files.Add(WriteChunks(outDirectory, IdsFileName(m.Name), options.ChunkBytes, options.ChunkBytes, table.Length, (offset, buffer) => table.AsSpan((int)offset, buffer.Length).CopyTo(buffer)));
             }
         }
 
@@ -161,7 +170,11 @@ public static class StaticIndexBuilder
         return result;
     }
 
-    private static StaticFile WriteChunks(string dir, string name, int chunkBytes, long length, Action<long, Span<byte>> read)
+    private static bool IsScattered(string name) => name.EndsWith(".terms", StringComparison.Ordinal) || name.EndsWith(".lengths", StringComparison.Ordinal)
+        || name.EndsWith(".ids", StringComparison.Ordinal) || name.EndsWith(".columns", StringComparison.Ordinal) || name.EndsWith(".points", StringComparison.Ordinal)
+        || name.EndsWith(".pack", StringComparison.Ordinal) || name.EndsWith(".postings", StringComparison.Ordinal) || name.EndsWith(".stored", StringComparison.Ordinal);
+
+    private static StaticFile WriteChunks(string dir, string name, int chunkBytes, int manifestChunkBytes, long length, Action<long, Span<byte>> read)
     {
         long chunks = length == 0 ? 0 : ((length - 1) / chunkBytes) + 1;
         var crcs = new List<uint>();
@@ -175,7 +188,7 @@ public static class StaticIndexBuilder
             File.WriteAllBytes(Path.Combine(dir, StaticManifest.ChunkName(name, chunks, c)), span.ToArray());
         }
 
-        return new StaticFile(name, length, crcs);
+        return new StaticFile(name, length, crcs, chunkBytes == manifestChunkBytes ? 0 : chunkBytes);
     }
 }
 
@@ -222,7 +235,7 @@ public sealed class StaticIndex<T>
     /// <summary>The chunk storage, with its counters.</summary>
     public ChunkedStaticStorage Storage { get; }
 
-    /// <summary>Chunks fetched after the missing one, in the same file. Default 1.</summary>
+    /// <summary>Chunks fetched after the missing one, in the same file, for the IVF and vector files, which are read in runs; other files fetch only the chunk a query is missing. Default 1.</summary>
     public int ReadAhead { get; }
 
     /// <summary>How many times queries ran against missing chunks and had to run again, since opening.</summary>
@@ -249,7 +262,7 @@ public sealed class StaticIndex<T>
             {
                 Retries++;
                 int last = ChunkCount(miss.File) - 1;
-                for (int c = miss.Chunk; c <= Math.Min(last, miss.Chunk + ReadAhead); c++)
+                for (int c = miss.Chunk; c <= Math.Min(last, miss.Chunk + (ReadsInRuns(miss.File) ? ReadAhead : 0)); c++)
                 {
                     await Storage.LoadChunkAsync(miss.File, c, cancellationToken).ConfigureAwait(false);
                 }
@@ -257,6 +270,16 @@ public sealed class StaticIndex<T>
         }
 
         throw new InvalidOperationException("The query kept asking for chunks; giving up after 100000 retries.");
+    }
+
+    // The IVF and vector files are read in runs (a probed list, a block of rows), so the next chunk is usually wanted too. Every other
+    // file is probed at scattered places in small chunks, where a neighbouring chunk is mostly wasted bytes (measured: read-ahead on
+    // postings and stored documents added 19 KB to a text query).
+    private static bool ReadsInRuns(string file)
+    {
+        int dot = file.LastIndexOf(".c", StringComparison.Ordinal);
+        string name = dot > 0 ? file[..dot] : file;
+        return name.EndsWith(".ivf", StringComparison.Ordinal) || name.EndsWith(".vectors", StringComparison.Ordinal);
     }
 
     private int ChunkCount(string file) => Storage.Manifest.Files.First(f => f.Name == file).ChunkCrcs.Count;

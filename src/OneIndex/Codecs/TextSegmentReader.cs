@@ -15,6 +15,7 @@ namespace OneIndex.Codecs;
 public sealed class TextSegmentReader : ITextFieldSource, IDisposable
 {
     private readonly IRangeReader _postings;
+    private readonly List<PagedBytes> _paged = [];
     private readonly Dictionary<string, TextFieldReader> _fields = new(StringComparer.Ordinal);
     private readonly List<string> _names = [];
 
@@ -79,6 +80,10 @@ public sealed class TextSegmentReader : ITextFieldSource, IDisposable
     /// <returns>The reader.</returns>
     /// <exception cref="CorruptIndexException">A file is damaged, inconsistent with the others, or over a limit.</exception>
     public static TextSegmentReader Open(IRangeReader terms, IRangeReader postings, IRangeReader lengths, IndexLimits? limits = null, CancellationToken cancellationToken = default)
+        => Open(terms, postings, lengths, limits, paged: false, cancellationToken);
+
+    /// <summary>As the public overload; with <paramref name="paged"/> the terms and lengths files are read by page when a lookup first touches them and their whole-file checksums are not computed (storage that checks every chunk already).</summary>
+    internal static TextSegmentReader Open(IRangeReader terms, IRangeReader postings, IRangeReader lengths, IndexLimits? limits, bool paged, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(terms);
         ArgumentNullException.ThrowIfNull(postings);
@@ -88,8 +93,19 @@ public sealed class TextSegmentReader : ITextFieldSource, IDisposable
         {
             string termsFile = terms.Name;
             string lengthsFile = lengths.Name;
-            byte[] termBytes = ReadResident(terms, limits, cancellationToken);
-            byte[] lengthBytes = ReadResident(lengths, limits, cancellationToken);
+            PagedBytes termBytes;
+            PagedBytes lengthBytes;
+            if (paged)
+            {
+                termBytes = PagedBytes.OnDemand(terms, limits);
+                lengthBytes = PagedBytes.OnDemand(lengths, limits);
+            }
+            else
+            {
+                termBytes = PagedBytes.Whole(ReadResident(terms, limits, cancellationToken));
+                lengthBytes = PagedBytes.Whole(ReadResident(lengths, limits, cancellationToken));
+            }
+
             IndexFile.ReadFooterChecksum(postings, cancellationToken);
             Span<byte> header = stackalloc byte[IndexFile.HeaderLength]; // fixed 8-byte buffer
             postings.ReadExactly(0, header, cancellationToken);
@@ -124,7 +140,7 @@ public sealed class TextSegmentReader : ITextFieldSource, IDisposable
             await IndexFile.ReadFooterChecksumAsync(postings, cancellationToken).ConfigureAwait(false);
             var header = new byte[IndexFile.HeaderLength];
             await postings.ReadExactlyAsync(0, header, cancellationToken).ConfigureAwait(false);
-            return Create(termsFile, postingsFile, lengthsFile, terms, lengths, postings, header, limits);
+            return Create(termsFile, postingsFile, lengthsFile, PagedBytes.Whole(terms), PagedBytes.Whole(lengths), postings, header, limits);
         }
         catch
         {
@@ -148,7 +164,14 @@ public sealed class TextSegmentReader : ITextFieldSource, IDisposable
     public void VerifyPostingsChecksum(CancellationToken cancellationToken = default) => IndexFile.VerifyChecksum(_postings, cancellationToken);
 
     /// <summary>Releases the postings file.</summary>
-    public void Dispose() => _postings.Dispose();
+    public void Dispose()
+    {
+        _postings.Dispose();
+        foreach (PagedBytes p in _paged)
+        {
+            p.Dispose();
+        }
+    }
 
     private static byte[] ReadResident(IRangeReader reader, IndexLimits limits, CancellationToken cancellationToken)
     {
@@ -180,10 +203,30 @@ public sealed class TextSegmentReader : ITextFieldSource, IDisposable
         }
     }
 
-    private static TextSegmentReader Create(string termsFile, string postingsFile, string lengthsFile, byte[] terms, byte[] lengths, IRangeReader postings, ReadOnlySpan<byte> postingsHeader, IndexLimits limits)
+    private static int ValidateBody(string fileName, PagedBytes body, uint magic, int newest)
     {
-        int termsVersion = IndexFile.Validate(termsFile, terms, TextSegmentWriter.TermsMagic, CodecRegistry.NewestVersion(SegmentParts.Terms));
-        IndexFile.Validate(lengthsFile, lengths, TextSegmentWriter.LengthsMagic, CodecRegistry.NewestVersion(SegmentParts.Lengths));
+        if (!body.IsPaged)
+        {
+            return IndexFile.Validate(fileName, body.Data, magic, newest);
+        }
+
+        // Paged: the frame only. The static index checks every chunk against its manifest, so no whole-file checksum is read.
+        byte[] data = body.Data;
+        body.Ensure(0, IndexFile.HeaderLength);
+        body.Ensure(Math.Max(0, data.Length - IndexFile.FooterLength), IndexFile.FooterLength);
+        if (data.Length < IndexFile.HeaderLength + IndexFile.FooterLength)
+        {
+            throw new CorruptIndexException(fileName, $"{data.Length} bytes is shorter than a header and footer");
+        }
+
+        return IndexFile.ValidateFrame(fileName, data.Length, data.AsSpan(0, IndexFile.HeaderLength), data.AsSpan(data.Length - IndexFile.FooterLength), magic, newest);
+    }
+
+    private static TextSegmentReader Create(string termsFile, string postingsFile, string lengthsFile, PagedBytes termsBody, PagedBytes lengthsBody, IRangeReader postings, ReadOnlySpan<byte> postingsHeader, IndexLimits limits)
+    {
+        byte[] terms = termsBody.Data;
+        int termsVersion = ValidateBody(termsFile, termsBody, TextSegmentWriter.TermsMagic, CodecRegistry.NewestVersion(SegmentParts.Terms));
+        ValidateBody(lengthsFile, lengthsBody, TextSegmentWriter.LengthsMagic, CodecRegistry.NewestVersion(SegmentParts.Lengths));
         if (System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(postingsHeader) != TextSegmentWriter.PostingsMagic)
         {
             throw new CorruptIndexException(postingsFile, "wrong magic: not a postings file");
@@ -195,10 +238,16 @@ public sealed class TextSegmentReader : ITextFieldSource, IDisposable
             throw new UnsupportedFormatException(postingsFile, $"format version {version} is not supported");
         }
 
-        var cursor = new Cursor(termsFile, terms, IndexFile.HeaderLength, terms.Length - IndexFile.FooterLength);
+        var cursor = new Cursor(termsFile, termsBody, IndexFile.HeaderLength, terms.Length - IndexFile.FooterLength);
         int maxDoc = cursor.ReadCount(limits.MaxDocsPerSegment, "document count");
         var reader = new TextSegmentReader(postings, maxDoc);
-        var lengthViews = ReadLengths(lengthsFile, lengths, maxDoc, limits);
+        if (termsBody.IsPaged)
+        {
+            reader._paged.Add(termsBody);
+            reader._paged.Add(lengthsBody);
+        }
+
+        var lengthViews = ReadLengths(lengthsFile, lengthsBody, maxDoc, limits);
         string? previous = null;
         while (true)
         {
@@ -258,10 +307,10 @@ public sealed class TextSegmentReader : ITextFieldSource, IDisposable
                 throw new CorruptIndexException(lengthsFile, $"no field lengths for field '{name}'");
             }
 
-            var dictionary = new FieldTermDictionary(termsFile, termsVersion, terms, fstStart, fstLength, root, tableStart, tableLength, samplesStart, sampleCount, termCount, totalTermBytes, maxTermBytes);
+            var dictionary = new FieldTermDictionary(termsFile, termsVersion, termsBody, fstStart, fstLength, root, tableStart, tableLength, samplesStart, sampleCount, termCount, totalTermBytes, maxTermBytes);
             var stats = new FieldStatistics((int)docCount, sumTtf, sumDf);
             PostingsFeatures features = (flags & 2) != 0 ? PostingsFeatures.Offsets : (flags & 1) != 0 ? PostingsFeatures.Positions : PostingsFeatures.Frequencies;
-            reader._fields.Add(name, new TextFieldReader(dictionary, postings, maxDoc, features, stats, lengths, lv.Start, lv.Width, lengthsFile));
+            reader._fields.Add(name, new TextFieldReader(dictionary, postings, maxDoc, features, stats, lengthsBody, lv.Start, lv.Width, lengthsFile));
             reader._names.Add(name);
         }
 
@@ -273,9 +322,9 @@ public sealed class TextSegmentReader : ITextFieldSource, IDisposable
         return reader;
     }
 
-    private static Dictionary<string, (int Start, int Width)> ReadLengths(string fileName, byte[] bytes, int maxDoc, IndexLimits limits)
+    private static Dictionary<string, (int Start, int Width)> ReadLengths(string fileName, PagedBytes body, int maxDoc, IndexLimits limits)
     {
-        var cursor = new Cursor(fileName, bytes, IndexFile.HeaderLength, bytes.Length - IndexFile.FooterLength);
+        var cursor = new Cursor(fileName, body, IndexFile.HeaderLength, body.Data.Length - IndexFile.FooterLength);
         int fileMaxDoc = cursor.ReadCount(limits.MaxDocsPerSegment, "document count");
         if (fileMaxDoc != maxDoc)
         {
@@ -326,10 +375,11 @@ public sealed class TextSegmentReader : ITextFieldSource, IDisposable
     }
 
     // A bounds-checked reader over a resident file body.
-    private ref struct Cursor(string fileName, byte[] data, int start, int end)
+    private ref struct Cursor(string fileName, PagedBytes body, int start, int end)
     {
         private readonly string _fileName = fileName;
-        private readonly byte[] _data = data;
+        private readonly PagedBytes _body = body;
+        private readonly byte[] _data = body.Data;
         private readonly int _end = end;
         private int _pos = start;
 
@@ -344,6 +394,7 @@ public sealed class TextSegmentReader : ITextFieldSource, IDisposable
                 throw new CorruptIndexException(_fileName, "unexpected end of data");
             }
 
+            _body.Ensure(_pos, 1);
             return _data[_pos++];
         }
 
@@ -394,6 +445,7 @@ public sealed class TextSegmentReader : ITextFieldSource, IDisposable
 
             try
             {
+                _body.Ensure(_pos, n);
                 string s = new UTF8Encoding(false, true).GetString(_data, _pos, n);
                 _pos += n;
                 return s;
@@ -412,19 +464,19 @@ internal sealed class TextFieldReader : ITextFieldReader
     private readonly FieldTermDictionary _dictionary;
     private readonly IRangeReader _postings;
     private readonly int _maxDoc;
-    private readonly byte[] _lengths;
+    private readonly PagedBytes _lengthsBody;
     private readonly int _lengthsStart;
     private readonly int _lengthWidth;
     private readonly string _lengthsFile;
 
-    public TextFieldReader(FieldTermDictionary dictionary, IRangeReader postings, int maxDoc, PostingsFeatures features, FieldStatistics statistics, byte[] lengths, int lengthsStart, int lengthWidth, string lengthsFile)
+    public TextFieldReader(FieldTermDictionary dictionary, IRangeReader postings, int maxDoc, PostingsFeatures features, FieldStatistics statistics, PagedBytes lengths, int lengthsStart, int lengthWidth, string lengthsFile)
     {
         _dictionary = dictionary;
         _postings = postings;
         _maxDoc = maxDoc;
         IndexedFeatures = features;
         Statistics = statistics;
-        _lengths = lengths;
+        _lengthsBody = lengths;
         _lengthsStart = lengthsStart;
         _lengthWidth = lengthWidth;
         _lengthsFile = lengthsFile;
@@ -487,7 +539,8 @@ internal sealed class TextFieldReader : ITextFieldReader
             throw new ArgumentOutOfRangeException(nameof(docId));
         }
 
-        ReadOnlySpan<byte> b = _lengths.AsSpan(_lengthsStart + (docId * _lengthWidth), _lengthWidth);
+        _lengthsBody.Ensure(_lengthsStart + ((long)docId * _lengthWidth), _lengthWidth);
+        ReadOnlySpan<byte> b = _lengthsBody.Data.AsSpan(_lengthsStart + (docId * _lengthWidth), _lengthWidth);
         uint v = 0;
         for (int i = 0; i < b.Length; i++)
         {
