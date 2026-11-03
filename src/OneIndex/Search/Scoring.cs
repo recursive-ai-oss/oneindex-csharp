@@ -311,4 +311,32 @@ public sealed class IndexSearcher(SearchContext context, IWeightFactory factory)
         Search(query, collector, cancellationToken);
         return collector.GetTopDocs();
     }
+
+    /// <summary>Runs a query into a collector (see <see cref="Search(Query, Collector, CancellationToken)"/>).</summary>
+    /// <param name="query">The query.</param>
+    /// <param name="collector">Receives the matches.</param>
+    /// <param name="cancellationToken">Cancels the search.</param>
+    /// <returns>A task that completes when the search has finished.</returns>
+    public ValueTask SearchAsync(Query query, Collector collector, CancellationToken cancellationToken = default)
+    {
+        Search(query, collector, cancellationToken);
+        return ValueTask.CompletedTask;
+    }
+
+    /// <summary>Finds the best documents (see <see cref="Search(Query, int, CancellationToken)"/>).</summary>
+    /// <param name="query">The query.</param>
+    /// <param name="count">How many documents to return.</param>
+    /// <param name="cancellationToken">Cancels the search.</param>
+    /// <returns>The best documents.</returns>
+    public ValueTask<TopDocs> SearchAsync(Query query, int count, CancellationToken cancellationToken = default)
+        => ValueTask.FromResult(Search(query, count, cancellationToken));
+
+    /// <summary>Finds the best documents (see <see cref="Search(Query, int, bool, CancellationToken)"/>).</summary>
+    /// <param name="query">The query.</param>
+    /// <param name="count">How many documents to return.</param>
+    /// <param name="countExactly">Whether the total is counted exactly.</param>
+    /// <param name="cancellationToken">Cancels the search.</param>
+    /// <returns>The best documents.</returns>
+    public ValueTask<TopDocs> SearchAsync(Query query, int count, bool countExactly, CancellationToken cancellationToken = default)
+        => ValueTask.FromResult(Search(query, count, countExactly, cancellationToken));
 }

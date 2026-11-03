@@ -1,0 +1,160 @@
+OneIndex.Models.BertEmbedder.Dimension : System.Int32 { get; }
+OneIndex.Models.BertEmbedder.Dispose() : System.Void
+OneIndex.Models.BertEmbedder.Embed(System.Collections.Generic.IReadOnlyList<System.String> texts, OneIndex.Vectors.EmbeddingRole role, System.Span<System.Single> destination, System.Threading.CancellationToken cancellationToken = null) : System.Void
+OneIndex.Models.BertEmbedder.EmbedAsync(System.Collections.Generic.IReadOnlyList<System.String> texts, OneIndex.Vectors.EmbeddingRole role, System.Memory<System.Single> destination, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
+OneIndex.Models.BertEmbedder.IsNormalized : System.Boolean { get; }
+OneIndex.Models.BertEmbedder.KernelPath : System.String { get; }
+OneIndex.Models.BertEmbedder.ModelId : System.String { get; }
+OneIndex.Models.BertEmbedder.Tokenizer : OneIndex.Models.Tokenization.WordPieceTokenizer { get; }
+OneIndex.Models.BertEmbedder.static Open(System.IO.Stream model, System.IO.Stream vocabulary, OneIndex.Models.BertEmbedderOptions options) : OneIndex.Models.BertEmbedder
+OneIndex.Models.BertEmbedder.static Open(System.String modelPath, System.String vocabularyPath, OneIndex.Models.BertEmbedderOptions options) : OneIndex.Models.BertEmbedder
+OneIndex.Models.BertEmbedderOptions..ctor()
+OneIndex.Models.BertEmbedderOptions.ExactArithmetic : System.Boolean { get; init; }
+OneIndex.Models.BertEmbedderOptions.MaxBatchTokens : System.Int32 { get; init; }
+OneIndex.Models.BertEmbedderOptions.MaxThreads : System.Int32 { get; init; }
+OneIndex.Models.BertEmbedderOptions.MaxTokens : System.Int32 { get; init; }
+OneIndex.Models.BertEmbedderOptions.ModelId : System.String { get; init; }
+OneIndex.Models.BertEmbedderOptions.QueryPrefix : System.String { get; init; }
+OneIndex.Models.BertEmbedderOptions.Tokenizer : OneIndex.Models.Tokenization.WordPieceOptions { get; init; }
+OneIndex.Models.BgeSmallEmbedder.Dimension : System.Int32 { get; }
+OneIndex.Models.BgeSmallEmbedder.Dispose() : System.Void
+OneIndex.Models.BgeSmallEmbedder.Embed(System.Collections.Generic.IReadOnlyList<System.String> texts, OneIndex.Vectors.EmbeddingRole role, System.Span<System.Single> destination, System.Threading.CancellationToken cancellationToken = null) : System.Void
+OneIndex.Models.BgeSmallEmbedder.EmbedAsync(System.Collections.Generic.IReadOnlyList<System.String> texts, OneIndex.Vectors.EmbeddingRole role, System.Memory<System.Single> destination, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
+OneIndex.Models.BgeSmallEmbedder.Inner : OneIndex.Models.BertEmbedder { get; }
+OneIndex.Models.BgeSmallEmbedder.IsNormalized : System.Boolean { get; }
+OneIndex.Models.BgeSmallEmbedder.ModelId : System.String { get; }
+OneIndex.Models.BgeSmallEmbedder.QueryInstruction : System.String = Represent this sentence for searching relevant passages: 
+OneIndex.Models.BgeSmallEmbedder.static Load() : OneIndex.Models.BgeSmallEmbedder
+OneIndex.Models.BgeSmallEmbedder.static Open(System.String modelPath, System.String vocabularyPath, System.String variant) : OneIndex.Models.BgeSmallEmbedder
+OneIndex.Models.BgeSmallEmbedder.static UseAsDefault() : OneIndex.Models.BgeSmallEmbedder
+OneIndex.Models.CrossEncoderOptions..ctor()
+OneIndex.Models.CrossEncoderOptions.ExactArithmetic : System.Boolean { get; init; }
+OneIndex.Models.CrossEncoderOptions.MaxBatchTokens : System.Int32 { get; init; }
+OneIndex.Models.CrossEncoderOptions.MaxThreads : System.Int32 { get; init; }
+OneIndex.Models.CrossEncoderOptions.MaxTokens : System.Int32 { get; init; }
+OneIndex.Models.CrossEncoderOptions.ModelId : System.String { get; init; }
+OneIndex.Models.CrossEncoderOptions.Tokenizer : OneIndex.Models.Tokenization.WordPieceOptions { get; init; }
+OneIndex.Models.CrossEncoderReranker.Dispose() : System.Void
+OneIndex.Models.CrossEncoderReranker.KernelPath : System.String { get; }
+OneIndex.Models.CrossEncoderReranker.ModelId : System.String { get; }
+OneIndex.Models.CrossEncoderReranker.Score(System.String query, System.Collections.Generic.IReadOnlyList<System.String> passages, System.Span<System.Single> scores, System.Threading.CancellationToken cancellationToken = null) : System.Void
+OneIndex.Models.CrossEncoderReranker.ScoreAsync(System.String query, System.Collections.Generic.IReadOnlyList<System.String> passages, System.Memory<System.Single> scores, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
+OneIndex.Models.CrossEncoderReranker.Tokenizer : OneIndex.Models.Tokenization.WordPieceTokenizer { get; }
+OneIndex.Models.CrossEncoderReranker.static Open(System.IO.Stream model, System.IO.Stream vocabulary, OneIndex.Models.CrossEncoderOptions options) : OneIndex.Models.CrossEncoderReranker
+OneIndex.Models.CrossEncoderReranker.static Open(System.String modelPath, System.String vocabularyPath, OneIndex.Models.CrossEncoderOptions options) : OneIndex.Models.CrossEncoderReranker
+OneIndex.Models.MiniLmReranker.Dispose() : System.Void
+OneIndex.Models.MiniLmReranker.Inner : OneIndex.Models.CrossEncoderReranker { get; }
+OneIndex.Models.MiniLmReranker.ModelId : System.String { get; }
+OneIndex.Models.MiniLmReranker.Score(System.String query, System.Collections.Generic.IReadOnlyList<System.String> passages, System.Span<System.Single> scores, System.Threading.CancellationToken cancellationToken = null) : System.Void
+OneIndex.Models.MiniLmReranker.ScoreAsync(System.String query, System.Collections.Generic.IReadOnlyList<System.String> passages, System.Memory<System.Single> scores, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
+OneIndex.Models.MiniLmReranker.static Load() : OneIndex.Models.MiniLmReranker
+OneIndex.Models.MiniLmReranker.static Open(System.String modelPath, System.String vocabularyPath, System.String variant) : OneIndex.Models.MiniLmReranker
+OneIndex.Models.MiniLmReranker.static UseAsDefault() : OneIndex.Models.MiniLmReranker
+OneIndex.Models.NeuralSparseEncoder.Dispose() : System.Void
+OneIndex.Models.NeuralSparseEncoder.Encode(System.Collections.Generic.IReadOnlyList<System.String> texts, OneIndex.Vectors.EmbeddingRole role, System.Span<OneIndex.Index.SparseVector> destination, System.Threading.CancellationToken cancellationToken = null) : System.Void
+OneIndex.Models.NeuralSparseEncoder.EncodeAsync(System.Collections.Generic.IReadOnlyList<System.String> texts, OneIndex.Vectors.EmbeddingRole role, System.Memory<OneIndex.Index.SparseVector> destination, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
+OneIndex.Models.NeuralSparseEncoder.ModelId : System.String { get; }
+OneIndex.Models.NeuralSparseEncoder.Tokenizer : OneIndex.Models.Tokenization.WordPieceTokenizer { get; }
+OneIndex.Models.NeuralSparseEncoder.static Open(System.IO.Stream model, System.IO.Stream vocabulary, System.IO.Stream queryWeights, OneIndex.Models.NeuralSparseEncoderOptions options) : OneIndex.Models.NeuralSparseEncoder
+OneIndex.Models.NeuralSparseEncoder.static Open(System.String modelPath, System.String vocabularyPath, System.String queryWeightsPath, OneIndex.Models.NeuralSparseEncoderOptions options) : OneIndex.Models.NeuralSparseEncoder
+OneIndex.Models.NeuralSparseEncoder.static OpenDirectory(System.String directory, OneIndex.Models.NeuralSparseEncoderOptions options) : OneIndex.Models.NeuralSparseEncoder
+OneIndex.Models.NeuralSparseEncoderOptions..ctor()
+OneIndex.Models.NeuralSparseEncoderOptions.ExactArithmetic : System.Boolean { get; init; }
+OneIndex.Models.NeuralSparseEncoderOptions.ExtraLog1p : System.Int32 { get; init; }
+OneIndex.Models.NeuralSparseEncoderOptions.MaxBatchTokens : System.Int32 { get; init; }
+OneIndex.Models.NeuralSparseEncoderOptions.MaxThreads : System.Int32 { get; init; }
+OneIndex.Models.NeuralSparseEncoderOptions.MaxTokens : System.Int32 { get; init; }
+OneIndex.Models.NeuralSparseEncoderOptions.MinWeight : System.Single { get; init; }
+OneIndex.Models.NeuralSparseEncoderOptions.ModelId : System.String { get; init; }
+OneIndex.Models.OpenSearchSparseEncoder.Dispose() : System.Void
+OneIndex.Models.OpenSearchSparseEncoder.Encode(System.Collections.Generic.IReadOnlyList<System.String> texts, OneIndex.Vectors.EmbeddingRole role, System.Span<OneIndex.Index.SparseVector> destination, System.Threading.CancellationToken cancellationToken = null) : System.Void
+OneIndex.Models.OpenSearchSparseEncoder.EncodeAsync(System.Collections.Generic.IReadOnlyList<System.String> texts, OneIndex.Vectors.EmbeddingRole role, System.Memory<OneIndex.Index.SparseVector> destination, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
+OneIndex.Models.OpenSearchSparseEncoder.Inner : OneIndex.Models.NeuralSparseEncoder { get; }
+OneIndex.Models.OpenSearchSparseEncoder.ModelId : System.String { get; }
+OneIndex.Models.OpenSearchSparseEncoder.static Load() : OneIndex.Models.OpenSearchSparseEncoder
+OneIndex.Models.OpenSearchSparseEncoder.static Open(System.String directory, System.String variant) : OneIndex.Models.OpenSearchSparseEncoder
+OneIndex.Models.OpenSearchSparseEncoder.static UseAsDefault() : OneIndex.Models.OpenSearchSparseEncoder
+OneIndex.Models.Tokenization.ICanonicalDecomposer.abstract TryDecompose(System.ReadOnlySpan<System.Char> text, System.Span<System.Char> destination, out System.Int32 written) : System.Boolean
+OneIndex.Models.Tokenization.SentencePieceFormatException..ctor(System.String message)
+OneIndex.Models.Tokenization.SentencePieceLimits..ctor(System.Int32 MaxFileBytes = 67108864, System.Int32 MaxPieces = 4000000, System.Int32 MaxPieceChars = 64)
+OneIndex.Models.Tokenization.SentencePieceLimits.MaxFileBytes : System.Int32 { get; init; }
+OneIndex.Models.Tokenization.SentencePieceLimits.MaxPieceChars : System.Int32 { get; init; }
+OneIndex.Models.Tokenization.SentencePieceLimits.MaxPieces : System.Int32 { get; init; }
+OneIndex.Models.Tokenization.SentencePieceLimits.static Default : OneIndex.Models.Tokenization.SentencePieceLimits { get; }
+OneIndex.Models.Tokenization.SentencePieceModel.AddDummyPrefix : System.Boolean { get; }
+OneIndex.Models.Tokenization.SentencePieceModel.ByteFallback : System.Boolean { get; }
+OneIndex.Models.Tokenization.SentencePieceModel.EscapeWhitespaces : System.Boolean { get; }
+OneIndex.Models.Tokenization.SentencePieceModel.NormalizerName : System.String { get; }
+OneIndex.Models.Tokenization.SentencePieceModel.Pieces : System.Collections.Generic.IReadOnlyList<System.String> { get; }
+OneIndex.Models.Tokenization.SentencePieceModel.RemoveExtraWhitespaces : System.Boolean { get; }
+OneIndex.Models.Tokenization.SentencePieceModel.Scores : System.Collections.Generic.IReadOnlyList<System.Single> { get; }
+OneIndex.Models.Tokenization.SentencePieceModel.Types : System.Collections.Generic.IReadOnlyList<OneIndex.Models.Tokenization.SentencePieceType> { get; }
+OneIndex.Models.Tokenization.SentencePieceModel.UnkId : System.Int32 { get; }
+OneIndex.Models.Tokenization.SentencePieceModel.static Load(System.ReadOnlySpan<System.Byte> file, OneIndex.Models.Tokenization.SentencePieceLimits limits = null) : OneIndex.Models.Tokenization.SentencePieceModel
+OneIndex.Models.Tokenization.SentencePieceTokenizer.Encode(System.String text, System.Collections.Generic.List<System.Int32> ids) : System.Int32
+OneIndex.Models.Tokenization.SentencePieceTokenizer.Model : OneIndex.Models.Tokenization.SentencePieceModel { get; }
+OneIndex.Models.Tokenization.SentencePieceTokenizer.Normalize(System.String text) : System.String
+OneIndex.Models.Tokenization.SentencePieceTokenizer.static Create(OneIndex.Models.Tokenization.SentencePieceModel model, System.IO.TextReader normalizationTable = null) : OneIndex.Models.Tokenization.SentencePieceTokenizer
+OneIndex.Models.Tokenization.SentencePieceType.Byte : OneIndex.Models.Tokenization.SentencePieceType = 6
+OneIndex.Models.Tokenization.SentencePieceType.Control : OneIndex.Models.Tokenization.SentencePieceType = 3
+OneIndex.Models.Tokenization.SentencePieceType.Normal : OneIndex.Models.Tokenization.SentencePieceType = 1
+OneIndex.Models.Tokenization.SentencePieceType.Unknown : OneIndex.Models.Tokenization.SentencePieceType = 2
+OneIndex.Models.Tokenization.SentencePieceType.Unused : OneIndex.Models.Tokenization.SentencePieceType = 5
+OneIndex.Models.Tokenization.SentencePieceType.UserDefined : OneIndex.Models.Tokenization.SentencePieceType = 4
+OneIndex.Models.Tokenization.TokenizedBatch.AttentionMask : System.Int32[] { get; }
+OneIndex.Models.Tokenization.TokenizedBatch.Count : System.Int32 { get; }
+OneIndex.Models.Tokenization.TokenizedBatch.InputIds : System.Int32[] { get; }
+OneIndex.Models.Tokenization.TokenizedBatch.Length : System.Int32 { get; }
+OneIndex.Models.Tokenization.TokenizedBatch.Lengths : System.Int32[] { get; }
+OneIndex.Models.Tokenization.WordPieceOptions..ctor()
+OneIndex.Models.Tokenization.WordPieceOptions.ClassToken : System.String { get; init; }
+OneIndex.Models.Tokenization.WordPieceOptions.LowerCase : System.Boolean { get; init; }
+OneIndex.Models.Tokenization.WordPieceOptions.MaskToken : System.String { get; init; }
+OneIndex.Models.Tokenization.WordPieceOptions.MaxInputCharsPerWord : System.Int32 { get; init; }
+OneIndex.Models.Tokenization.WordPieceOptions.PadToken : System.String { get; init; }
+OneIndex.Models.Tokenization.WordPieceOptions.SeparatorToken : System.String { get; init; }
+OneIndex.Models.Tokenization.WordPieceOptions.SplitOnSpecialTokens : System.Boolean { get; init; }
+OneIndex.Models.Tokenization.WordPieceOptions.StripAccents : System.Boolean? { get; init; }
+OneIndex.Models.Tokenization.WordPieceOptions.TokenizeChineseChars : System.Boolean { get; init; }
+OneIndex.Models.Tokenization.WordPieceOptions.UnknownToken : System.String { get; init; }
+OneIndex.Models.Tokenization.WordPieceTokenizer..ctor(OneIndex.Models.Tokenization.WordPieceVocabulary vocabulary, OneIndex.Models.Tokenization.WordPieceOptions options = null, OneIndex.Models.Tokenization.ICanonicalDecomposer decomposer = null)
+OneIndex.Models.Tokenization.WordPieceTokenizer.ClassId : System.Int32 { get; }
+OneIndex.Models.Tokenization.WordPieceTokenizer.Encode(System.ReadOnlySpan<System.Char> text, System.Span<System.Int32> ids, System.Boolean addSpecialTokens = True) : System.Int32
+OneIndex.Models.Tokenization.WordPieceTokenizer.Encode(System.String text, System.Int32 maxLength = 512) : System.Int32[]
+OneIndex.Models.Tokenization.WordPieceTokenizer.EncodeBatch(System.Collections.Generic.IReadOnlyList<System.String> texts, System.Int32 maxLength = 512) : OneIndex.Models.Tokenization.TokenizedBatch
+OneIndex.Models.Tokenization.WordPieceTokenizer.EncodePair(System.ReadOnlySpan<System.Char> first, System.ReadOnlySpan<System.Char> second, System.Span<System.Int32> ids, System.Span<System.Int32> segmentIds) : System.Int32
+OneIndex.Models.Tokenization.WordPieceTokenizer.PadId : System.Int32 { get; }
+OneIndex.Models.Tokenization.WordPieceTokenizer.SeparatorId : System.Int32 { get; }
+OneIndex.Models.Tokenization.WordPieceTokenizer.UnknownId : System.Int32 { get; }
+OneIndex.Models.Tokenization.WordPieceTokenizer.Vocabulary : OneIndex.Models.Tokenization.WordPieceVocabulary { get; }
+OneIndex.Models.Tokenization.WordPieceVocabulary.ContinuingPrefix : System.String { get; }
+OneIndex.Models.Tokenization.WordPieceVocabulary.Count : System.Int32 { get; }
+OneIndex.Models.Tokenization.WordPieceVocabulary.DefaultMaxTokens : System.Int32 = 4000000
+OneIndex.Models.Tokenization.WordPieceVocabulary.Item[System.Int32 id] : System.String { get; }
+OneIndex.Models.Tokenization.WordPieceVocabulary.TryGetId(System.ReadOnlySpan<System.Char> token, out System.Int32 id) : System.Boolean
+OneIndex.Models.Tokenization.WordPieceVocabulary.static Load(System.IO.Stream stream, System.String continuingPrefix = ##, System.Int32 maxTokens = 4000000) : OneIndex.Models.Tokenization.WordPieceVocabulary
+OneIndex.Models.Tokenization.WordPieceVocabulary.static Load(System.String path, System.String continuingPrefix = ##, System.Int32 maxTokens = 4000000) : OneIndex.Models.Tokenization.WordPieceVocabulary
+OneIndex.Models.Tokenization.WordPieceVocabulary.static Parse(System.ReadOnlySpan<System.Byte> utf8, System.String continuingPrefix = ##, System.Int32 maxTokens = 4000000) : OneIndex.Models.Tokenization.WordPieceVocabulary
+OneIndex.Models.UnicodeDecomposer..ctor()
+OneIndex.Models.UnicodeDecomposer.TryDecompose(System.ReadOnlySpan<System.Char> text, System.Span<System.Char> destination, out System.Int32 written) : System.Boolean
+OneIndex.Models.UnicodeDecomposer.static Instance : OneIndex.Models.UnicodeDecomposer { get; }
+enum OneIndex.Models.Tokenization.SentencePieceType : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
+interface OneIndex.Models.Tokenization.ICanonicalDecomposer
+sealed class OneIndex.Models.BertEmbedder : OneIndex.Vectors.IEmbedder, System.IDisposable
+sealed class OneIndex.Models.BertEmbedderOptions
+sealed class OneIndex.Models.BgeSmallEmbedder : OneIndex.Vectors.IEmbedder, System.IDisposable
+sealed class OneIndex.Models.CrossEncoderOptions
+sealed class OneIndex.Models.CrossEncoderReranker : OneIndex.Vectors.IReranker, System.IDisposable
+sealed class OneIndex.Models.MiniLmReranker : OneIndex.Vectors.IReranker, System.IDisposable
+sealed class OneIndex.Models.NeuralSparseEncoder : OneIndex.Vectors.ISparseEncoder, System.IDisposable
+sealed class OneIndex.Models.NeuralSparseEncoderOptions
+sealed class OneIndex.Models.OpenSearchSparseEncoder : OneIndex.Vectors.ISparseEncoder, System.IDisposable
+sealed class OneIndex.Models.Tokenization.SentencePieceFormatException : System.Exception, System.Runtime.Serialization.ISerializable
+sealed class OneIndex.Models.Tokenization.SentencePieceLimits : System.IEquatable<OneIndex.Models.Tokenization.SentencePieceLimits>
+sealed class OneIndex.Models.Tokenization.SentencePieceModel
+sealed class OneIndex.Models.Tokenization.SentencePieceTokenizer
+sealed class OneIndex.Models.Tokenization.TokenizedBatch
+sealed class OneIndex.Models.Tokenization.WordPieceOptions
+sealed class OneIndex.Models.Tokenization.WordPieceTokenizer
+sealed class OneIndex.Models.Tokenization.WordPieceVocabulary
+sealed class OneIndex.Models.UnicodeDecomposer : OneIndex.Models.Tokenization.ICanonicalDecomposer

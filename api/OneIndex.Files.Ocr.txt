@@ -1,0 +1,12 @@
+OneIndex.Files.Ocr.OcrImageExtractor..ctor()
+OneIndex.Files.Ocr.OcrImageExtractor..ctor(OneOcr.OcrEngine engine, OneOcr.OcrOptions options = null)
+OneIndex.Files.Ocr.OcrImageExtractor.Accepts(System.String fileName) : System.Boolean
+OneIndex.Files.Ocr.OcrImageExtractor.Extract(System.IO.Stream content, System.String fileName, System.Threading.CancellationToken cancellationToken) : OneIndex.Files.ExtractedFile
+OneIndex.Files.Ocr.OcrImageExtractor.Name : System.String { get; }
+OneIndex.Files.Ocr.OcrPdfExtractor..ctor()
+OneIndex.Files.Ocr.OcrPdfExtractor..ctor(OneOcr.OcrEngine engine, OneOcr.Pdf.PdfOcrOptions options = null)
+OneIndex.Files.Ocr.OcrPdfExtractor.Accepts(System.String fileName) : System.Boolean
+OneIndex.Files.Ocr.OcrPdfExtractor.Extract(System.IO.Stream content, System.String fileName, System.Threading.CancellationToken cancellationToken) : OneIndex.Files.ExtractedFile
+OneIndex.Files.Ocr.OcrPdfExtractor.Name : System.String { get; }
+sealed class OneIndex.Files.Ocr.OcrImageExtractor : OneIndex.Files.IFileExtractor
+sealed class OneIndex.Files.Ocr.OcrPdfExtractor : OneIndex.Files.IFileExtractor

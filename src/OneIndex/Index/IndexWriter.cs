@@ -873,7 +873,19 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
         }
 
         // Always look at the leases: it also deletes those of readers that died, so a quiet index does not collect them.
-        HashSet<string>? pinned = IndexLocks.LivePinnedFiles(_storage, _limits, cancellationToken);
+        HashSet<string>? pinned;
+        bool pinsUnknown = false;
+        try
+        {
+            pinned = IndexLocks.LivePinnedFiles(_storage, _limits, cancellationToken);
+        }
+        catch (IOException)
+        {
+            // Which commits readers pin could not be read: keep every unreferenced file for a later reclaim rather than delete one a reader needs.
+            pinned = null;
+            pinsUnknown = true;
+        }
+
         foreach (string name in _storage.List(cancellationToken))
         {
             // A segment name is never reused, even when its files are leftovers about to be deleted: a deleted name that a
@@ -887,7 +899,7 @@ public sealed partial class IndexWriter : IDisposable, IAsyncDisposable
             if (!referenced.Contains(name) && IsOwnedFile(name))
             {
                 // A reader in another process may still be reading an older commit; its files go later (ReclaimFiles).
-                if (pinned is not null && pinned.Contains(name))
+                if (pinsUnknown || (pinned is not null && pinned.Contains(name)))
                 {
                     _refs.Defer(name);
                     continue;

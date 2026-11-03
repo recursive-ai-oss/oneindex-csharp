@@ -1,0 +1,187 @@
+OneIndex.Files.BlockKind.Code : OneIndex.Files.BlockKind = 4
+OneIndex.Files.BlockKind.Heading : OneIndex.Files.BlockKind = 1
+OneIndex.Files.BlockKind.ListItem : OneIndex.Files.BlockKind = 3
+OneIndex.Files.BlockKind.Paragraph : OneIndex.Files.BlockKind = 0
+OneIndex.Files.BlockKind.Table : OneIndex.Files.BlockKind = 2
+OneIndex.Files.Chunk..ctor(System.Int32 Start, System.Int32 End, System.String Heading)
+OneIndex.Files.Chunk.End : System.Int32 { get; init; }
+OneIndex.Files.Chunk.Heading : System.String { get; init; }
+OneIndex.Files.Chunk.Start : System.Int32 { get; init; }
+OneIndex.Files.ChunkOptions..ctor()
+OneIndex.Files.ChunkOptions.MaxTokens : System.Int32 { get; init; }
+OneIndex.Files.ChunkOptions.MinTokens : System.Int32 { get; init; }
+OneIndex.Files.ChunkOptions.TargetTokens : System.Int32 { get; init; }
+OneIndex.Files.Chunker.static Cut(OneIndex.Files.ExtractedUnit unit, OneIndex.Files.ChunkOptions options = null) : System.Collections.Generic.List<OneIndex.Files.Chunk>
+OneIndex.Files.Chunker.static EstimateTokens(System.ReadOnlySpan<System.Char> text) : System.Int32
+OneIndex.Files.Citation..ctor()
+OneIndex.Files.Citation.BoxUnits : System.String { get; init; }
+OneIndex.Files.Citation.Boxes : System.Collections.Generic.IReadOnlyList<OneIndex.Files.SourceBox> { get; init; }
+OneIndex.Files.Citation.End : System.Int32 { get; init; }
+OneIndex.Files.Citation.Entry : System.String { get; init; }
+OneIndex.Files.Citation.File : System.String { get; init; }
+OneIndex.Files.Citation.FileId : System.String { get; init; }
+OneIndex.Files.Citation.FileName : System.String { get; init; }
+OneIndex.Files.Citation.Format : System.String { get; init; }
+OneIndex.Files.Citation.Heading : System.String { get; init; }
+OneIndex.Files.Citation.Page : System.Int32 { get; init; }
+OneIndex.Files.Citation.PageHeight : System.Double { get; init; }
+OneIndex.Files.Citation.PageWidth : System.Double { get; init; }
+OneIndex.Files.Citation.ReadPageText(System.String root, OneIndex.Files.FolderIndexOptions options = null, System.Threading.CancellationToken cancellationToken = null) : System.String
+OneIndex.Files.Citation.ReadSourceText(System.String root, OneIndex.Files.FolderIndexOptions options = null, System.Threading.CancellationToken cancellationToken = null) : System.String
+OneIndex.Files.Citation.Start : System.Int32 { get; init; }
+OneIndex.Files.Citation.Text : System.String { get; init; }
+OneIndex.Files.Citation.static From(OneIndex.Files.FilePassage passage) : OneIndex.Files.Citation
+OneIndex.Files.ExtractedFile..ctor(System.String format, System.Collections.Generic.IReadOnlyList<OneIndex.Files.ExtractedUnit> units)
+OneIndex.Files.ExtractedFile.Format : System.String { get; }
+OneIndex.Files.ExtractedFile.Units : System.Collections.Generic.IReadOnlyList<OneIndex.Files.ExtractedUnit> { get; }
+OneIndex.Files.ExtractedUnit..ctor(System.Int32 page, System.String text, System.Collections.Generic.IReadOnlyList<OneIndex.Files.TextBlock> blocks)
+OneIndex.Files.ExtractedUnit.Blocks : System.Collections.Generic.IReadOnlyList<OneIndex.Files.TextBlock> { get; }
+OneIndex.Files.ExtractedUnit.BoxUnits : System.String { get; init; }
+OneIndex.Files.ExtractedUnit.Height : System.Double { get; init; }
+OneIndex.Files.ExtractedUnit.Page : System.Int32 { get; }
+OneIndex.Files.ExtractedUnit.Text : System.String { get; }
+OneIndex.Files.ExtractedUnit.Width : System.Double { get; init; }
+OneIndex.Files.ExtractedUnit.Words : System.Collections.Generic.IReadOnlyList<OneIndex.Files.WordSpan> { get; init; }
+OneIndex.Files.FilePassage..ctor()
+OneIndex.Files.FilePassage.BoxUnits : System.String { get; set; }
+OneIndex.Files.FilePassage.Boxes : System.String { get; set; }
+OneIndex.Files.FilePassage.Container : System.String { get; set; }
+OneIndex.Files.FilePassage.Embedding : System.Single[] { get; set; }
+OneIndex.Files.FilePassage.EmbeddingDimensions : System.Int32 = 384
+OneIndex.Files.FilePassage.End : System.Int32 { get; set; }
+OneIndex.Files.FilePassage.Error : System.String { get; set; }
+OneIndex.Files.FilePassage.FileId : System.String { get; set; }
+OneIndex.Files.FilePassage.FileName : System.String { get; set; }
+OneIndex.Files.FilePassage.Fingerprint : System.String { get; set; }
+OneIndex.Files.FilePassage.Format : System.String { get; set; }
+OneIndex.Files.FilePassage.Hash : System.String { get; set; }
+OneIndex.Files.FilePassage.Heading : System.String { get; set; }
+OneIndex.Files.FilePassage.Id : System.String { get; set; }
+OneIndex.Files.FilePassage.Kind : System.String { get; set; }
+OneIndex.Files.FilePassage.KindError : System.String = error
+OneIndex.Files.FilePassage.KindFile : System.String = file
+OneIndex.Files.FilePassage.KindPassage : System.String = passage
+OneIndex.Files.FilePassage.ModifiedTicks : System.Int64 { get; set; }
+OneIndex.Files.FilePassage.Ordinal : System.Int32 { get; set; }
+OneIndex.Files.FilePassage.Page : System.Int32 { get; set; }
+OneIndex.Files.FilePassage.PageHeight : System.Double { get; set; }
+OneIndex.Files.FilePassage.PageWidth : System.Double { get; set; }
+OneIndex.Files.FilePassage.PassageCount : System.Int32 { get; set; }
+OneIndex.Files.FilePassage.Size : System.Int64 { get; set; }
+OneIndex.Files.FilePassage.Start : System.Int32 { get; set; }
+OneIndex.Files.FilePassage.Text : System.String { get; set; }
+OneIndex.Files.FilesPackage.Name : System.String = RecursiveAI.OneIndex.Files
+OneIndex.Files.FolderIndexOptions..ctor()
+OneIndex.Files.FolderIndexOptions.Chunking : OneIndex.Files.ChunkOptions { get; init; }
+OneIndex.Files.FolderIndexOptions.CommitEveryBytes : System.Int64 { get; init; }
+OneIndex.Files.FolderIndexOptions.CommitEveryFiles : System.Int32 { get; init; }
+OneIndex.Files.FolderIndexOptions.ExcludeDirectories : System.Collections.Generic.IReadOnlyList<System.String> { get; init; }
+OneIndex.Files.FolderIndexOptions.Extractors : System.Collections.Generic.IReadOnlyList<OneIndex.Files.IFileExtractor> { get; init; }
+OneIndex.Files.FolderIndexOptions.FileTimeout : System.TimeSpan { get; init; }
+OneIndex.Files.FolderIndexOptions.IgnorePatterns : System.Collections.Generic.IReadOnlyList<System.String> { get; init; }
+OneIndex.Files.FolderIndexOptions.MaxArchiveBytes : System.Int64 { get; init; }
+OneIndex.Files.FolderIndexOptions.MaxArchiveDepth : System.Int32 { get; init; }
+OneIndex.Files.FolderIndexOptions.MaxArchiveEntries : System.Int32 { get; init; }
+OneIndex.Files.FolderIndexOptions.MaxArchiveEntryBytes : System.Int64 { get; init; }
+OneIndex.Files.FolderIndexOptions.MaxDegreeOfParallelism : System.Int32 { get; init; }
+OneIndex.Files.FolderIndexOptions.MaxFileBytes : System.Int64 { get; init; }
+OneIndex.Files.FolderIndexOptions.TimeProvider : System.TimeProvider { get; init; }
+OneIndex.Files.FolderIndexOptions.UseDefaultIgnores : System.Boolean { get; init; }
+OneIndex.Files.FolderIndexOptions.UseIgnoreFiles : System.Boolean { get; init; }
+OneIndex.Files.FolderIndexResult..ctor()
+OneIndex.Files.FolderIndexResult.Added : System.Int64 { get; init; }
+OneIndex.Files.FolderIndexResult.BytesRead : System.Int64 { get; init; }
+OneIndex.Files.FolderIndexResult.Commits : System.Int64 { get; init; }
+OneIndex.Files.FolderIndexResult.Elapsed : System.TimeSpan { get; init; }
+OneIndex.Files.FolderIndexResult.Failed : System.Int64 { get; init; }
+OneIndex.Files.FolderIndexResult.FilesSeen : System.Int64 { get; init; }
+OneIndex.Files.FolderIndexResult.Passages : System.Int64 { get; init; }
+OneIndex.Files.FolderIndexResult.Removed : System.Int64 { get; init; }
+OneIndex.Files.FolderIndexResult.Renamed : System.Int64 { get; init; }
+OneIndex.Files.FolderIndexResult.Unchanged : System.Int64 { get; init; }
+OneIndex.Files.FolderIndexResult.Updated : System.Int64 { get; init; }
+OneIndex.Files.FolderIndexer.static OpenIndex(System.String indexPath, OneIndex.Vectors.IEmbedder embedder = null) : OneIndex.SearchIndex<OneIndex.Files.FilePassage>
+OneIndex.Files.FolderIndexer.static Run(OneIndex.SearchIndex<OneIndex.Files.FilePassage> index, System.String root, OneIndex.Files.FolderIndexOptions options = null, System.IProgress<OneIndex.Files.FolderProgress> progress = null, System.Threading.CancellationToken cancellationToken = null) : OneIndex.Files.FolderIndexResult
+OneIndex.Files.FolderIndexer.static RunAsync(OneIndex.SearchIndex<OneIndex.Files.FilePassage> index, System.String root, OneIndex.Files.FolderIndexOptions options = null, System.IProgress<OneIndex.Files.FolderProgress> progress = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task<OneIndex.Files.FolderIndexResult>
+OneIndex.Files.FolderProgress..ctor(System.Int64 FilesSeen, System.Int64 FilesToIndex, System.Int64 FilesIndexed, System.Int64 FilesUnchanged, System.Int64 FilesFailed, System.Int64 PassagesWritten, System.Int64 BytesRead, System.Int64 Commits, System.String Current)
+OneIndex.Files.FolderProgress.BytesRead : System.Int64 { get; init; }
+OneIndex.Files.FolderProgress.Commits : System.Int64 { get; init; }
+OneIndex.Files.FolderProgress.Current : System.String { get; init; }
+OneIndex.Files.FolderProgress.FilesFailed : System.Int64 { get; init; }
+OneIndex.Files.FolderProgress.FilesIndexed : System.Int64 { get; init; }
+OneIndex.Files.FolderProgress.FilesSeen : System.Int64 { get; init; }
+OneIndex.Files.FolderProgress.FilesToIndex : System.Int64 { get; init; }
+OneIndex.Files.FolderProgress.FilesUnchanged : System.Int64 { get; init; }
+OneIndex.Files.FolderProgress.PassagesWritten : System.Int64 { get; init; }
+OneIndex.Files.FolderSearch.static Cite(OneIndex.SearchHit<OneIndex.Files.FilePassage> hit) : OneIndex.Files.Citation
+OneIndex.Files.FolderSearch.static Errors(OneIndex.SearchIndex<OneIndex.Files.FilePassage> index) : OneIndex.SearchQuery<OneIndex.Files.FilePassage>
+OneIndex.Files.FolderSearch.static Passages(OneIndex.SearchIndex<OneIndex.Files.FilePassage> index, System.String text) : OneIndex.SearchQuery<OneIndex.Files.FilePassage>
+OneIndex.Files.FolderWatcher..ctor(OneIndex.SearchIndex<OneIndex.Files.FilePassage> index, System.String root, OneIndex.Files.FolderIndexOptions options = null, System.TimeSpan? debounce = null, System.TimeSpan? rescanEvery = null)
+OneIndex.Files.FolderWatcher.Dispose() : System.Void
+OneIndex.Files.FolderWatcher.Rescan() : System.Void
+OneIndex.Files.FolderWatcher.Runs : System.Int64 { get; }
+OneIndex.Files.FolderWatcher.Start() : System.Void
+OneIndex.Files.FolderWatcher.WaitForIdleAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task
+OneIndex.Files.FolderWatcher.event Failed : System.Action<System.Exception>
+OneIndex.Files.FolderWatcher.event Scanned : System.Action<OneIndex.Files.FolderIndexResult>
+OneIndex.Files.HtmlExtractor..ctor(System.Int64 maxBytes = 33554432)
+OneIndex.Files.HtmlExtractor.Accepts(System.String fileName) : System.Boolean
+OneIndex.Files.HtmlExtractor.Extract(System.IO.Stream content, System.String fileName, System.Threading.CancellationToken cancellationToken) : OneIndex.Files.ExtractedFile
+OneIndex.Files.HtmlExtractor.Name : System.String { get; }
+OneIndex.Files.IFileExtractor.Name : System.String { get; }
+OneIndex.Files.IFileExtractor.abstract Accepts(System.String fileName) : System.Boolean
+OneIndex.Files.IFileExtractor.abstract Extract(System.IO.Stream content, System.String fileName, System.Threading.CancellationToken cancellationToken) : OneIndex.Files.ExtractedFile
+OneIndex.Files.IgnoreRules..ctor()
+OneIndex.Files.IgnoreRules.Count : System.Int32 { get; }
+OneIndex.Files.IgnoreRules.Evaluate(System.String relativePath, System.Boolean isDirectory, System.Boolean? previous = null) : System.Boolean?
+OneIndex.Files.IgnoreRules.static Defaults : OneIndex.Files.IgnoreRules { get; }
+OneIndex.Files.IgnoreRules.static Parse(System.String text) : OneIndex.Files.IgnoreRules
+OneIndex.Files.PdfExtractor..ctor(System.Int64 maxBytes = 268435456)
+OneIndex.Files.PdfExtractor.Accepts(System.String fileName) : System.Boolean
+OneIndex.Files.PdfExtractor.Extract(System.IO.Stream content, System.String fileName, System.Threading.CancellationToken cancellationToken) : OneIndex.Files.ExtractedFile
+OneIndex.Files.PdfExtractor.Name : System.String { get; }
+OneIndex.Files.SourceBox..ctor(System.Double Left, System.Double Top, System.Double Right, System.Double Bottom)
+OneIndex.Files.SourceBox.Bottom : System.Double { get; init; }
+OneIndex.Files.SourceBox.Left : System.Double { get; init; }
+OneIndex.Files.SourceBox.Right : System.Double { get; init; }
+OneIndex.Files.SourceBox.Top : System.Double { get; init; }
+OneIndex.Files.SourceBox.static Union(OneIndex.Files.SourceBox a, OneIndex.Files.SourceBox b) : OneIndex.Files.SourceBox
+OneIndex.Files.TextBlock..ctor(System.Int32 Start, System.Int32 End, OneIndex.Files.BlockKind Kind, System.Int32 Level = 0)
+OneIndex.Files.TextBlock.End : System.Int32 { get; init; }
+OneIndex.Files.TextBlock.Kind : OneIndex.Files.BlockKind { get; init; }
+OneIndex.Files.TextBlock.Level : System.Int32 { get; init; }
+OneIndex.Files.TextBlock.Start : System.Int32 { get; init; }
+OneIndex.Files.TextExtractor..ctor(System.Int64 maxBytes = 67108864)
+OneIndex.Files.TextExtractor.Accepts(System.String fileName) : System.Boolean
+OneIndex.Files.TextExtractor.Extract(System.IO.Stream content, System.String fileName, System.Threading.CancellationToken cancellationToken) : OneIndex.Files.ExtractedFile
+OneIndex.Files.TextExtractor.Name : System.String { get; }
+OneIndex.Files.TextExtractor.static Decode(System.IO.Stream content, System.Int64 maxBytes, System.Threading.CancellationToken cancellationToken) : System.String
+OneIndex.Files.TextExtractor.static LooksLikeText(System.IO.Stream content) : System.Boolean
+OneIndex.Files.WordSpan..ctor(System.Int32 Start, System.Int32 End, System.Int32 Line, OneIndex.Files.SourceBox Box)
+OneIndex.Files.WordSpan.Box : OneIndex.Files.SourceBox { get; init; }
+OneIndex.Files.WordSpan.End : System.Int32 { get; init; }
+OneIndex.Files.WordSpan.Line : System.Int32 { get; init; }
+OneIndex.Files.WordSpan.Start : System.Int32 { get; init; }
+class OneIndex.Files.FilePassage
+enum OneIndex.Files.BlockKind : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
+interface OneIndex.Files.IFileExtractor
+sealed class OneIndex.Files.ChunkOptions
+sealed class OneIndex.Files.Citation : System.IEquatable<OneIndex.Files.Citation>
+sealed class OneIndex.Files.ExtractedFile
+sealed class OneIndex.Files.ExtractedUnit
+sealed class OneIndex.Files.FolderIndexOptions
+sealed class OneIndex.Files.FolderIndexResult : System.IEquatable<OneIndex.Files.FolderIndexResult>
+sealed class OneIndex.Files.FolderProgress : System.IEquatable<OneIndex.Files.FolderProgress>
+sealed class OneIndex.Files.FolderWatcher : System.IDisposable
+sealed class OneIndex.Files.HtmlExtractor : OneIndex.Files.IFileExtractor
+sealed class OneIndex.Files.IgnoreRules
+sealed class OneIndex.Files.PdfExtractor : OneIndex.Files.IFileExtractor
+sealed class OneIndex.Files.TextExtractor : OneIndex.Files.IFileExtractor
+static class OneIndex.Files.Chunker
+static class OneIndex.Files.FilesPackage
+static class OneIndex.Files.FolderIndexer
+static class OneIndex.Files.FolderSearch
+struct OneIndex.Files.Chunk : System.IEquatable<OneIndex.Files.Chunk>
+struct OneIndex.Files.SourceBox : System.IEquatable<OneIndex.Files.SourceBox>
+struct OneIndex.Files.TextBlock : System.IEquatable<OneIndex.Files.TextBlock>
+struct OneIndex.Files.WordSpan : System.IEquatable<OneIndex.Files.WordSpan>

@@ -180,6 +180,18 @@ public static class FacetValueSearch
         return Match(collector.GetResults()[0].Values, text, limit, sortBy);
     }
 
+    /// <summary>Counts the facet's values and keeps those that match the text (see <see cref="Search(IndexSearcher, Query, string, string?, int, FacetSort, CancellationToken)"/>).</summary>
+    /// <param name="searcher">The searcher.</param>
+    /// <param name="query">Selects the documents whose values are counted.</param>
+    /// <param name="field">The facet field.</param>
+    /// <param name="text">What the user typed; may be null or empty.</param>
+    /// <param name="limit">The most values returned, at least 1. Default <see cref="DefaultLimit"/>.</param>
+    /// <param name="sortBy">The order of the answer.</param>
+    /// <param name="cancellationToken">Cancels the search.</param>
+    /// <returns>Matching values in the requested order.</returns>
+    public static ValueTask<IReadOnlyList<FacetValue>> SearchAsync(IndexSearcher searcher, Query query, string field, string? text, int limit = DefaultLimit, FacetSort sortBy = FacetSort.Alpha, CancellationToken cancellationToken = default)
+        => ValueTask.FromResult(Search(searcher, query, field, text, limit, sortBy, cancellationToken));
+
     /// <summary>Filters counted values by what the user typed (the matching rules of this class).</summary>
     /// <param name="values">The values with their counts.</param>
     /// <param name="text">What the user typed; may be null or empty.</param>

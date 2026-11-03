@@ -43,6 +43,8 @@ The Meilisearch `semanticRatio` is the knob (documented range 0 to 1). The defau
 
 A search is hybrid automatically when all of these hold: it is built by `Search(text)` with non-blank text (not `SearchBy`, `SearchVector`, `SearchStrict`), the index has an embedder (`SearchIndex.Open<T>(path, embedder)` or `SearchEmbedders.Default`), and `T` has exactly one `[Vector(From = ...)]` member. `Hybrid(0)` turns it off for a query. Explicit `Hybrid(...)` calls always apply (with several vector members, name one: `Hybrid(x => x.Embedding)`); `Hybrid(member, vector)` supplies the query vector itself and needs no embedder. A search with no text (`Search()`) matches everything and is never hybrid.
 
+**Excluded words reach every list.** In `Search(text)`, a word or phrase marked `-word` removes documents from the keyword list, the vector list and the sparse list alike; otherwise the vector list would return the very documents the user excluded because their meaning is close. The exclusion is applied as a filter before the nearest neighbours are chosen, so the vector list is still full.
+
 ## Query JSON
 
 Additive to version 1 (no new version):

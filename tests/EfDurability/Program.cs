@@ -363,7 +363,7 @@ public sealed class KillCampaign(Args a)
 
         string dll = System.Reflection.Assembly.GetEntryAssembly()!.Location;
         var rng = new Random(seed);
-        int killsByHook = 0, killsByTimer = 0, exited = 0, failures = 0, rebuilds = 0, checks = 0, laggedCycles = 0;
+        int killsByHook = 0, killsByTimer = 0, exited = 0, failures = 0, rebuilds = 0, checks = 0, laggedCycles = 0, firstPassMismatches = 0, clearedByRecheck = 0;
         var byStage = new SortedDictionary<string, int>(StringComparer.Ordinal);
         var clock = Stopwatch.StartNew();
         for (int cycle = 1; cycle <= cycles; cycle++)
@@ -469,7 +469,29 @@ public sealed class KillCampaign(Args a)
                     checks++;
                     Verifier.Outcome o = Verifier.Verify(dbFile, Path.Combine(dir, inst), Path.Combine(dir, inst + ".ack"));
                     rebuilds += o.Rebuilt ? 1 : 0;
-                    foreach (string p in o.Problems)
+                    List<string> problems = o.Problems;
+                    // A mismatch of index and database may be a client COMMIT that was already on its way when the process was killed and reached the
+                    // server after the comparison read the tables. Catching up again and comparing again tells that apart from a lost or doubled apply.
+                    // A lost acknowledged commit or a failed open is never rechecked: a second pass runs after a catch-up and would hide it.
+                    if (problems.Count > 0 && problems.All(static x => !x.StartsWith("lost commit", StringComparison.Ordinal) && !x.StartsWith("open/verify failed", StringComparison.Ordinal)))
+                    {
+                        firstPassMismatches++;
+                        await Task.Delay(1000).ConfigureAwait(false);
+                        Verifier.Outcome again = Verifier.Verify(dbFile, Path.Combine(dir, inst), Path.Combine(dir, inst + ".ack"));
+                        if (again.Problems.Count == 0)
+                        {
+                            clearedByRecheck++;
+                            Console.WriteLine($"RECHECK cleared cycle {cycle} {inst}: first pass said: {string.Join(" | ", problems)}");
+                            problems = again.Problems;
+                        }
+                        else
+                        {
+                            Console.WriteLine($"RECHECK confirmed cycle {cycle} {inst}: first pass said: {string.Join(" | ", problems)}");
+                            problems = again.Problems;
+                        }
+                    }
+
+                    foreach (string p in problems)
                     {
                         failures++;
                         Console.WriteLine($"FAIL cycle {cycle} {inst}: {p}");
@@ -480,7 +502,7 @@ public sealed class KillCampaign(Args a)
 
         (long withGaps, long late, long maxGaps) = GapEvidence(dir);
         Console.WriteLine($"gap handling: commits with open gaps {withGaps}, most gaps open at once {maxGaps}, rows applied late (below the mark) {late}");
-        Console.WriteLine($"cycles {cycles} seed {seed}: kills {killsByHook + killsByTimer} (named stage {killsByHook}, timer {killsByTimer}), clean exits {exited}, checks {checks}, rebuilds {rebuilds}, lagged cycles {laggedCycles}, failures {failures}, {clock.Elapsed.TotalSeconds:F0}s");
+        Console.WriteLine($"cycles {cycles} seed {seed}: kills {killsByHook + killsByTimer} (named stage {killsByHook}, timer {killsByTimer}), clean exits {exited}, checks {checks}, rebuilds {rebuilds}, lagged cycles {laggedCycles}, first-pass mismatches {firstPassMismatches} (cleared by recheck {clearedByRecheck}, confirmed {firstPassMismatches - clearedByRecheck}), failures {failures}, {clock.Elapsed.TotalSeconds:F0}s");
         foreach (KeyValuePair<string, int> s in byStage)
         {
             Console.WriteLine($"  stage {s.Key}: {s.Value}");

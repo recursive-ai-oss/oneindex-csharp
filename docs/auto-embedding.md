@@ -12,7 +12,7 @@ public class Article {
 }
 ```
 
-`From` names a text or keyword member of the same type (a build-time check in the schema: otherwise `InvalidOperationException` naming the member). `Dimensions` stays required: the schema and the vector file need it before any embedder is chosen; an embedder whose `Dimension` differs is refused when the index opens (`InvalidOperationException` naming both). A multi-valued source is joined with a line feed.
+`From` names a text or keyword member of the same type (a build-time check in the schema: otherwise `InvalidOperationException` naming the member). `Dimensions` may be left out when `From` is set: the index then takes the embedder's `Dimension` when it is opened or created, and opening it without an embedder throws `InvalidOperationException` naming the member (`SearchTool.For<T>()` needs no embedder). When `Dimensions` is declared, an embedder whose `Dimension` differs is refused when the index opens (`InvalidOperationException` naming both). Either way the length is recorded in the index's schema, so an index made with one length refuses to open with another. A non-nullable `float[]` property needs an initial value; an empty array means no vector was supplied. A multi-valued source is joined with a line feed.
 
 ## Which embedder
 

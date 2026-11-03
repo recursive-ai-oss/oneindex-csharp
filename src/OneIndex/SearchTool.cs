@@ -34,7 +34,7 @@ public static class SearchTool
     /// <exception cref="InvalidOperationException"><typeparamref name="T"/> has no OneIndex mapping.</exception>
     public static string For<T>()
         where T : class
-        => For(SearchMappings.Require<T>().Schema, typeof(T).Name);
+        => For(SearchMappings.Require<T>().WithUnsizedDimensions(1).Schema, typeof(T).Name);
 
     /// <summary>Builds only the JSON Schema of the arguments for <typeparamref name="T"/>.</summary>
     /// <typeparam name="T">The attributed document type.</typeparam>
@@ -42,7 +42,7 @@ public static class SearchTool
     /// <exception cref="InvalidOperationException"><typeparamref name="T"/> has no OneIndex mapping.</exception>
     public static string SchemaFor<T>()
         where T : class
-        => SchemaFor(SearchMappings.Require<T>().Schema);
+        => SchemaFor(SearchMappings.Require<T>().WithUnsizedDimensions(1).Schema);
 
     /// <summary>Builds the tool definition for a runtime schema.</summary>
     /// <param name="schema">The schema.</param>

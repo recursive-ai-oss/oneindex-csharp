@@ -226,6 +226,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     {
         Reranker = reranker;
         _storage = storage;
+        mapping = mapping.ResolveDimensions(embedder);
         _mapping = mapping;
         if (embedder is not null && mapping.Members.Any(static m => m.From is not null && m.Type == FieldType.Vector))
         {
@@ -265,6 +266,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     {
         Reranker = reranker;
         _storage = storage;
+        mapping = mapping.ResolveDimensions(embedder);
         _mapping = mapping;
         _storesSource = true;
         if (embedder is not null && mapping.Members.Any(static m => m.From is not null && m.Type == FieldType.Vector))
@@ -378,6 +380,58 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
 
         _auto?.Fill(docs, _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken);
         _autoSparse?.Fill(docs, _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken);
+        for (int i = 0; i < docs.Count; i++)
+        {
+            Write(batch[i], docs[i], cancellationToken);
+        }
+    }
+
+    /// <summary>Adds or replaces several documents, embedding in batches with the embedder's asynchronous method (see <see cref="Upsert(IEnumerable{T}, CancellationToken)"/>).</summary>
+    /// <param name="documents">The documents.</param>
+    /// <param name="cancellationToken">Cancels between batches.</param>
+    /// <returns>A task that completes when every document is buffered.</returns>
+    public async ValueTask UpsertAsync(IEnumerable<T> documents, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(documents);
+        var batch = new List<T>(UpsertBatch);
+        foreach (T d in documents)
+        {
+            ArgumentNullException.ThrowIfNull(d);
+            batch.Add(d);
+            if (batch.Count == UpsertBatch)
+            {
+                await UpsertBatchOfAsync(batch, cancellationToken).ConfigureAwait(false);
+                batch.Clear();
+            }
+        }
+
+        await UpsertBatchOfAsync(batch, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask UpsertBatchOfAsync(List<T> batch, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (batch.Count == 0)
+        {
+            return;
+        }
+
+        var docs = new List<Document>(batch.Count);
+        foreach (T d in batch)
+        {
+            docs.Add(_mapping.ToDocument(d));
+        }
+
+        if (_auto is not null)
+        {
+            await _auto.FillAsync(docs, _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (_autoSparse is not null)
+        {
+            await _autoSparse.FillAsync(docs, _mapping.Schema.IdField!, CommittedSource, replace: false, cancellationToken).ConfigureAwait(false);
+        }
+
         for (int i = 0; i < docs.Count; i++)
         {
             Write(batch[i], docs[i], cancellationToken);
@@ -596,8 +650,13 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
 
     /// <summary>Deletes the document with an identifier (see <see cref="Delete(string)"/>).</summary>
     /// <param name="id">The identifier.</param>
+    /// <param name="cancellationToken">Cancels before the delete is buffered.</param>
     /// <returns><see langword="true"/> if a document was deleted.</returns>
-    public ValueTask<bool> DeleteAsync(string id) => ValueTask.FromResult(Delete(id));
+    public ValueTask<bool> DeleteAsync(string id, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(Delete(id));
+    }
 
     /// <summary>Makes every change since the last commit durable and visible to searches. The commit is atomic: after a crash the index holds the last complete commit.</summary>
     /// <param name="cancellationToken">Cancels before the commit file is published.</param>
@@ -751,6 +810,14 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     /// <param name="cancellationToken">Cancels before the commit file is published.</param>
     /// <returns>The commit's generation number.</returns>
     public ValueTask<long> CommitAsync(CancellationToken cancellationToken = default) => ValueTask.FromResult(Commit(cancellationToken));
+
+    /// <summary>Commits with an application marker (see <see cref="Commit(ReadOnlySpan{byte}, CancellationToken)"/>).</summary>
+    /// <param name="appliedPosition">At most 1,024 bytes.</param>
+    /// <param name="cancellationToken">Cancels before the commit file is published.</param>
+    /// <returns>The commit's generation number.</returns>
+    /// <exception cref="ArgumentException">The marker is too long.</exception>
+    public ValueTask<long> CommitAsync(ReadOnlyMemory<byte> appliedPosition, CancellationToken cancellationToken = default)
+        => ValueTask.FromResult(Commit(appliedPosition.Span, cancellationToken));
 
     /// <summary>Starts a search over the last commit.</summary>
     /// <param name="text">What the user typed: words, "quoted phrases", <c>-excluded</c> words and <c>OR</c>. Any string is accepted; <see langword="null"/> or blank matches every document. See docs/user-text.md.</param>
@@ -1319,6 +1386,18 @@ public sealed partial class SearchQuery<T> : IEnumerable<SearchHit<T>>
     /// <summary>Runs the search and returns the hits as a list.</summary>
     /// <returns>The hits.</returns>
     public List<SearchHit<T>> ToList() => [.. Execute()];
+
+    /// <summary>Runs the search (see <see cref="ExecuteAsync(CancellationToken)"/>) and returns the hits as a list.</summary>
+    /// <param name="cancellationToken">Cancels the search.</param>
+    /// <returns>The hits.</returns>
+    public async ValueTask<List<SearchHit<T>>> ToListAsync(CancellationToken cancellationToken = default)
+        => [.. await ExecuteAsync(cancellationToken).ConfigureAwait(false)];
+
+    /// <summary>The number of matches (see <see cref="Count"/>).</summary>
+    /// <param name="cancellationToken">Cancels the search.</param>
+    /// <returns>The count.</returns>
+    public async ValueTask<long> CountAsync(CancellationToken cancellationToken = default)
+        => (await ExecuteAsync(cancellationToken).ConfigureAwait(false)).TotalHits;
 
     /// <summary>The number of matches: <see cref="SearchResults{T}.TotalHits"/> of running this search, a lower bound unless <see cref="CountExactly"/> was called.</summary>
     /// <returns>The count.</returns>

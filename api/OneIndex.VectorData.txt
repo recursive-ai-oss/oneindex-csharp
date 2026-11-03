@@ -1,0 +1,27 @@
+OneIndex.VectorData.OneIndexRecords<TKey,TRecord>.Name : System.String { get; }
+OneIndex.VectorData.OneIndexRecords<TKey,TRecord>.protected virtual Dispose(System.Boolean disposing) : System.Void
+OneIndex.VectorData.OneIndexRecords<TKey,TRecord>.virtual CollectionExistsAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task<System.Boolean>
+OneIndex.VectorData.OneIndexRecords<TKey,TRecord>.virtual DeleteAsync(System.Collections.Generic.IEnumerable<TKey> keys, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task
+OneIndex.VectorData.OneIndexRecords<TKey,TRecord>.virtual DeleteAsync(TKey key, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task
+OneIndex.VectorData.OneIndexRecords<TKey,TRecord>.virtual EnsureCollectionDeletedAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task
+OneIndex.VectorData.OneIndexRecords<TKey,TRecord>.virtual EnsureCollectionExistsAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task
+OneIndex.VectorData.OneIndexRecords<TKey,TRecord>.virtual GetAsync(System.Collections.Generic.IEnumerable<TKey> keys, Microsoft.Extensions.VectorData.RecordRetrievalOptions options = null, System.Threading.CancellationToken cancellationToken = null) : System.Collections.Generic.IAsyncEnumerable<TRecord>
+OneIndex.VectorData.OneIndexRecords<TKey,TRecord>.virtual GetAsync(System.Linq.Expressions.Expression<System.Func<TRecord,System.Boolean>> filter, System.Int32 top, Microsoft.Extensions.VectorData.FilteredRecordRetrievalOptions<TRecord> options = null, System.Threading.CancellationToken cancellationToken = null) : System.Collections.Generic.IAsyncEnumerable<TRecord>
+OneIndex.VectorData.OneIndexRecords<TKey,TRecord>.virtual GetAsync(TKey key, Microsoft.Extensions.VectorData.RecordRetrievalOptions options = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task<TRecord>
+OneIndex.VectorData.OneIndexRecords<TKey,TRecord>.virtual GetService(System.Type serviceType, System.Object serviceKey = null) : System.Object
+OneIndex.VectorData.OneIndexRecords<TKey,TRecord>.virtual SearchAsync<TInput>(TInput searchValue, System.Int32 top, Microsoft.Extensions.VectorData.VectorSearchOptions<TRecord> options = null, System.Threading.CancellationToken cancellationToken = null) : System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.VectorData.VectorSearchResult<TRecord>>
+OneIndex.VectorData.OneIndexRecords<TKey,TRecord>.virtual UpsertAsync(System.Collections.Generic.IEnumerable<TRecord> records, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task
+OneIndex.VectorData.OneIndexRecords<TKey,TRecord>.virtual UpsertAsync(TRecord record, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task
+OneIndex.VectorData.OneIndexVectorStore..ctor()
+OneIndex.VectorData.OneIndexVectorStore..ctor(System.String directory)
+OneIndex.VectorData.OneIndexVectorStore.protected virtual Dispose(System.Boolean disposing) : System.Void
+OneIndex.VectorData.OneIndexVectorStore.virtual CollectionExistsAsync(System.String name, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task<System.Boolean>
+OneIndex.VectorData.OneIndexVectorStore.virtual EnsureCollectionDeletedAsync(System.String name, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task
+OneIndex.VectorData.OneIndexVectorStore.virtual GetCollection<TKey,TRecord>(System.String name, Microsoft.Extensions.VectorData.VectorStoreCollectionDefinition definition = null) : Microsoft.Extensions.VectorData.VectorStoreCollection<TKey,TRecord>
+OneIndex.VectorData.OneIndexVectorStore.virtual GetDynamicCollection(System.String name, Microsoft.Extensions.VectorData.VectorStoreCollectionDefinition definition) : Microsoft.Extensions.VectorData.VectorStoreCollection<System.Object,System.Collections.Generic.Dictionary<System.String,System.Object>>
+OneIndex.VectorData.OneIndexVectorStore.virtual GetService(System.Type serviceType, System.Object serviceKey = null) : System.Object
+OneIndex.VectorData.OneIndexVectorStore.virtual ListCollectionNamesAsync(System.Threading.CancellationToken cancellationToken = null) : System.Collections.Generic.IAsyncEnumerable<System.String>
+OneIndex.VectorData.VectorDataPackage.Name : System.String = RecursiveAI.OneIndex.VectorData
+sealed class OneIndex.VectorData.OneIndexRecords<TKey,TRecord> : Microsoft.Extensions.VectorData.VectorStoreCollection<TKey,TRecord>, Microsoft.Extensions.VectorData.IKeywordHybridSearchable<TRecord>, Microsoft.Extensions.VectorData.IVectorSearchable<TRecord>, System.IDisposable
+sealed class OneIndex.VectorData.OneIndexVectorStore : Microsoft.Extensions.VectorData.VectorStore, System.IDisposable
+static class OneIndex.VectorData.VectorDataPackage

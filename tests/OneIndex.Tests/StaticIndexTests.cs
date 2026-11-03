@@ -340,10 +340,13 @@ public class StaticIndexTests
                 }
 
                 string text = Words[rng.Next(Words.Length)] + " " + Words[rng.Next(Words.Length)];
+                // An excluded word must remove documents from the IVF arm as well as from the text arm.
+                string? excluded = q % 4 == 1 ? Words[rng.Next(Words.Length)] : null;
+                string searchText = excluded is null ? text : text + " -" + excluded;
                 string? filter = q % 3 == 0 ? "Year >= 2005" : null;
                 Func<SearchIndex<StaticDoc>, List<(string, float)>> hybrid = i =>
                 {
-                    SearchQuery<StaticDoc> sq = i.Search(text);
+                    SearchQuery<StaticDoc> sq = i.Search(searchText);
                     if (filter is not null)
                     {
                         sq = sq.Where(filter);
@@ -354,6 +357,11 @@ public class StaticIndexTests
                 List<(string, float)> expected = hybrid(local);
                 Assert.NotEmpty(expected);
                 Assert.Equal(expected, await remote.QueryAsync(hybrid));
+                if (excluded is not null)
+                {
+                    HashSet<string> banned = [.. local.Search(excluded).Take(2000).Execute().Select(static h => h.Document.Id)];
+                    Assert.DoesNotContain(expected, e => banned.Contains(e.Item1));
+                }
             }
 
             // The graph is never walked: at most one chunk of each graph file (its directory, read when the vector part opens) was fetched.

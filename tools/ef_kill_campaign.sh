@@ -2,6 +2,8 @@
 # Builds the Entity Framework kill harness and runs LANES campaigns of CYCLES cycles in parallel, each in its own directory.
 # EF_RETAIN_BASE (default 5) and EF_WINDOW (default 10000) set the retention rows of the application processes (base plus 0-59) and their late-row window.
 # Retention below the window is a stress setting: a transaction open across it can lose its log row, so a campaign that is meant to pass uses a base at or above the window.
+# A mismatch of index and database found by a check is compared again after a second catch-up (RECHECK lines; the summary counts first-pass mismatches,
+# those cleared by the recheck, and those confirmed). A lost acknowledged commit or a failed open is never rechecked.
 # usage: tools/ef_kill_campaign.sh <work dir> <first seed> <lanes> <cycles>
 # With EF_PG set to a PostgreSQL connection string without a database (for example "Host=/path/to/socket;Username=postgres") the lanes run on
 # PostgreSQL, one database per lane, with EF_WRITERS concurrent writers in each application process (default 2); otherwise on SQLite.
@@ -21,5 +23,5 @@ for ((i = 0; i < LANES; i++)); do
 done
 rc=0
 for p in "${pids[@]}"; do wait "$p" || rc=1; done
-cat "$WORK"/logs/lane*.log | grep -E '^(cycles|FAIL|cycle|gap handling|  stage)' | head -60
+cat "$WORK"/logs/lane*.log | grep -E '^(cycles|FAIL|RECHECK|cycle|gap handling|  stage)' | head -60
 exit $rc

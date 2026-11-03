@@ -18,7 +18,7 @@ internal static class Program
               Prints the best passages with citations (file, page, character range).
               --filter uses the filter-string syntax, for example: Format = pdf AND Page > 2
               --files shows one hit per file. --json writes one JSON object with the hits.
-          oneindex static build <index> <out> [--chunk-kb N]
+          oneindex static build <index> <out> [--chunk-kb N] [--scattered-kb N]
               Writes a static index of a passage index into <out> for browsers and plain file servers.
           oneindex --version | --help
 

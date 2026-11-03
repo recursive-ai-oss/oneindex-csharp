@@ -1,0 +1,66 @@
+OneIndex.EntityFrameworkCore.EfSearchQuery<T>.AfterPendingChanges() : OneIndex.EntityFrameworkCore.EfSearchQuery<T>
+OneIndex.EntityFrameworkCore.EfSearchQuery<T>.AsTracking() : OneIndex.EntityFrameworkCore.EfSearchQuery<T>
+OneIndex.EntityFrameworkCore.EfSearchQuery<T>.Configure(System.Func<OneIndex.SearchQuery<T>,OneIndex.SearchQuery<T>> refine) : OneIndex.EntityFrameworkCore.EfSearchQuery<T>
+OneIndex.EntityFrameworkCore.EfSearchQuery<T>.Skip(System.Int32 count) : OneIndex.EntityFrameworkCore.EfSearchQuery<T>
+OneIndex.EntityFrameworkCore.EfSearchQuery<T>.Take(System.Int32 count) : OneIndex.EntityFrameworkCore.EfSearchQuery<T>
+OneIndex.EntityFrameworkCore.EfSearchQuery<T>.ToList() : System.Collections.Generic.List<T>
+OneIndex.EntityFrameworkCore.EfSearchQuery<T>.ToListAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task<System.Collections.Generic.List<T>>
+OneIndex.EntityFrameworkCore.EfSearchQuery<T>.Where(System.Linq.Expressions.Expression<System.Func<T,System.Boolean>> predicate) : OneIndex.EntityFrameworkCore.EfSearchQuery<T>
+OneIndex.EntityFrameworkCore.OneIndexDbContextOptionsExtensions.static SaveChangesAndIndexAsync(Microsoft.EntityFrameworkCore.DbContext context, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task<System.Int32>
+OneIndex.EntityFrameworkCore.OneIndexDbContextOptionsExtensions.static UseOneIndex(Microsoft.EntityFrameworkCore.DbContextOptionsBuilder builder, System.String path, System.Action<OneIndex.EntityFrameworkCore.OneIndexOptions> configure = null) : Microsoft.EntityFrameworkCore.DbContextOptionsBuilder
+OneIndex.EntityFrameworkCore.OneIndexDbContextOptionsExtensions.static UseOneIndex<TContext>(Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<TContext> builder, System.String path, System.Action<OneIndex.EntityFrameworkCore.OneIndexOptions> configure = null) : Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<TContext>
+OneIndex.EntityFrameworkCore.OneIndexDbSetExtensions.static Search<T>(Microsoft.EntityFrameworkCore.DbSet<T> set, System.String text = null) : OneIndex.EntityFrameworkCore.EfSearchQuery<T>
+OneIndex.EntityFrameworkCore.OneIndexOptions..ctor()
+OneIndex.EntityFrameworkCore.OneIndexOptions.ApplyInline : System.Boolean { get; set; }
+OneIndex.EntityFrameworkCore.OneIndexOptions.BatchSize : System.Int32 { get; set; }
+OneIndex.EntityFrameworkCore.OneIndexOptions.ContextFactory : System.Func<Microsoft.EntityFrameworkCore.DbContext> { get; set; }
+OneIndex.EntityFrameworkCore.OneIndexOptions.Index<T>() : OneIndex.EntityFrameworkCore.OneIndexOptions
+OneIndex.EntityFrameworkCore.OneIndexOptions.LateRowAge : System.TimeSpan { get; set; }
+OneIndex.EntityFrameworkCore.OneIndexOptions.LateRowWindow : System.Int64 { get; set; }
+OneIndex.EntityFrameworkCore.OneIndexOptions.PollInterval : System.TimeSpan { get; set; }
+OneIndex.EntityFrameworkCore.OneIndexOptions.Probe : System.Action<System.String> { get; set; }
+OneIndex.EntityFrameworkCore.OneIndexOptions.RetainRows : System.Int64 { get; set; }
+OneIndex.EntityFrameworkCore.OneIndexOptions.TimeProvider : System.TimeProvider { get; set; }
+OneIndex.EntityFrameworkCore.OneIndexPosition..ctor(System.Guid LogId, System.Int64 Seq, System.Int64 Base, System.Int64 Count, System.Int32 GapCount)
+OneIndex.EntityFrameworkCore.OneIndexPosition.Base : System.Int64 { get; init; }
+OneIndex.EntityFrameworkCore.OneIndexPosition.Count : System.Int64 { get; init; }
+OneIndex.EntityFrameworkCore.OneIndexPosition.GapCount : System.Int32 { get; init; }
+OneIndex.EntityFrameworkCore.OneIndexPosition.LogId : System.Guid { get; init; }
+OneIndex.EntityFrameworkCore.OneIndexPosition.Seq : System.Int64 { get; init; }
+OneIndex.EntityFrameworkCore.OneIndexRuntime.CatchUp(System.Threading.CancellationToken cancellationToken = null) : System.Int32
+OneIndex.EntityFrameworkCore.OneIndexRuntime.CatchUpAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<System.Int32>
+OneIndex.EntityFrameworkCore.OneIndexRuntime.Dispose() : System.Void
+OneIndex.EntityFrameworkCore.OneIndexRuntime.DisposeAsync() : System.Threading.Tasks.ValueTask
+OneIndex.EntityFrameworkCore.OneIndexRuntime.GetPosition<T>() : OneIndex.EntityFrameworkCore.OneIndexPosition?
+OneIndex.EntityFrameworkCore.OneIndexRuntime.Index<T>() : OneIndex.SearchIndex<T>
+OneIndex.EntityFrameworkCore.OneIndexRuntime.LastApplyError : System.Exception { get; }
+OneIndex.EntityFrameworkCore.OneIndexRuntime.LateRowsApplied : System.Int64 { get; }
+OneIndex.EntityFrameworkCore.OneIndexRuntime.Prune(System.Int64 retain) : System.Int64
+OneIndex.EntityFrameworkCore.OneIndexRuntime.PruneAsync(System.Int64 retain, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<System.Int64>
+OneIndex.EntityFrameworkCore.OneIndexRuntime.ReindexAsync<T>(System.Linq.IQueryable<T> query, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<System.Int32>
+OneIndex.EntityFrameworkCore.OneIndexRuntime.ReindexAsync<T>(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
+OneIndex.EntityFrameworkCore.OneIndexRuntime.RunAsync(System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task
+OneIndex.EntityFrameworkCore.OneIndexRuntime.static For(Microsoft.EntityFrameworkCore.DbContext context) : OneIndex.EntityFrameworkCore.OneIndexRuntime
+OneIndex.EntityFrameworkCore.OutboxEntry..ctor()
+OneIndex.EntityFrameworkCore.OutboxEntry.EntityId : System.String { get; set; }
+OneIndex.EntityFrameworkCore.OutboxEntry.EntityType : System.String { get; set; }
+OneIndex.EntityFrameworkCore.OutboxEntry.Operation : OneIndex.EntityFrameworkCore.OutboxOperation { get; set; }
+OneIndex.EntityFrameworkCore.OutboxEntry.Seq : System.Int64 { get; set; }
+OneIndex.EntityFrameworkCore.OutboxModelBuilderExtensions.DefaultTableName : System.String = OneIndexOutbox
+OneIndex.EntityFrameworkCore.OutboxModelBuilderExtensions.static UseOneIndexOutbox(Microsoft.EntityFrameworkCore.ModelBuilder modelBuilder, System.String table = OneIndexOutbox, System.String schema = null) : Microsoft.EntityFrameworkCore.ModelBuilder
+OneIndex.EntityFrameworkCore.OutboxOperation.Delete : OneIndex.EntityFrameworkCore.OutboxOperation = 2
+OneIndex.EntityFrameworkCore.OutboxOperation.Upsert : OneIndex.EntityFrameworkCore.OutboxOperation = 1
+OneIndex.EntityFrameworkCore.OutboxState..ctor()
+OneIndex.EntityFrameworkCore.OutboxState.Id : System.Int32 { get; set; }
+OneIndex.EntityFrameworkCore.OutboxState.LogId : System.String { get; set; }
+OneIndex.EntityFrameworkCore.OutboxState.PrunedThrough : System.Int64 { get; set; }
+enum OneIndex.EntityFrameworkCore.OutboxOperation : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
+sealed class OneIndex.EntityFrameworkCore.EfSearchQuery<T>
+sealed class OneIndex.EntityFrameworkCore.OneIndexOptions
+sealed class OneIndex.EntityFrameworkCore.OneIndexRuntime : System.IAsyncDisposable, System.IDisposable
+sealed class OneIndex.EntityFrameworkCore.OutboxEntry
+sealed class OneIndex.EntityFrameworkCore.OutboxState
+static class OneIndex.EntityFrameworkCore.OneIndexDbContextOptionsExtensions
+static class OneIndex.EntityFrameworkCore.OneIndexDbSetExtensions
+static class OneIndex.EntityFrameworkCore.OutboxModelBuilderExtensions
+struct OneIndex.EntityFrameworkCore.OneIndexPosition : System.IEquatable<OneIndex.EntityFrameworkCore.OneIndexPosition>

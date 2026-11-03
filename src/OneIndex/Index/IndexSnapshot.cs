@@ -181,6 +181,23 @@ public sealed class IndexSnapshot : IDisposable
         return false;
     }
 
+    /// <summary>Gets one segment's reader (see <see cref="GetSegment(int, CancellationToken)"/>).</summary>
+    /// <param name="index">The segment's position in the commit.</param>
+    /// <param name="cancellationToken">Cancels the open.</param>
+    /// <returns>The reader.</returns>
+    public ValueTask<SegmentReader> GetSegmentAsync(int index, CancellationToken cancellationToken = default)
+        => ValueTask.FromResult(GetSegment(index, cancellationToken));
+
+    /// <summary>Checks every file the commit lists (see <see cref="Verify(CancellationToken)"/>).</summary>
+    /// <param name="cancellationToken">Cancels the check.</param>
+    /// <returns>A task that completes when every checksum has been verified.</returns>
+    /// <exception cref="CorruptIndexException">A file is damaged; the exception names it.</exception>
+    public ValueTask VerifyAsync(CancellationToken cancellationToken = default)
+    {
+        Verify(cancellationToken);
+        return ValueTask.CompletedTask;
+    }
+
     /// <summary>Reads every byte of every file the commit lists and checks the checksums.</summary>
     /// <param name="cancellationToken">Cancels the check.</param>
     /// <exception cref="CorruptIndexException">A file is damaged; the exception names it.</exception>
