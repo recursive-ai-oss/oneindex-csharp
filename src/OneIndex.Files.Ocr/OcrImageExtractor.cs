@@ -60,7 +60,7 @@ public sealed class OcrImageExtractor : IFileExtractor
         return new ExtractedFile("image", units);
     }
 
-    private static ExtractedUnit? BuildUnit(OcrPage page, int number)
+    internal static ExtractedUnit? BuildUnit(OcrPage page, int number, string boxUnits = "px")
     {
         var text = new StringBuilder();
         var blocks = new List<TextBlock>();
@@ -113,6 +113,6 @@ public sealed class OcrImageExtractor : IFileExtractor
             return null;
         }
 
-        return new ExtractedUnit(number, text.ToString(), blocks) { Words = words, BoxUnits = "px", Width = page.Width, Height = page.Height };
+        return new ExtractedUnit(number, text.ToString(), blocks) { Words = words, BoxUnits = boxUnits, Width = page.Width, Height = page.Height };
     }
 }

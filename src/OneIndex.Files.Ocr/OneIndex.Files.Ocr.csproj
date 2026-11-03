@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <PackageReference Include="RecursiveAI.OneOcr" />
+    <PackageReference Include="RecursiveAI.OneOcr.Pdf" />
   </ItemGroup>
 
 </Project>

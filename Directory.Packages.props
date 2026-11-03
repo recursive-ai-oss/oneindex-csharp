@@ -8,9 +8,11 @@
     <PackageVersion Include="RecursiveAI.OneHtml" Version="1.5.1" />
     <PackageVersion Include="RecursiveAI.OneArchive" Version="1.1.1" />
     <PackageVersion Include="RecursiveAI.OneOcr" Version="1.0.0" />
+    <PackageVersion Include="RecursiveAI.OneOcr.Pdf" Version="1.0.0" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.0" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.0" />
-    <PackageVersion Include="Microsoft.Extensions.VectorData.Abstractions" Version="10.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.VectorData.Abstractions" Version="10.11.0" />
+    <PackageVersion Include="Microsoft.Extensions.VectorData.ConformanceTests" Version="10.11.0" />
   </ItemGroup>
   <ItemGroup Label="Build time only">
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />

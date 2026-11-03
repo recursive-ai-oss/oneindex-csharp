@@ -33,6 +33,7 @@ internal static class Program
         ["wordpiece"] = WordPieceTarget.Run,
         ["dictionary"] = AsianTargets.RunDictionary,
         ["asian"] = AsianTargets.RunText,
+        ["static"] = StaticTarget.Run,
     };
 
     private static int Main(string[] args)
@@ -104,6 +105,8 @@ internal static class Program
                     break;
                 case "dictionary":
                     AsianTargets.WriteDictionarySeeds(args[2]);
+                case "static":
+                    StaticTarget.WriteSeeds(args[2]);
                     break;
                 default:
                     CommitTarget.WriteSeeds(args[2]);

@@ -1,0 +1,67 @@
+# IVF: a clustered vector index
+
+An inverted-file (IVF) index groups vectors by cluster and answers a query by scanning only the few clusters whose centres are nearest to it (Jegou, Douze and Schmid, "Product quantization for nearest neighbor search", TPAMI 2011, section 2; the clustered lists follow Sivic and Zisserman, ICCV 2003). Unlike a graph, a search reads a handful of contiguous ranges, which is what a static index needs: one range read per probed list.
+
+```csharp
+byte[] image = IvfBuilder.Build(vectors, dimensions, new IvfOptions { Storage = IvfStorage.EightBit });   // or IvfBuilder.Write(storage, name, ...)
+using IvfIndex index = IvfIndex.Open(storage.OpenRead("v.ivf"));
+IvfHit[] hits = index.Search(query, k: 10, nprobe: 16);                  // Id is the vector's number; Score larger is nearer
+```
+
+IVF is the vector layout of the static index ([static-index.md](static-index.md)). On the server the engine's vector fields use HNSW and the flat scan; IVF is available there as the library types above but is not a per-field segment option.
+
+## Building
+
+`IvfBuilder` runs k-means on a sample (64 training vectors per list by default, 12 Lloyd iterations, seeded; spherical k-means for cosine, so the centres are unit vectors). The number of lists defaults to about the square root of the vector count, from 1 to 4096. The same input and options give the same bytes. Every vector goes to its nearest centre.
+
+`IvfOptions.Storage`:
+- `FullPrecision`: lists hold float vectors; probed lists are scored exactly.
+- `EightBit` (the static default): lists hold the vector's 8-bit codes with one scale per vector; probed lists are scored on the codes, the best `oversample × k` candidates (default 4) are then re-scored from a full-precision region at the end of the file, so reads of full rows are limited to the candidates.
+
+Cosine, dot product and Euclidean metrics follow [vectors.md](vectors.md). A filter callback on the vector number is applied while scanning.
+
+## File format `OIVF` version 1
+
+All integers little-endian.
+
+| Offset | Content |
+|---|---|
+| 0 | magic `OIVF` (`0x4656494F`), `u32` version 1, `u32` dimensions, `u32` metric, `u32` list count, `u32` vector count, `u32` storage (0 full precision, 1 eight bit), 4 bytes zero |
+| 32 | `i64` offset of the full-precision region (0 when storage is full precision), 8 bytes zero. The header is 48 bytes. |
+| 48 | centroids: list count × dimensions `f32` |
+| after | directory: per list `i64` file offset of the list, `u32` count, `u32` first position |
+| lists | per list: its vector numbers (`u32` each), then its vectors (`f32 × dimensions`) or codes (`f32` scale, then `i8 × dimensions`) |
+| rerank | eight-bit only: the full-precision vectors in list order (`f32 × dimensions` each), reached by position |
+| end | CRC-32C of everything before it (`u32`), magic `OIVF` again (`u32`) |
+
+Readers check the magic, version, sizes against the file length, each directory entry against the list region, each vector number against the count, and the CRC (on by default; `verifyChecksum: false` for a reader that has checked the bytes another way, such as a static index's per-chunk CRCs). Damage raises `CorruptIndexException`. The file is at most 2 GiB.
+
+## Recall and speed
+
+Measured on the worker (AMD Ryzen 9 7950X3D, 32 threads; one thread per query; Linux; the file was read through `FileSystemStorage`, in the page cache; the machine was shared with other jobs, so the QPS are indicative: load average 27 at the start of the run and 3 at its end). Sets: 150,000 Wikipedia abstracts embedded with bge-small-en-v1.5 (384 d) and 75,000 with bge-base-en-v1.5 (768 d); 1,000 queries; recall@10 against the exact top 10; cosine; 387 and 274 lists; `oversample` 4; median of 3 passes. Tool: `bench/OneIndex.VectorBench --mode ivf`. There is no managed IVF comparator, so these rows are reported, not gated.
+
+**384 d, 150,000 vectors, 387 lists**
+
+| nprobe | lists scanned | recall@10 | QPS full precision | QPS eight bit |
+|---:|---:|---:|---:|---:|
+| 1 | 0.3% | 0.309 | 2,550 | 3,638 |
+| 4 | 1.0% | 0.536 | 834 | 1,423 |
+| 16 | 4.1% | 0.749 | 209 | 413 |
+| 48 | 12.4% | 0.880 | 70 | 137 |
+| 96 | 24.8% | 0.944 | 35 | 69 |
+| 192 | 49.6% | 0.983 | 18 | 35 |
+
+**768 d, 75,000 vectors, 274 lists**
+
+| nprobe | lists scanned | recall@10 | QPS full precision | QPS eight bit |
+|---:|---:|---:|---:|---:|
+| 1 | 0.4% | 0.351 | 2,028 | 2,740 |
+| 4 | 1.5% | 0.567 | 581 | 1,066 |
+| 16 | 5.8% | 0.766 | 148 | 294 |
+| 48 | 17.5% | 0.894 | 49 | 97 |
+| 96 | 35.0% | 0.954 | 25 | 49 |
+| 192 | 70.1% | 0.991 | 13 | 25 |
+
+The eight-bit layout gives the same recall as full precision at every probe count (the float re-score repairs the code error) and about twice the speed. Real text embeddings have little cluster structure, so reaching recall 0.95 takes a quarter to a third of the lists; this is the nature of an IVF layout without product quantization, and the reason the static index also keeps the HNSW graph for hybrid queries made through the engine.
+
+Sizes: full precision 226,172 KiB (1.01 × the float vectors) for 384 d and 226,119 KiB (1.00×) for 768 d; eight bit 283,008 KiB and 282,662 KiB (1.26×, the codes plus the float rerank region). Build: 6 to 9 s for either set on one thread. Peak working set of the benchmark process: 1.1 to 2.3 GB, which includes the input vectors (230 MB) and the build's working copies.

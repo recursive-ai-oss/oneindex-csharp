@@ -21,6 +21,7 @@
 | `dynamic` | first byte = route, then JSON bytes | hostile JSON indexed by path (directly, or after a schema change that rebuilds it from stored source), committed, reopened and queried: only typed exceptions; derived fields stay within the path limit; the stored value comes back whole |
 | `dictionary` | byte 0 picks the reader (lattice dictionary, word list, SentencePiece model; bit 7 repairs the checksum footer), then the file | the dictionary and model readers: only the typed format exceptions escape; a loaded dictionary is searched, and segments cover the text |
 | `asian` | UTF-16 text | the Japanese, Chinese, Korean and Thai analyzers, the three segmenters, the decompounder and the SentencePiece tokenizer over small synthetic dictionaries: nothing may be thrown, tokens keep offsets inside the text |
+| `static` | bytes in place of a static index manifest, an IVF index file or a packed multi-vector | only `CorruptIndexException` (and `FormatException` for the multi-vector) may escape; a file that opens is searched, with and without a filter |
 | `wordpiece` | UTF-16 text | the WordPiece tokenizer over a small synthetic vocabulary: nothing may be thrown, ids stay in the vocabulary, a shorter limit gives a prefix of a longer one, a batch row equals the single encoding |
 
 Only `CorruptIndexException` (and its subclass `UnsupportedFormatException`) may come out of a reader. Any other exception, a failed invariant, a hang (`-timeout`) or a memory blow-up (`-rss_limit_mb`) is a finding.

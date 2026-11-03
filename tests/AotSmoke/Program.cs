@@ -22,6 +22,19 @@ VectorScenario.RunHappyPath();
 SmokeScenario.RunWriter(new MemoryStorage(), threadedMerges: true);
 SmokeScenario.RunWriter(new MemoryStorage(), threadedMerges: false);
 
+string staticDirectory = Path.Combine(Path.GetTempPath(), "oneindex-aot-static-" + Guid.NewGuid().ToString("N"));
+try
+{
+    await StaticScenario.RunAsync(staticDirectory);
+}
+finally
+{
+    if (Directory.Exists(staticDirectory))
+    {
+        Directory.Delete(staticDirectory, recursive: true);
+    }
+}
+
 string directory = Path.Combine(Path.GetTempPath(), "oneindex-aot-smoke-" + Guid.NewGuid().ToString("N"));
 try
 {

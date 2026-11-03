@@ -90,7 +90,7 @@ Everything for one file is written between two commits, and the indexer commits 
 
 ## Embeddings
 
-`FilePassage.Embedding` is a 384-dimension vector filled from `Text` when the index has an embedder (`FolderIndexer.OpenIndex(path, embedder)`; the packaged default embedder produces 384). Hybrid search then works as described in [hybrid.md](hybrid.md). Without an embedder the index is text-only. Embedding dominates the cost of indexing a folder (see [models.md](models.md) for throughput); the measurements below are text-only.
+`FilePassage.Embedding` is filled from `Text` when the index has an embedder (`FolderIndexer.OpenIndex(path, embedder)`). The vector takes the embedder's dimension (384 for the packaged default, 768 for a base-size model) when the index is created; the size is part of the index, and opening it with an embedder of another size is refused. `tests/OneIndex.Files.Tests/EmbeddingSizeTests` runs a 768-dimension embedder. Hybrid search then works as described in [hybrid.md](hybrid.md). Without an embedder the index is text-only. Embedding dominates the cost of indexing a folder (see [models.md](models.md) for throughput); the measurements below are text-only.
 
 ## Checks
 
@@ -114,9 +114,12 @@ All numbers are from the generated corpus in `tools/OneIndex.Files.Tool` (seed 1
 
   Peak working set 1.3 GiB (8 threads) and 1.1 GiB (1 thread) for the whole process. Writing passages into the index is the limit: more extraction threads help only PDF and OCR. The text index builds about 7,500 passages per second here.
 
+## Scanned PDFs
+
+`OcrPdfExtractor` (package `.Files.Ocr`, on oneocr's PDF package) reads PDFs whose pages may be pictures: each page is its text layer where it has one plus the recognised text of the images on it, with a box in PDF points (origin top left) for every word. Put it before the default PDF extractor in `FolderIndexOptions.Extractors`; it replaces that extractor for PDFs (`oneindex index --ocr` does this). Recognition takes seconds per page, so give it a generous `FileTimeout`. `OcrTests.AScannedPdfPageBecomesCitedPassagesWithBoxesInPoints` draws a scan, wraps it in a one-page PDF with OnePDF, indexes it, and checks that every passage has page 1, boxes in points inside the page.
+
 ## Not done
 
-- Scanned PDFs (pages that are only images) are not read; an image extractor for them needs the page rendered or its images extracted, which neither OnePDF nor this package does yet.
 - Office documents, mail and media wait for their libraries.
 - A renamed archive is read again (its entries' identifiers change with its name).
 - A file and an archive entry can only share an identifier if a folder is named `name!` next to an archive `name`.

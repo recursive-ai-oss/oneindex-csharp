@@ -42,8 +42,8 @@ Total about 14.4 MB (under the 50 MB at which a separate package would be propos
   the dictionary, and the path with the lowest sum of word costs and connection costs (left/right context ids) is found by Viterbi
   search, as in Kudo, Yamamoto and Matsumoto, "Applying Conditional Random Fields to Japanese Morphological Analysis" (EMNLP 2004).
   The dictionaries' costs are used as published. Japanese search mode adds a length penalty to long Han and Katakana words (after the
-  published description of search-mode segmentation: threshold 2 and penalty 3000 for Han, threshold 7 and penalty 10000 for Katakana
-  (untuned beyond the F1 check below)) so compounds are split. Japanese tokens are the base form of inflected words;
+  published description of search-mode segmentation: threshold 2 and penalty 3000 for Han, threshold 7 and penalty 10000 for Katakana;
+  untuned beyond the F1 check below) so compounds are split. Japanese tokens are the base form of inflected words;
   particles, auxiliary verbs and symbols are dropped (part-of-speech prefixes 助詞, 助動詞, 記号). Korean yields the content morphemes (a
   verb's stem, not its endings) and a compound noun is the compound followed by its parts at the same position; the classes dropped are
   the endings, particles, suffixes and symbols (tags beginning with E, J, SC, SE, SF, SP, SSO, SSC, SY, VCP, VCN, XPN, XSA, XSN, XSV).

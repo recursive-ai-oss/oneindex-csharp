@@ -16,6 +16,7 @@
     <Compile Include="../OneIndex.VectorBench/CuriosityEngine.cs" />
     <Compile Include="../OneIndex.VectorBench/MergeRun.cs" />
     <Compile Include="../OneIndex.VectorBench/FilteredRun.cs" />
+    <Compile Include="../OneIndex.VectorBench/IvfRun.cs" />
   </ItemGroup>
 
   <ItemGroup>

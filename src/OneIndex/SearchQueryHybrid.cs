@@ -98,6 +98,31 @@ public sealed partial class SearchQuery<T>
         return HybridCore(MakeSpec(semanticRatio, fusion, rankConstant, window, m.Name, (float[])vector.Clone()));
     }
 
+    /// <summary>Like <see cref="Hybrid{TVector}(Expression{Func{T, TVector}}, float[], double, FusionMethod, int, int)"/> for a vector property named by a string.</summary>
+    /// <param name="vectorMember">The vector property name.</param>
+    /// <param name="vector">The query vector: as long as the property's <c>Dimensions</c> and finite.</param>
+    /// <param name="semanticRatio">As above.</param>
+    /// <param name="fusion">As above.</param>
+    /// <param name="rankConstant">As above.</param>
+    /// <param name="window">As above.</param>
+    /// <returns>The search.</returns>
+    public SearchQuery<T> Hybrid(string vectorMember, float[] vector, double semanticRatio = HybridQuery.DefaultSemanticRatio, FusionMethod fusion = FusionMethod.ReciprocalRank, int rankConstant = HybridQuery.DefaultRankConstant, int window = 100)
+    {
+        ArgumentNullException.ThrowIfNull(vectorMember);
+        ArgumentNullException.ThrowIfNull(vector);
+        if (!_index.Mapping.TryGetMember(vectorMember, out MappedMember? m) || m.Type != FieldType.Vector)
+        {
+            throw new ArgumentException($"Hybrid: '{vectorMember}' is not a vector property of {typeof(T).Name}.", nameof(vectorMember));
+        }
+
+        if (vector.Length != m.Dimensions || vector.Any(static x => !float.IsFinite(x)))
+        {
+            throw new ArgumentException($"Hybrid: the query vector must hold {m.Dimensions} finite numbers.", nameof(vector));
+        }
+
+        return HybridCore(MakeSpec(semanticRatio, fusion, rankConstant, window, m.Name, (float[])vector.Clone()));
+    }
+
     private MappedMember VectorMember<TVector>(Expression<Func<T, TVector>> member)
     {
         MappedMember m = MemberNames.Resolve(_index.Mapping, member, nameof(Hybrid));
