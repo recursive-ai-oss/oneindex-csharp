@@ -9,7 +9,7 @@ RankingScenario.Run();
 VectorScenario.RunLowLevel();
 SmokeScenario.RunWriter(new MemoryStorage(), threadedMerges: false);
 
-await StaticScenario.RunAsync(Path.Combine(Path.GetTempPath(), "oneindex-wasm-static"));
+await StaticScenario.RunVectorsAsync();
 
 string directory = Path.Combine(Path.GetTempPath(), "oneindex-wasm-smoke");
 SmokeScenario.Run(new FileSystemStorage(directory));

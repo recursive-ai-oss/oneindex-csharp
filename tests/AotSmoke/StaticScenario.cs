@@ -7,7 +7,8 @@ namespace OneIndex.AotSmoke;
 /// <summary>The static index, the IVF index, multi-vector scoring and read-only opens: build, read through the chunk source, compare with the local engine.</summary>
 internal static class StaticScenario
 {
-    public static async Task RunAsync(string scratchDirectory)
+    /// <summary>The IVF index and multi-vector scoring, over memory; runs in the browser runtime too.</summary>
+    public static async Task RunVectorsAsync()
     {
         // IVF over memory: a full probe equals the exact search.
         var rng = new Random(11);
@@ -60,6 +61,19 @@ internal static class StaticScenario
         float[] other = Flatten([[0, 0, 1], [0, 0, 1]]);
         Require(MaxSim.Score(Flatten(q), same, 3) > MaxSim.Score(Flatten(q), other, 3), "maxsim order");
         Require(MultiVector.Unpack(MultiVector.Pack([[1, 2, 3], [4, 5, 6]]), out int tokens, out int dimension).Length == 6 && tokens == 2 && dimension == 3, "multivector round trip");
+
+    }
+
+    /// <summary>Builds a static index on disk (the index directory takes a writer lock, so this is for the desktop runtimes) and reads it through the chunk source.</summary>
+    public static async Task RunAsync(string scratchDirectory)
+    {
+        await RunVectorsAsync();
+        var rng = new Random(12);
+        var query = new float[6];
+        for (int i = 0; i < query.Length; i++)
+        {
+            query[i] = (float)(rng.NextDouble() - 0.5);
+        }
 
         // A static index of a small index: queries through the chunk source equal the local engine's.
         string indexDir = Path.Combine(scratchDirectory, "index");
