@@ -31,7 +31,7 @@ Two entry points exist, and most code needs only the first:
 | `Highlighter`, `QueryScorer`, `SimpleHTMLFormatter` | `hit.Highlights`; `Highlighter`, `HighlightOptions` | Computed from the stored text on first use. |
 | `IndexSearcher.Explain` | `Explain()`; `IndexSearcher.Explain` | A tree of `Explanation` values. |
 | `GroupingSearch` | `Distinct(x => x.Field)` | Collapse to the best hit per value. |
-| `MoreLikeThis` | none yet | Build a `BooleanQuery` of `Should` term clauses from the source document's most distinctive terms, or use a vector field and `KnnQuery`. |
+| `MoreLikeThis` | `MoreLikeThisQuery`, `index.MoreLikeThis(id)` | Selects the most distinctive terms of a text or stored document by tf-idf and searches them ([more-like-this.md](more-like-this.md)). |
 | `TieredMergePolicy`, `ConcurrentMergeScheduler` | `TieredMergePolicy`, `ThreadedMergeScheduler` (`CooperativeMergeScheduler` where there are no threads) | Merges are throttled and results are identical either way. |
 | `Optimize` / `ForceMerge(n)` | `ForceMerge(n)` | |
 | `IndexWriter.Commit` | `Commit()` | Writes and fsyncs every new file, then publishes the commit by an atomic rename. A crash leaves the previous commit complete. |

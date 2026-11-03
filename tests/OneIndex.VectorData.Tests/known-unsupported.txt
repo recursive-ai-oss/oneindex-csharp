@@ -1,8 +1,0 @@
-# Conformance tests for features the adapter documents as unsupported (docs/vectordata.md).
-# One xunit method filter per line; run.sh passes them to -method-.
-*Distance.ManhattanDistance
-*Distance.HammingDistance
-*KeyTypes.Guid
-*DependencyInjection.EmbeddingGeneratorIsResolved
-# Each data-type test also creates a dynamic (dictionary) collection, which the adapter does not support (the typed path is covered by ContractTests).
-*DataTypes.*

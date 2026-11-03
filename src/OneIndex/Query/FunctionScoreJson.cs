@@ -26,6 +26,60 @@ public static partial class QueryJson
         }
     }
 
+    private static void WriteMoreLikeThis(Utf8JsonWriter w, MoreLikeThisQuery q)
+    {
+        w.WriteString("type", "moreLikeThis");
+        if (q.Text is not null)
+        {
+            w.WriteString("text", q.Text);
+        }
+        else
+        {
+            w.WriteString("id", q.DocumentId);
+        }
+
+        if (q.Fields.Count > 0)
+        {
+            w.WriteStartArray("fields");
+            foreach (string f in q.Fields)
+            {
+                w.WriteStringValue(f);
+            }
+
+            w.WriteEndArray();
+        }
+
+        if (q.MaxQueryTerms != 25)
+        {
+            w.WriteNumber("maxQueryTerms", q.MaxQueryTerms);
+        }
+
+        if (q.MinTermFrequency != 1)
+        {
+            w.WriteNumber("minTermFrequency", q.MinTermFrequency);
+        }
+
+        if (q.MinDocumentFrequency != 1)
+        {
+            w.WriteNumber("minDocFrequency", q.MinDocumentFrequency);
+        }
+
+        if (q.MinimumShouldMatchFraction != 0.3)
+        {
+            w.WriteNumber("minimumShouldMatch", q.MinimumShouldMatchFraction);
+        }
+
+        if (!q.BoostTerms)
+        {
+            w.WriteBoolean("boostTerms", false);
+        }
+
+        if (q.IncludeSource)
+        {
+            w.WriteBoolean("includeSource", true);
+        }
+    }
+
     // The function-score node. Defaults are left out, so a document that spells them out reads back to the same query and writes the same text.
     private static void WriteFunctionScore(Utf8JsonWriter w, FunctionScoreQuery q)
     {

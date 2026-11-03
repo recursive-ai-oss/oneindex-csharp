@@ -834,6 +834,40 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
+    /// Starts a search for documents that resemble an indexed one: its most distinctive words (frequent in it, rare in the index) are searched for,
+    /// and the document itself is left out. Tune with <see cref="SearchBy(Search.Query)"/> and a <see cref="MoreLikeThisQuery"/>. See docs/more-like-this.md.
+    /// </summary>
+    /// <param name="id">The identifier of a committed document.</param>
+    /// <param name="fields">The full-text properties to read and match, like <c>x =&gt; x.Body</c>; none means all of them.</param>
+    /// <returns>The search, which raises <see cref="QueryException"/> when it runs if the document is not in the last commit.</returns>
+    public SearchQuery<T> MoreLikeThis(string id, params Expression<Func<T, string>>[] fields)
+    {
+        ArgumentNullException.ThrowIfNull(id);
+        return SearchBy(MoreLikeThisQuery.FromDocument(id) with { Fields = MoreLikeThisFields(fields) });
+    }
+
+    /// <summary>Starts a search for documents that resemble a text (see <see cref="MoreLikeThis(string, Expression{Func{T, string}}[])"/>).</summary>
+    /// <param name="text">The text; it is analyzed with each field's analyzer.</param>
+    /// <param name="fields">The full-text properties to match in; none means all of them.</param>
+    /// <returns>The search.</returns>
+    public SearchQuery<T> MoreLikeThisText(string text, params Expression<Func<T, string>>[] fields)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        return SearchBy(MoreLikeThisQuery.FromText(text) with { Fields = MoreLikeThisFields(fields) });
+    }
+
+    private List<string> MoreLikeThisFields(Expression<Func<T, string>>[] fields)
+    {
+        var names = new List<string>(fields.Length);
+        foreach (Expression<Func<T, string>> f in fields)
+        {
+            names.Add(Aggregations.MemberNames.Resolve(_mapping, f, nameof(MoreLikeThis)).Name);
+        }
+
+        return names;
+    }
+
+    /// <summary>
     /// Starts a vector search: the documents whose vector property is nearest to a query vector, best first. <c>Where</c> filters restrict which documents
     /// may be neighbours before the nearest are picked, so a full page comes back whenever enough documents pass. The search keeps the
     /// <paramref name="neighbors"/> nearest overall; <c>Take</c> and <c>Skip</c> page within them. See docs/vectors.md.

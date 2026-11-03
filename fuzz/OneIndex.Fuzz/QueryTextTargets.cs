@@ -172,7 +172,7 @@ internal static class QueryTextTargets
                     Require(second.Count <= Math.Max(request.Limit, 0), "second page size");
                 }
             }
-            catch (TooManyTermsException)
+            catch (Exception e) when (e is TooManyTermsException or SourceDocumentNotFoundException)
             {
             }
             catch (ArgumentException)
@@ -193,7 +193,7 @@ internal static class QueryTextTargets
                     Require(second.Count <= Math.Max(request.Limit, 0), "second page size");
                 }
             }
-            catch (TooManyTermsException)
+            catch (Exception e) when (e is TooManyTermsException or SourceDocumentNotFoundException)
             {
             }
         }
@@ -209,6 +209,10 @@ internal static class QueryTextTargets
         catch (TooManyTermsException)
         {
             // A prefix or fuzzy query may legitimately match more terms than the engine expands.
+        }
+        catch (SourceDocumentNotFoundException)
+        {
+            // A more-like-this query may name a document the sample index does not hold.
         }
     }
 
@@ -250,6 +254,8 @@ internal static class QueryTextTargets
             "{\"v\":1,\"sort\":[\"Number\"],\"searchAfter\":\"AQAAAAAB\"}",
             "{\"v\":1,\"q\":\"red apple tree\",\"rankingRules\":[\"words\",\"typo\",\"proximity\",\"attribute\",\"sort\",\"exactness\"],\"sort\":[\"Number:desc\"],\"limit\":3}",
             "{\"v\":1,\"q\":\"golf hotel\",\"rankingRules\":[\"Number:asc\",\"words\"],\"limit\":2}",
+            "{\"v\":1,\"query\":{\"type\":\"moreLikeThis\",\"id\":\"doc-1\",\"fields\":[\"Title\",\"Body\"],\"maxQueryTerms\":10,\"minTermFrequency\":2,\"minimumShouldMatch\":0.5,\"boostTerms\":false,\"boost\":2}}",
+            "{\"v\":1,\"query\":{\"type\":\"moreLikeThis\",\"text\":\"the quick brown fox\",\"includeSource\":true,\"minDocFrequency\":3}}",
             "{\"v\":1,\"query\":{\"type\":\"proximity\",\"query\":{\"type\":\"bool\",\"should\":[{\"type\":\"term\",\"field\":\"Title\",\"value\":\"a\"},{\"type\":\"term\",\"field\":\"Title\",\"value\":\"b\"}]},\"words\":[{\"type\":\"term\",\"field\":\"Title\",\"value\":\"a\"},{\"type\":\"term\",\"field\":\"Title\",\"value\":\"b\"}],\"weight\":1.5}}",
             "{\"v\":1,\"query\":{\"type\":\"functionScore\",\"query\":{\"type\":\"text\",\"text\":\"cat\"},\"functions\":[{\"type\":\"fieldValueFactor\",\"field\":\"Number\",\"factor\":2,\"modifier\":\"log1p\",\"missing\":1},{\"type\":\"gauss\",\"field\":\"Number\",\"origin\":5,\"scale\":3,\"offset\":1,\"decay\":0.3,\"weight\":2}],\"scoreMode\":\"avg\",\"boostMode\":\"sum\",\"maxBoost\":8,\"minScore\":0.2,\"boost\":1.5},\"limit\":3}",
             "{\"v\":1,\"query\":{\"type\":\"functionScore\",\"functions\":[{\"type\":\"exp\",\"field\":\"Place\",\"origin\":{\"lat\":10,\"lng\":-170},\"scale\":2000000,\"filter\":\"Number > 2\"},{\"type\":\"linear\",\"field\":\"Number\",\"origin\":0,\"scale\":100},{\"type\":\"weight\",\"weight\":0.5,\"filter\":{\"type\":\"exists\",\"field\":\"Number\"}}],\"scoreMode\":\"first\",\"boostMode\":\"max\"}}",

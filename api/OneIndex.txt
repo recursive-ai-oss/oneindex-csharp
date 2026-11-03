@@ -1298,6 +1298,21 @@ OneIndex.Search.MatchAllQuery..ctor()
 OneIndex.Search.MatchAllQuery.virtual Accept<TResult>(OneIndex.Search.QueryVisitor<TResult> visitor) : TResult
 OneIndex.Search.MissingValuePlacement.First : OneIndex.Search.MissingValuePlacement = 1
 OneIndex.Search.MissingValuePlacement.Last : OneIndex.Search.MissingValuePlacement = 0
+OneIndex.Search.MoreLikeThisQuery..ctor()
+OneIndex.Search.MoreLikeThisQuery.BoostTerms : System.Boolean { get; init; }
+OneIndex.Search.MoreLikeThisQuery.DocumentId : System.String { get; init; }
+OneIndex.Search.MoreLikeThisQuery.Equals(OneIndex.Search.MoreLikeThisQuery other) : System.Boolean
+OneIndex.Search.MoreLikeThisQuery.Fields : System.Collections.Generic.IReadOnlyList<System.String> { get; init; }
+OneIndex.Search.MoreLikeThisQuery.IncludeSource : System.Boolean { get; init; }
+OneIndex.Search.MoreLikeThisQuery.MaxQueryTerms : System.Int32 { get; init; }
+OneIndex.Search.MoreLikeThisQuery.MaxTermsLimit : System.Int32 = 1024
+OneIndex.Search.MoreLikeThisQuery.MinDocumentFrequency : System.Int32 { get; init; }
+OneIndex.Search.MoreLikeThisQuery.MinTermFrequency : System.Int32 { get; init; }
+OneIndex.Search.MoreLikeThisQuery.MinimumShouldMatchFraction : System.Double { get; init; }
+OneIndex.Search.MoreLikeThisQuery.Text : System.String { get; init; }
+OneIndex.Search.MoreLikeThisQuery.static FromDocument(System.String id) : OneIndex.Search.MoreLikeThisQuery
+OneIndex.Search.MoreLikeThisQuery.static FromText(System.String text) : OneIndex.Search.MoreLikeThisQuery
+OneIndex.Search.MoreLikeThisQuery.virtual Accept<TResult>(OneIndex.Search.QueryVisitor<TResult> visitor) : TResult
 OneIndex.Search.MultiCollector..ctor(System.Collections.Generic.IEnumerable<OneIndex.Search.Collector> collectors)
 OneIndex.Search.MultiCollector.ScoreMode : OneIndex.Search.ScoreMode { get; }
 OneIndex.Search.MultiCollector.virtual GetLeafCollector(OneIndex.Search.LeafContext leaf) : OneIndex.Search.LeafCollector
@@ -1370,6 +1385,7 @@ OneIndex.Search.QueryVisitor<TResult>.virtual VisitGeoRadius(OneIndex.Search.Geo
 OneIndex.Search.QueryVisitor<TResult>.virtual VisitHybrid(OneIndex.Search.HybridQuery query) : TResult
 OneIndex.Search.QueryVisitor<TResult>.virtual VisitKnn(OneIndex.Search.KnnQuery query) : TResult
 OneIndex.Search.QueryVisitor<TResult>.virtual VisitMatchAll(OneIndex.Search.MatchAllQuery query) : TResult
+OneIndex.Search.QueryVisitor<TResult>.virtual VisitMoreLikeThis(OneIndex.Search.MoreLikeThisQuery query) : TResult
 OneIndex.Search.QueryVisitor<TResult>.virtual VisitMultiFieldTerm(OneIndex.Search.MultiFieldTermQuery query) : TResult
 OneIndex.Search.QueryVisitor<TResult>.virtual VisitPhrase(OneIndex.Search.PhraseQuery query) : TResult
 OneIndex.Search.QueryVisitor<TResult>.virtual VisitPrefix(OneIndex.Search.PrefixQuery query) : TResult
@@ -1462,6 +1478,8 @@ OneIndex.Search.SortValue.virtual Equals(System.Object obj) : System.Boolean
 OneIndex.Search.SortValue.virtual GetHashCode() : System.Int32
 OneIndex.Search.SortableBits.static Decode(System.Int64 encoded) : System.Double
 OneIndex.Search.SortableBits.static Encode(System.Double value) : System.Int64
+OneIndex.Search.SourceDocumentNotFoundException..ctor(System.String id)
+OneIndex.Search.SourceDocumentNotFoundException.DocumentId : System.String { get; }
 OneIndex.Search.SparseQuery..ctor(System.String Field, OneIndex.Index.SparseVector Vector)
 OneIndex.Search.SparseQuery.Equals(OneIndex.Search.SparseQuery other) : System.Boolean
 OneIndex.Search.SparseQuery.Field : System.String { get; init; }
@@ -1563,6 +1581,8 @@ OneIndex.SearchIndex<T>.Dispose() : System.Void
 OneIndex.SearchIndex<T>.DisposeAsync() : System.Threading.Tasks.ValueTask
 OneIndex.SearchIndex<T>.Documents() : System.Collections.Generic.IEnumerable<T>
 OneIndex.SearchIndex<T>.Embedder : OneIndex.Vectors.IEmbedder { get; }
+OneIndex.SearchIndex<T>.MoreLikeThis(System.String id, System.Linq.Expressions.Expression<System.Func<T,System.String>>[] fields) : OneIndex.SearchQuery<T>
+OneIndex.SearchIndex<T>.MoreLikeThisText(System.String text, System.Linq.Expressions.Expression<System.Func<T,System.String>>[] fields) : OneIndex.SearchQuery<T>
 OneIndex.SearchIndex<T>.Parse(System.String queryJson) : OneIndex.SearchQuery<T>
 OneIndex.SearchIndex<T>.ReembedStale(System.Threading.CancellationToken cancellationToken = null) : System.Int32
 OneIndex.SearchIndex<T>.ReembedStaleAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<System.Int32>
@@ -1603,6 +1623,8 @@ OneIndex.SearchQuery<T>.Distinct<TField>(System.Linq.Expressions.Expression<Syst
 OneIndex.SearchQuery<T>.Execute(System.Threading.CancellationToken cancellationToken = null) : OneIndex.SearchResults<T>
 OneIndex.SearchQuery<T>.ExecuteAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<OneIndex.SearchResults<T>>
 OneIndex.SearchQuery<T>.Explain() : OneIndex.SearchQuery<T>
+OneIndex.SearchQuery<T>.FacetValues<TField>(System.Linq.Expressions.Expression<System.Func<T,TField>> member, System.String text, System.Int32 limit = 100, OneIndex.Aggregations.FacetSort sortBy = Alpha, System.Threading.CancellationToken cancellationToken = null) : System.Collections.Generic.IReadOnlyList<OneIndex.Aggregations.FacetValue>
+OneIndex.SearchQuery<T>.FacetValuesAsync<TField>(System.Linq.Expressions.Expression<System.Func<T,TField>> member, System.String text, System.Int32 limit = 100, OneIndex.Aggregations.FacetSort sortBy = Alpha, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<OneIndex.Aggregations.FacetValue>>
 OneIndex.SearchQuery<T>.Facets<TField>(System.Linq.Expressions.Expression<System.Func<T,TField>> member, System.Int32 maxValues = 100, OneIndex.Aggregations.FacetSort sortBy = Alpha) : OneIndex.SearchQuery<T>
 OneIndex.SearchQuery<T>.GetEnumerator() : System.Collections.Generic.IEnumerator<OneIndex.SearchHit<T>>
 OneIndex.SearchQuery<T>.Highlight(OneIndex.Highlighting.HighlightOptions options) : OneIndex.SearchQuery<T>
@@ -2273,6 +2295,7 @@ sealed class OneIndex.Search.IndexSearcher
 sealed class OneIndex.Search.KnnQuery : OneIndex.Search.Query, System.IEquatable<OneIndex.Search.KnnQuery>, System.IEquatable<OneIndex.Search.Query>
 sealed class OneIndex.Search.LeafContext : System.IEquatable<OneIndex.Search.LeafContext>
 sealed class OneIndex.Search.MatchAllQuery : OneIndex.Search.Query, System.IEquatable<OneIndex.Search.MatchAllQuery>, System.IEquatable<OneIndex.Search.Query>
+sealed class OneIndex.Search.MoreLikeThisQuery : OneIndex.Search.Query, System.IEquatable<OneIndex.Search.MoreLikeThisQuery>, System.IEquatable<OneIndex.Search.Query>
 sealed class OneIndex.Search.MultiCollector : OneIndex.Search.Collector
 sealed class OneIndex.Search.MultiFieldTermQuery : OneIndex.Search.Query, System.IEquatable<OneIndex.Search.MultiFieldTermQuery>, System.IEquatable<OneIndex.Search.Query>
 sealed class OneIndex.Search.PhraseQuery : OneIndex.Search.Query, System.IEquatable<OneIndex.Search.PhraseQuery>, System.IEquatable<OneIndex.Search.Query>
@@ -2288,6 +2311,7 @@ sealed class OneIndex.Search.ScoreSort : OneIndex.Search.SortCriterion, System.I
 sealed class OneIndex.Search.SearchContext
 sealed class OneIndex.Search.SegmentSearchReader : OneIndex.Search.ISegmentReader, System.IDisposable
 sealed class OneIndex.Search.SortCursor
+sealed class OneIndex.Search.SourceDocumentNotFoundException : OneIndex.Search.QueryException, System.Runtime.Serialization.ISerializable
 sealed class OneIndex.Search.SparseQuery : OneIndex.Search.Query, System.IEquatable<OneIndex.Search.Query>, System.IEquatable<OneIndex.Search.SparseQuery>
 sealed class OneIndex.Search.TermQuery : OneIndex.Search.Query, System.IEquatable<OneIndex.Search.Query>, System.IEquatable<OneIndex.Search.TermQuery>
 sealed class OneIndex.Search.TooManyTermsException : OneIndex.Search.QueryException, System.Runtime.Serialization.ISerializable
