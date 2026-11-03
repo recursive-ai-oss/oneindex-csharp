@@ -46,7 +46,7 @@ public static class CommitProtocol
                     continue;
                 }
 
-                using IRangeReader reader = storage.OpenRead(file.FileName, cancellationToken);
+                using IRangeReader reader = PackedFiles.Open(storage, file, cancellationToken);
                 CheckFile(file, reader, IndexFile.ReadFooterChecksum(reader, cancellationToken));
             }
         }
@@ -86,7 +86,7 @@ public static class CommitProtocol
         {
             foreach (SegmentFile file in segment.Files)
             {
-                using IRangeReader reader = await storage.OpenReadAsync(file.FileName, cancellationToken).ConfigureAwait(false);
+                using IRangeReader reader = await PackedFiles.OpenAsync(storage, file, cancellationToken).ConfigureAwait(false);
                 CheckFile(file, reader, await IndexFile.ReadFooterChecksumAsync(reader, cancellationToken).ConfigureAwait(false));
             }
         }
@@ -189,7 +189,7 @@ public static class CommitProtocol
                 IRangeReader segmentReader;
                 try
                 {
-                    segmentReader = await storage.OpenReadAsync(file.FileName, cancellationToken).ConfigureAwait(false);
+                    segmentReader = await PackedFiles.OpenAsync(storage, file, cancellationToken).ConfigureAwait(false);
                 }
                 catch (FileNotFoundException e)
                 {
@@ -251,7 +251,7 @@ public static class CommitProtocol
     {
         try
         {
-            return storage.OpenRead(file.FileName, cancellationToken);
+            return PackedFiles.Open(storage, file, cancellationToken);
         }
         catch (FileNotFoundException e)
         {

@@ -226,6 +226,32 @@ switch (args[0])
         return 0;
     }
 
+    case "commit-files":
+    {
+        // Times the driver's commit sequence and lists the files each small commit adds, to compare how many files each engine writes.
+        var docs = WikiCorpus.Read(Req("corpus"), Int("docs", 30_000));
+        using var e = Engines.Create(Req("engine"));
+        string dir = Path.Combine(Req("work"), "files");
+        e.Create(new EngineSettings(dir, AnalysisKind.Standard, IndexProfile.Bench));
+        int bulk = docs.Count - 1000;
+        for (int i = 0; i < bulk; i++) { e.Add(docs[i]); }
+        e.Commit();
+        var seen = new HashSet<string>(Directory.GetFileSystemEntries(dir).Select(Path.GetFileName)!);
+        for (int c = 0; c < 5; c++)
+        {
+            for (int i = 0; i < 200; i++) { e.Add(docs[bulk + (c * 200) + i]); }
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            e.Commit();
+            double ms = sw.Elapsed.TotalMilliseconds;
+            var now = Directory.GetFileSystemEntries(dir).Select(Path.GetFileName).Cast<string>().ToList();
+            var added = now.Where(n => !seen.Contains(n)).OrderBy(n => n, StringComparer.Ordinal).ToList();
+            Console.WriteLine($"commit {c}: {ms:F1} ms, +{added.Count} files, {now.Count - seen.Count + 0} net, total {now.Count}: {string.Join(" ", added.Select(n => n + ":" + new FileInfo(Path.Combine(dir, n)).Length))}");
+            seen = [.. now];
+        }
+
+        return 0;
+    }
+
     case "queries":
     {
         var docs = WikiCorpus.Read(Req("corpus"), Int("docs", 50_000));

@@ -192,7 +192,7 @@ public sealed class IndexSnapshot : IDisposable
             SegmentFile? ids = seg.FindPart(SegmentParts.Ids);
             if (ids is not null)
             {
-                using IRangeReader reader = _storage.OpenRead(ids.FileName, cancellationToken);
+                using IRangeReader reader = PackedFiles.Open(_storage, ids, cancellationToken);
                 var bytes = new byte[(int)reader.Length];
                 reader.ReadExactly(0, bytes, cancellationToken);
                 IndexFile.Validate(ids.FileName, bytes, IdsFormat.Magic, IdsFormat.FormatVersion);

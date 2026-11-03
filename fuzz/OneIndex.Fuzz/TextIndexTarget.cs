@@ -17,9 +17,9 @@ internal static class TextIndexTarget
     private static readonly IndexLimits Limits = new() { MaxTermBytes = 4_096, MaxResidentFileBytes = 1 << 22, MaxDocsPerSegment = 100_000 };
     private static readonly Lazy<Baseline> Good = new(BuildBaseline);
 
-    private sealed record Baseline(byte[] Terms, byte[] Postings, byte[] Lengths);
+    private sealed record Baseline(byte[] Terms, byte[] TermsV1, byte[] Postings, byte[] Lengths);
 
-    /// <summary>The first input byte picks whether the footer and checksum are repaired (odd) so that mutations reach the structure parsers, or left as given.</summary>
+    /// <summary>The first input byte picks whether the footer and checksum are repaired (bit 0) so that mutations reach the structure parsers, or left as given, and for the terms file which layout the mutation starts from (bit 1 set: version 1; clear: version 2).</summary>
     public static void RunTerms(ReadOnlySpan<byte> data) => Run(data, terms: true);
 
     /// <inheritdoc cref="RunTerms"/>
@@ -34,9 +34,10 @@ internal static class TextIndexTarget
 
         Baseline good = Good.Value;
         byte[] file = data[1..].ToArray();
+        int version = terms && (data[0] & 2) != 0 ? 1 : 2;
         if ((data[0] & 1) != 0)
         {
-            Repair(file, terms ? TextSegmentWriter.TermsMagic : TextSegmentWriter.PostingsMagic);
+            Repair(file, terms ? TextSegmentWriter.TermsMagic : TextSegmentWriter.PostingsMagic, terms ? version : 1);
         }
 
         var storage = new MemoryStorage();
@@ -121,7 +122,7 @@ internal static class TextIndexTarget
         w.Write(bytes);
     }
 
-    private static void Repair(byte[] file, uint magic)
+    private static void Repair(byte[] file, uint magic, int version)
     {
         if (file.Length < IndexFile.HeaderLength + IndexFile.FooterLength)
         {
@@ -129,7 +130,7 @@ internal static class TextIndexTarget
         }
 
         BinaryPrimitives.WriteUInt32LittleEndian(file, magic);
-        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(4), 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(4), (uint)version);
         Span<byte> footer = file.AsSpan(file.Length - IndexFile.FooterLength);
         BinaryPrimitives.WriteUInt32LittleEndian(footer, IndexFile.FooterMagic);
         BinaryPrimitives.WriteUInt32LittleEndian(footer[4..], IndexFile.AlgorithmCrc32C);
@@ -167,7 +168,14 @@ internal static class TextIndexTarget
             writer.Finish();
         }
 
-        return new Baseline(ReadAll(storage, "s.terms"), ReadAll(storage, "s.postings"), ReadAll(storage, "s.lengths"));
+        var older = new MemoryStorage();
+        using (var writer = new TextSegmentWriter(older, "s.terms", "s.postings", "s.lengths", docs, Limits, termsVersion: 1))
+        {
+            buffer.WriteTo(writer);
+            writer.Finish();
+        }
+
+        return new Baseline(ReadAll(storage, "s.terms"), ReadAll(older, "s.terms"), ReadAll(storage, "s.postings"), ReadAll(storage, "s.lengths"));
     }
 
     private static byte[] ReadAll(MemoryStorage storage, string name)
@@ -182,5 +190,9 @@ internal static class TextIndexTarget
     {
         Baseline good = Good.Value;
         File.WriteAllBytes(Path.Combine(directory, "valid"), [1, .. (terms ? good.Terms : good.Postings)]);
+        if (terms)
+        {
+            File.WriteAllBytes(Path.Combine(directory, "valid-v1"), [3, .. good.TermsV1]);
+        }
     }
 }

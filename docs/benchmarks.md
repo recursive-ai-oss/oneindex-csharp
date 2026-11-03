@@ -95,6 +95,8 @@ All Wikipedia abstracts of the corpus above, one run per machine of the corpus d
 `Terms1,Terms2,Terms5,Phrase,Filtered,Facets,Stats`, 200 queries per row, warm-up plus three timed passes, median), run alone on the
 machine as exclusive benchmark jobs; OneIndex first, then Lucene.NET 4.8.0-beta00018, same corpus file (sha256 1759e651...4893) and seed 1.
 The multi-term rows (Prefix, AsYouType, Fuzzy1, Fuzzy2) are measured with the typo-tolerance work and are not in this table.
+
+`bench/OneIndex.Bench` also has `TermDictionaryRows`: term expansion over a dictionary alone (set `ONEINDEX_BENCH_TERMS` to a file of `term<TAB>document frequency` lines in byte order; `ONEINDEX_TERMS_QUICK=1` prints a stopwatch pass with a checksum of what matched, `ONEINDEX_TERMS_VERSION=1` builds the older node layout for comparison). It isolates the dictionary walk from postings and scoring.
 The write buffer is 256 MiB for Lucene.NET and 20,000 documents for OneIndex; both add documents from one thread with the default merge
 policy. OneIndex adds with the bulk `AddUnique` path (identifiers are unique), as Lucene.NET's `AddDocument` does not look for a
 previous version either. The harness runs OneIndex's merges on a background thread (`ThreadedMergeScheduler`), as Lucene.NET's default
@@ -133,10 +135,43 @@ for the numeric column; Lucene.NET stores only the identifier. Phrase and Filter
 agree to within 2 and 4 documents for the tokenization reason in the next section. Terms rows differ by design: OneIndex prunes with
 block-max WAND and reports a lower bound.
 
-**Commit on arm64.** A small commit writes the buffered documents as a new segment (text, column, point, stored and identifier files) and
-fsyncs them together with the commit file: 9 fsyncs per commit against 8 for Lucene.NET, counted with a system-call trace on x64. On the
-x64 disk that is faster than Lucene.NET; on the M2 it is 7 ms slower and the rest of the gap was not found. Fsyncing the segment files one
-after another instead of together did not help (23.7 to 31.2 ms against 30.0 to 31.8 ms, interleaved, noisy).
+**Commit on arm64.** A small commit used to write the buffered documents as a new segment of seven files (text, column, point, stored,
+identifier and length parts) and fsync them together with the commit file: 8 new files and 8 fsyncs per commit against 4 files for
+Lucene.NET (a compound `.cfs`, `.cfe`, `.si` and the segments file). On an M2 under APFS one flush-to-disk of a 30 KB file measured
+about 2.9 ms, eight in sequence 22 ms (7 ms in parallel), so the cost of a commit there is the number of files times the cost of making
+each durable, and the x64 NVMe disk hides it. A flush now writes its text, column, point, stored and identifier parts into one pack
+file (commit format 3, docs/commit-format.md), so a small commit adds two files: the pack and the commit file. Durability is
+unchanged: the same files are fsynced before the commit file is renamed, and the pack is checksummed like any segment file. Fsyncing
+the files one after another instead of together did not help (23.7 to 31.2 ms against 30.0 to 31.8 ms, interleaved, noisy).
+
+Final rows for that change, from the corpus driver on 50,000 abstracts (one bulk commit of 49,000, five commits of 200), three runs
+per engine interleaved on each machine, the median of the three medians, run alone under the benchmark queue. "Before" is the same
+harness on the code before the pack file.
+
+| Row | machine | OneIndex now | OneIndex before | Lucene.NET | ratio now | ratio before |
+|---|---|---|---|---|---|---|
+| commit (median ms) | x64 | 23.5 | 30.3 | 40.7 | 0.58 | 0.74 |
+| commit (median ms) | arm64 | 19.5 | 23.7 | 16.5 | **1.18** | 1.43 |
+| index (docs/s, incl. bulk commit) | x64 | 38,360 | 39,490 | 17,960 | 0.47 (inverted) | 0.45 |
+| index (docs/s, incl. bulk commit) | arm64 | 39,680 | 38,670 | 16,490 | 0.42 (inverted) | 0.43 |
+| Terms1 (ms/query) | x64 | 0.155 | 0.157 | 0.193 | 0.80 | 0.81 |
+| Terms1 (ms/query) | arm64 | 0.159 | 0.160 | 0.157 | 1.01 | 1.02 |
+| files added per small commit | both | 2 | 8 | 4 | | |
+| allocated bytes per document, index row | both | 5,694 | 5,091 | 21,040 | | |
+| peak resident set, x64 (MiB) | x64 | 238 | 237 | 218 | | |
+| index size, index row (bytes) | both | 11.64 M | 11.64 M | 8.16 M | | |
+
+Where a small commit spent its time on the M2 before the change (milliseconds, indicative, a stopwatch around each step on a loaded
+host): the flush 13 to 30 (text parts 6 to 11, stored 3 to 4, columns 0.3 to 11, and 7 to 13 of syncing the parts), the commit
+protocol about 4 (temporary file sync 1.3 to 3, final sync 1.1 to 3). The syncs of seven part files were the largest single share. With
+one pack file the whole five-commit sequence measured 21.7 ms against Lucene.NET's 22.0 on that host, and 19.5 against 16.5 in the
+final rows above; the steps were not timed again after the change.
+
+The arm64 commit row is inside the 1.25 bar and not yet at 1.0: what remains is one pack plus one commit file (two fsyncs and a
+rename) against Lucene.NET's one compound file plus its small files, and the segment's own write. Index throughput on x64 is within
+run-to-run spread of before (38.4k against 39.5k; the three runs span 36.6k to 38.5k and 38.7k to 39.6k), and the 12% rise in
+allocation per document is the pack buffer. Peak resident set was not captured on arm64. Load average before / after: x64 3.05 /
+1.96 (one-minute), arm64 1.81 / 1.68, flat during the runs.
 
 **Phrase on x64 and the segment count.** The same index merged to one segment answers Phrase in 0.169 ms (Lucene.NET 0.165 to 0.168); with
 the 12 segments of the settled index it is 0.20, so about 3 microseconds per segment per query is the per-segment cost of looking up two
@@ -170,6 +205,66 @@ a collection bug: six abstracts contain U+202F NARROW NO-BREAK SPACE, which the 
 (UAX #29 rule WB13b), so OneIndex keeps "they\u202fare" as one token, as the standard prescribes, while the comparator's older tables break there. Four
 of the six documents hold a query term next to such a space; the single-term counts (`oneindex-harness count-diff`) differ for exactly those
 terms, each by one document that only the comparator counts.
+
+### Fuzzy, prefix and as-you-type rows, term dictionary version 2
+
+Same corpus, driver, settings and Lucene.NET build as above, after the version 2 term dictionary, the single-load number reads, the
+merge policy size ratio of 2 and the block-max WAND change that keeps clause order between rounds. Each engine ran as its own exclusive
+benchmark-class job, Lucene.NET right after OneIndex on the same machine (x64), three repetitions, medians. Match checksums of the Fuzzy,
+Typo and Prefix rows differ by design (OneIndex prunes with WAND and prefix queries are constant-score; Lucene.NET expands and counts
+all matches); the as-you-type typo row has a matched variant (`ONEINDEX_TYPO_MATCHED=1`, same query shape as the comparator's
+prefix-OR-fuzzy) whose checksums agree (2,925).
+
+| Row (ms/query) | OneIndex x64 | Lucene.NET x64 | ratio | OneIndex arm64 | Lucene.NET arm64 | ratio |
+|---|---|---|---|---|---|---|
+| index (docs/s) | 62,540 | 37,947 | 0.61 | 62,869 | 37,849 | 0.60 |
+| commit (median ms, 5 x 200 docs) | 28.3 | 52.4 | 0.54 | 20.7 | 14.5 | 1.43 |
+| Terms1 | 0.123 | 0.214 | 0.58 | 0.179 | 0.318 | 0.56 |
+| Terms2 | 0.245 | 0.436 | 0.56 | n/r | n/r | |
+| Terms5 | 0.487 | 0.635 | 0.77 | 0.620 | 0.752 | 0.82 |
+| Phrase | 0.179 | 0.157 | 1.14 | 0.250 | 0.389 | 0.64 |
+| Prefix | 0.105 | 0.317 | 0.33 | 0.124 | 0.410 | 0.30 |
+| AsYouType | 0.151 | 0.198 | 0.76 | 0.234 | 0.223 | 1.05 |
+| Fuzzy1 | 0.232 | 0.530 | 0.44 | 0.277 | 0.945 | 0.29 |
+| Fuzzy2 | 1.227 | 2.083 | 0.59 | 1.386 | 4.072 | 0.34 |
+| Typo | 0.211 | 0.484 | 0.43 | 0.228 | 0.699 | 0.33 |
+| TypoAsYouType (matched variant) | 0.081 | 0.173 | 0.47 | 0.087 | n/r | |
+| TypoAsYouType (documented semantics, information) | 0.242 | 0.173 | 1.40 | n/r | | |
+| Filtered | 1.540 | 1.888 | 0.82 | n/r | | |
+| Facets / Stats / Sort | 0.427 / 0.276 / 0.370 | 0.601 / 0.514 / 0.668 | 0.71 / 0.54 / 0.55 | n/r | | |
+
+n/r: not re-run for this change. The arm64 Lucene.NET column and the arm64 Terms1, Phrase, Prefix, AsYouType and TypoAsYouType
+figures come from the earlier benchmark-class run of the same Lucene.NET build and an earlier build of the dictionary code; Terms5,
+Fuzzy1, Fuzzy2, Typo and commit on arm64 were re-run on the final code (they did not move with the clause-order change: Fuzzy2 1.395 to
+1.386 ms). Commit on arm64 is the one row above 1.25; it is governed by the number of files fsynced per commit, not by the dictionary.
+Allocated bytes per query, OneIndex against Lucene.NET (x64): Terms1 4,982 / 59,203; Terms5 21,054 / 970,469; Prefix 62,868 / 153,187;
+Fuzzy1 19,456 / 703,984; Fuzzy2 120,550 / 2,281,455; Typo 19,311 / 1,244,174; AsYouType 57,659 / 189,760.
+
+Size and memory (x64): settled index 60,589,958 bytes (62 MB before the merge policy change was 64.3 MB; Lucene.NET 45,426,027); peak
+resident set during the index row 1,269 MiB against 1,021 MiB (includes the 120 MB corpus held by the driver), during the query rows
+443 to 1,171 MiB against 434 to 603 MiB.
+
+Machine records: x64 as above (Ryzen 9 7950X3D, 32 logical cores, ext4 NVMe, .NET 10.0.13, warm page cache). 1-minute load average
+before / during / after: OneIndex run 3.3 / 3.0 / 2.5, Lucene.NET run 7.3 / 5.9 / 5.2 (other users' light jobs on the host), matched
+typo run 1.3 / 1.2 / 1.2. arm64: Apple M2, 8 cores, .NET 10.0.14, load 3.0 / 2.9 / 2.9.
+
+### Commit and Phrase with packed flush parts (commit format 3) and term dictionary version 2 together
+
+Both engines in one exclusive benchmark-class job per machine, filtered to the Phrase row (the index and commit rows always run), same
+settings as above.
+
+| Row | OneIndex x64 | Lucene.NET x64 | ratio | OneIndex arm64 | Lucene.NET arm64 | ratio |
+|---|---|---|---|---|---|---|
+| index (docs/s) | 60,363 | 37,169 | 0.62 | 65,505 | 37,308 | 0.57 |
+| commit (median ms, 5 x 200 docs) | 22.3 | 36.0 | 0.62 | 14.1 | 14.6 | 0.96 |
+| commit (max ms) | n/r | n/r | | 90.5 | 16.0 | 5.7 |
+| Phrase (ms/query) | 0.165 | 0.241 | 0.68 | 0.239 | 0.641 | 0.37 |
+
+The Phrase figure for Lucene.NET moves a lot between passes (0.157 to 0.241 ms on x64, 0.389 to 0.641 ms on arm64 across the runs in this
+document, with the same index layout), so its ratio is noisy; OneIndex's own figure is stable (0.165 to 0.179 ms x64). Against the best
+Lucene.NET figure seen on x64 (0.157) Phrase is 1.05. The arm64 commit maximum is one slow commit (90 ms) among five. Index size 70,161,632
+bytes after the bulk commit and 60,589,958 settled. Load (1 minute, before / after): x64 2.6 / 2.0 (OneIndex), 1.9 / 1.7 (Lucene.NET);
+arm64 3.4 / 3.0 and 2.9 / 2.8.
 
 ## Earlier indicative pass (not publishable)
 

@@ -14,6 +14,8 @@ Parts:
 | `deletes` | the index | the deleted documents of one generation (below) |
 | `terms`, `postings`, `lengths`, `columns`, `points`, `stored` | codecs | defined by the codec |
 
+A small flush writes most of these parts into one `<segment>.pack` file instead (see "Pack files" in `commit-format.md`); which parts share it is recorded in the commit, and readers see no difference.
+
 Every file uses the frame of `commit-format.md` (magic, version, checksummed footer). The commit records each file's length, footer checksum, part and codec version, so a file replaced after the commit is noticed when the index opens.
 
 Document ids are dense and local to a segment. Deleting a document does not renumber anything; a merge renumbers.
@@ -67,6 +69,8 @@ If the commit protocol throws, the writer cannot know whether the commit became 
 ### Tiered merge policy
 
 Segments are grouped into tiers by live document count: tier 0 holds segments below `FloorSegmentDocs × SegmentsPerTier` (1,000 × 10), and each next tier's limit is `SegmentsPerTier` times larger. A tier with at least `SegmentsPerTier` (10) segments merges its oldest `MaxMergeAtOnce` (10) segments, never producing more than `MaxMergedSegmentDocs` (5,000,000) live documents. A segment more than `DeletesPctAllowed` (33) percent deleted is rewritten alone. The plan is a pure function of the segment list.
+
+**Size ratio.** The segments the tiers leave alone are also consolidated from the small end: sort them by live documents (name order breaks ties), count sizes below `FloorSegmentDocs` as the floor, and merge the largest group of the `k` smallest (2 to `MaxMergeAtOnce`) whose `k`-th member is at most `SizeRatio` (2) times the combined size of the smaller ones, within `MaxMergedSegmentDocs`. Segment sizes then fall off geometrically, so an index of any size keeps a handful of segments. Why: every query pays a fixed cost per segment, and fuzzy, typo and prefix expansion walk the top of each segment's term dictionary again, so on 150,000 abstracts six segments answered a two-edit fuzzy query in 2.2 ms and one segment in 1.4 ms. The price is rewriting: with flushes of 20,000 documents, 302,567 documents are written about 3.8 times in all (1.7 with `SizeRatio = 0`, the plain tiered policy), growing by about one write per doubling. On a bulk load the extra merges run on the merge scheduler, not on the thread that adds documents.
 
 ### Scheduler seam and throttle
 

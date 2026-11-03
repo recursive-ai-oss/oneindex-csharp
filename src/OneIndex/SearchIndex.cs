@@ -26,7 +26,7 @@ public static class SearchIndex
     /// <exception cref="CorruptIndexException">The newest commit or a file it lists is damaged.</exception>
     public static SearchIndex<T> Open<T>(string path)
         where T : class
-        => Open<T>(path, SearchEmbedders.Default);
+        => Open<T>(path, SearchEmbedders.Default, SearchSparseEncoders.Default, SearchRerankers.Default);
 
     /// <summary>Opens an index in a directory with an explicit embedder for <c>[Vector(From = ...)]</c> members (see <see cref="SearchEmbedders"/> and docs/auto-embedding.md).</summary>
     /// <typeparam name="T">The attributed document type.</typeparam>
@@ -36,10 +36,7 @@ public static class SearchIndex
     /// <exception cref="InvalidOperationException">The embedder's dimension differs from a member's <c>Dimensions</c>, or the type has no generated mapping.</exception>
     public static SearchIndex<T> Open<T>(string path, IEmbedder? embedder)
         where T : class
-    {
-        ArgumentException.ThrowIfNullOrEmpty(path);
-        return new SearchIndex<T>(new FileSystemStorage(path), SearchMappings.Require<T>(), embedder, SearchSparseEncoders.Default);
-    }
+        => Open<T>(path, embedder, SearchSparseEncoders.Default, SearchRerankers.Default);
 
     /// <summary>Opens an index in a directory with explicit embedder and sparse encoder, for <c>[Vector(From = ...)]</c> and <c>[Sparse(From = ...)]</c> members.</summary>
     /// <typeparam name="T">The attributed document type.</typeparam>
@@ -49,9 +46,24 @@ public static class SearchIndex
     /// <returns>The index.</returns>
     public static SearchIndex<T> Open<T>(string path, IEmbedder? embedder, ISparseEncoder? sparseEncoder)
         where T : class
+        => Open<T>(path, embedder, sparseEncoder, SearchRerankers.Default);
+
+    /// <summary>
+    /// Opens an index in a directory with every model given: embedder, sparse encoder and reranker (see <see cref="SearchRerankers"/> and docs/rerank.md). The shorter
+    /// overloads fill what they leave out from the static defaults (<see cref="SearchEmbedders"/>, <see cref="SearchSparseEncoders"/>, <see cref="SearchRerankers"/>);
+    /// this one uses exactly what it is given, <see langword="null"/> meaning none.
+    /// </summary>
+    /// <typeparam name="T">The attributed document type.</typeparam>
+    /// <param name="path">The directory, created if missing.</param>
+    /// <param name="embedder">The embedder, or <see langword="null"/> for none.</param>
+    /// <param name="sparseEncoder">The sparse encoder, or <see langword="null"/> for none.</param>
+    /// <param name="reranker">The reranker for <c>Rerank()</c> and for types with <c>[FullText(Rerank = true)]</c> members, or <see langword="null"/> for none.</param>
+    /// <returns>The index.</returns>
+    public static SearchIndex<T> Open<T>(string path, IEmbedder? embedder, ISparseEncoder? sparseEncoder, IReranker? reranker)
+        where T : class
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
-        return new SearchIndex<T>(new FileSystemStorage(path), SearchMappings.Require<T>(), embedder, sparseEncoder);
+        return new SearchIndex<T>(new FileSystemStorage(path), SearchMappings.Require<T>(), embedder, sparseEncoder, reranker);
     }
 
     /// <summary>Creates an in-memory index with explicit embedder and sparse encoder (see <see cref="Open{T}(string, IEmbedder, ISparseEncoder)"/>).</summary>
@@ -61,7 +73,17 @@ public static class SearchIndex
     /// <returns>The index.</returns>
     public static SearchIndex<T> InMemory<T>(IEmbedder? embedder, ISparseEncoder? sparseEncoder)
         where T : class
-        => new(new MemoryStorage(), SearchMappings.Require<T>(), embedder, sparseEncoder);
+        => new(new MemoryStorage(), SearchMappings.Require<T>(), embedder, sparseEncoder, SearchRerankers.Default);
+
+    /// <summary>Creates an in-memory index with every model given; <see langword="null"/> means none (see <see cref="Open{T}(string, IEmbedder, ISparseEncoder, IReranker)"/>).</summary>
+    /// <typeparam name="T">The attributed document type.</typeparam>
+    /// <param name="embedder">The embedder, or <see langword="null"/> for none.</param>
+    /// <param name="sparseEncoder">The sparse encoder, or <see langword="null"/> for none.</param>
+    /// <param name="reranker">The reranker, or <see langword="null"/> for none.</param>
+    /// <returns>The index.</returns>
+    public static SearchIndex<T> InMemory<T>(IEmbedder? embedder, ISparseEncoder? sparseEncoder, IReranker? reranker)
+        where T : class
+        => new(new MemoryStorage(), SearchMappings.Require<T>(), embedder, sparseEncoder, reranker);
 
     /// <summary>Creates an index that lives in memory only and disappears when disposed.</summary>
     /// <typeparam name="T">The attributed document type.</typeparam>
@@ -69,7 +91,7 @@ public static class SearchIndex
     /// <exception cref="InvalidOperationException">The type has no generated mapping or no <see cref="SearchIdAttribute"/> member.</exception>
     public static SearchIndex<T> InMemory<T>()
         where T : class
-        => new(new MemoryStorage(), SearchMappings.Require<T>(), SearchEmbedders.Default, SearchSparseEncoders.Default);
+        => new(new MemoryStorage(), SearchMappings.Require<T>(), SearchEmbedders.Default, SearchSparseEncoders.Default, SearchRerankers.Default);
 
     /// <summary>Creates an in-memory index with an explicit embedder (see <see cref="Open{T}(string, IEmbedder)"/>).</summary>
     /// <typeparam name="T">The attributed document type.</typeparam>
@@ -77,7 +99,7 @@ public static class SearchIndex
     /// <returns>The index.</returns>
     public static SearchIndex<T> InMemory<T>(IEmbedder? embedder)
         where T : class
-        => new(new MemoryStorage(), SearchMappings.Require<T>(), embedder, SearchSparseEncoders.Default);
+        => new(new MemoryStorage(), SearchMappings.Require<T>(), embedder, SearchSparseEncoders.Default, SearchRerankers.Default);
 }
 
 /// <summary>
@@ -104,8 +126,9 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     private readonly AutoEmbedding? _auto;
     private readonly AutoSparse? _autoSparse;
 
-    internal SearchIndex(IStorage storage, SearchMapping<T> mapping, IEmbedder? embedder = null, ISparseEncoder? sparseEncoder = null)
+    internal SearchIndex(IStorage storage, SearchMapping<T> mapping, IEmbedder? embedder = null, ISparseEncoder? sparseEncoder = null, IReranker? reranker = null)
     {
+        Reranker = reranker;
         _storage = storage;
         _mapping = mapping;
         if (embedder is not null && mapping.Members.Any(static m => m.From is not null && m.Type == FieldType.Vector))
@@ -151,6 +174,9 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     internal SearchMapping<T> Mapping => _mapping;
 
     internal AutoEmbedding? Auto => _auto;
+
+    /// <summary>The reranker of searches that rerank (<c>Rerank()</c>), or <see langword="null"/> when the index has none.</summary>
+    public IReranker? Reranker { get; }
 
     internal AutoSparse? AutoSparse => _autoSparse;
 
@@ -578,6 +604,19 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
 
             search = search.Take(request.Limit).Skip(request.Offset);
         }
+        else if (request.Rerank is { } held)
+        {
+            // The text of q is searched by words and read by the reranker (docs/rerank.md); the filter selects.
+            Search.Query textArm = new UserTextCompiler(Schema).Compile(held.Text);
+            Search.Query scored = request.Query is null ? textArm : new BooleanQuery([new BooleanClause(textArm, Occur.Must), new BooleanClause(request.Query, Occur.Must)]);
+            search = SearchBy(scored);
+            if (request.Filter is { } heldFilter)
+            {
+                search = search.WhereQuery(heldFilter);
+            }
+
+            search = search.Take(request.Limit).Skip(request.Offset);
+        }
         else
         {
             // Ranking rules rank by the words of the text, so a request that is only text and a filter is searched as text.
@@ -601,6 +640,11 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         if (request.RankingRules is { } requestRules)
         {
             search = requestRules.Count == 0 ? search.RankByRelevance() : search.RankingRules([.. requestRules]);
+        }
+
+        if (request.Rerank is { } rerankRequest)
+        {
+            search = search.RerankSpecCore(new RerankSpec(rerankRequest.Window, null, null, rerankRequest.Text));
         }
 
         if (request.Sort is { } sort)
@@ -798,8 +842,20 @@ public sealed class SearchHit<T>
     /// <summary>The breakdown of <see cref="Score"/>, when the search asked for it with <see cref="SearchQuery{T}.Explain"/>; <see langword="null"/> otherwise. The root value equals <see cref="Score"/>.</summary>
     public Explanation? Explanation { get; internal set; }
 
-    /// <summary>The relevance score: BM25F over the full-text fields for text queries; 1 times boost for filter-only and blank searches.</summary>
-    public float Score { get; }
+    /// <summary>The relevance score: BM25F over the full-text fields for text queries; 1 times boost for filter-only and blank searches. After a rerank stage it is the reranker's score (docs/rerank.md).</summary>
+    public float Score { get; private set; }
+
+    /// <summary>The score the hit had before the rerank stage; <see langword="null"/> when the search was not reranked.</summary>
+    public float? FirstStageScore { get; private set; }
+
+    internal Document Stored => _stored;
+
+    internal SearchHit<T> WithRerank(float score, Explanation? explanation)
+    {
+        var hit = new SearchHit<T>(Id, score, Document, _stored, _schema, _terms, _options) { Cursor = Cursor, GeoDistance = GeoDistance, Explanation = explanation ?? Explanation };
+        hit.FirstStageScore = Score;
+        return hit;
+    }
 
     /// <summary>The document as stored when it was added. Only attributed members are kept.</summary>
     public T Document { get; }
@@ -944,6 +1000,11 @@ public sealed partial class SearchQuery<T> : IEnumerable<SearchHit<T>>
     /// <exception cref="InvalidOperationException">The stored source of a hit is missing (an index reopened before stored source is available).</exception>
     public SearchResults<T> Execute(CancellationToken cancellationToken = default)
     {
+        if (_take > 0 && EffectiveRerank() is { } rerank)
+        {
+            return ExecuteReranked(rerank.Spec, rerank.Reranker, rerank.Query, cancellationToken);
+        }
+
         Search.Query query = Build(out Search.Query textQuery, out IReadOnlyList<RankingRule>? rules, out IReadOnlyList<Search.Query> groups);
         SearchIndex<T>.Generation? generation = _index.Acquire();
         if (_stages is not null || rules is not null)
@@ -996,7 +1057,10 @@ public sealed partial class SearchQuery<T> : IEnumerable<SearchHit<T>>
     /// <summary>Runs the search (see <see cref="Execute(CancellationToken)"/>). The work happens on the calling thread: local storage reads do not yield.</summary>
     /// <param name="cancellationToken">Cancels the search.</param>
     /// <returns>The results.</returns>
-    public ValueTask<SearchResults<T>> ExecuteAsync(CancellationToken cancellationToken = default) => ValueTask.FromResult(Execute(cancellationToken));
+    public ValueTask<SearchResults<T>> ExecuteAsync(CancellationToken cancellationToken = default)
+        => _take > 0 && EffectiveRerank() is { } rerank
+            ? ExecuteRerankedAsync(rerank.Spec, rerank.Reranker, rerank.Query, cancellationToken)
+            : ValueTask.FromResult(Execute(cancellationToken));
 
     /// <summary>Runs the search and returns the hits as a list.</summary>
     /// <returns>The hits.</returns>

@@ -44,7 +44,7 @@ public sealed partial class IndexWriter
         _metaDirty = true;
         if (x.IsNew)
         {
-            List<string> names = x.Info.Files.Select(f => f.FileName).ToList();
+            List<string> names = x.Info.FileNames.ToList();
             foreach (string n in names)
             {
                 _pending.Remove(n);
@@ -194,7 +194,7 @@ public sealed partial class IndexWriter
     {
         string name = NewSegmentName();
         _busy.Add(source.Info.Name);
-        var held = source.Info.Files.Select(f => f.FileName).ToList();
+        var held = source.Info.FileNames.ToList();
         LiveDocs captured = source.Words is not null
             ? LiveDocs.FromWords(source.Info.DocCount, (ulong[])source.Words.Clone())
             : SegmentReader.LoadLiveDocs(_storage, source.Info, _limits);
@@ -280,7 +280,7 @@ public sealed partial class IndexWriter
                 {
                     if (result is not null)
                     {
-                        List<string> names = result.Files.Select(f => f.FileName).ToList();
+                        List<string> names = result.FileNames.ToList();
                         foreach (string n in names)
                         {
                             _pending.Add(n);

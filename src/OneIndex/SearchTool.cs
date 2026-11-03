@@ -475,6 +475,15 @@ public static class SearchTool
             w.WriteEndObject();
         }
 
+        w.WriteStartObject("rerank");
+        w.WriteString("type", "object");
+        w.WriteString("description", "Rescore the best results with a cross-encoder that reads q and each result's text together, and return them in that order. Needs q and an index with a reranker; slower. Not with sort.");
+        w.WriteBoolean("additionalProperties", false);
+        w.WriteStartObject("properties");
+        Int(w, "window", 1, QueryJson.MaxWindow, "How many of the best results to rescore. Default 100.");
+        w.WriteEndObject();
+        w.WriteEndObject();
+
         List<string> sortable = [.. schema.Fields.Where(static f => f.Column && f.Type is FieldType.Keyword or FieldType.Integral or FieldType.Fractional or FieldType.Date or FieldType.Bool).Select(static f => f.Name)];
         w.WriteStartObject("sort");
         w.WriteString("type", "array");

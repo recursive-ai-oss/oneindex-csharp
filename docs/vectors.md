@@ -70,11 +70,8 @@ extended candidates; connections dropped by pruning are not refilled, which is t
   machine (kernels above). Tests build twice and compare every link.
 * **Deletes.** A deleted document stays in the graph, because removing it can cut paths. Search walks through it and leaves it out of
   the results. A segment with many deletes is rebuilt by the merge policy like any other.
-* **Filters.** A query may carry a filter (a query whose matches are the allowed documents). The segment turns it into a bit set. A
-  filtered graph search keeps walking through rejected nodes and collects accepted ones until `ef` are found. If fewer than
-  `sqrt(ef * n)` documents pass, an exact scan of the accepted vectors is cheaper than walking to `ef / selectivity` nodes and is used
-  instead; a graph walk that visits more nodes than there are accepted documents stops and falls back to the exact scan, so the cost is
-  bounded by twice the exact one. (ACORN-style traversal is a later unit.)
+* **Filters.** A query may carry a filter (a query whose matches are the allowed documents). The segment turns it into a bit set, and
+  the search is described under "Filtered search" below.
 
 ### Merge
 
@@ -172,6 +169,83 @@ reorder the candidates, so a result's score is always the exact one, whatever th
 * **Determinism.** Interval selection uses IEEE double arithmetic in a fixed order and integer codes; the integer kernels are exact at every width. The
   records are therefore the same bytes on every machine (a test hashes 100 records of each codec and passes on x64 and arm64).
 
+## Filtered search
+
+A `KnnQuery` with a `Filter` (a keyword term, a numeric or date range over a column or point, any query) turns the filter into a bit set of
+documents per segment and then chooses between two ways of answering. The choice is made per segment, on the number of documents the filter admits.
+
+* **Filtered graph walk.** After Patel, Kraft, Guestrin and Zaharia, "ACORN: Performant and Predicate-Agnostic Search Over Vector Embeddings and
+  Structured Data", SIGMOD 2024 (section 5, search over the predicate subgraph). The upper layers are walked greedily without the filter, as for
+  an unfiltered query. On layer 0 only documents that pass the filter are scored, queued and kept. Where a neighbour fails the filter, its own
+  neighbours are looked at instead (neighbours of neighbours), so a rejected node costs a list read and no distance, and the walk is not cut off
+  from the accepted nodes behind it. A node stops looking through rejected neighbours once it has collected `2M` accepted neighbours (32 by default), the
+  length of an unfiltered layer-0 list. The walk ends as the unfiltered one does, when the nearest unexpanded candidate is farther than the
+  `ef`-th best accepted result. If it finds fewer than `min(k, accepted)` results (a filter that splits the graph into pieces) the segment scans.
+* **Exact scan.** Below the switch the segment compares the query with every accepted vector (`FlatSearch`); the result is exact.
+* **The switch.** The scan is taken when the filter admits at most `20 * max(ef, k)` documents in the segment. The walk's cost depends on `ef` and
+  hardly on the selectivity (measured, below), while the scan's cost is proportional to the number of accepted vectors. On 150,000 vectors of 384 dimensions at
+  `ef` 100 they cost the same at about 1,500 accepted documents (15 times `ef`), and at `ef` 40 at about 650, so the break-even is close to
+  linear in `ef` with a factor of 15. The scan is exact and the walk is not (recall 0.83 to 0.91 at `ef` 100 where the walk alone is used at 1%), so the scan is taken a little past break-even,
+  where it costs up to 1.3 times the walk. At the default `ef` of 100 the scan serves segments with up to 2,000 accepted documents, and a larger `ef` widens that range (a caller asking for
+  more recall gets the exact scan sooner). Compressed copies use the same rule; the scan reads the full-precision vectors.
+* **Compressed copies.** The filtered walk runs on the int8, int4 or sign-bit codes with the same filter, keeps `max(ef, oversample * k)` accepted
+  candidates, and reranks them with the full-precision vectors, exactly as the unfiltered search does. Deleted documents are rejected nodes in the same way.
+* **Deviations from the paper.** The graph is the ordinary graph. The paper builds ACORN-gamma with a denser neighbour list (expansion factor gamma) so a predicate subgraph
+  stays connected, and describes ACORN-1 with the ordinary degree, which is the variant used here. The second hop is taken only through rejected neighbours (the paper expands every neighbour). The switch to the exact scan is the
+  paper's own fallback for very selective predicates, with a threshold measured here rather than derived.
+* **Hybrid, facets and sort.** The filter belongs to the vector arm (`HybridQuery.Vector.Filter`), as text filters belong to the text arm. A filtered knn clause is an ordinary query, so
+  facets, sorts and aggregations see the same K documents.
+
+### Measured
+
+Method: `tools/vector_filtered_rows.sh` (bench `--mode filtered`). The embedding sets above, one segment, `ef` 100 (the default) and the `ef` that reaches 0.95 unfiltered
+(450 at 384 dimensions, 270 at 768, float graph). Recall@10 is against the exact top 10 over the passing documents (brute force). Two filters over the same documents: *uncorrelated*, a hash of the document number
+(a keyword term, or a range over a number assigned at random, selects the same way), and *correlated*, the lowest slice of the projection of the vector on one fixed random direction (a range over a column that follows the
+vectors' position in space, so a query's neighbours are mostly inside the filter or mostly outside it). Selectivities 50%, 10%, 1% and 0.1%. Keyword, column and point filters reach the
+search as the same bit set (`tests/OneIndex.Tests/FilteredVectorTests.cs` runs a keyword term, two numeric ranges and a correlated range through `KnnQuery.Filter`). *Post-filter* is the naive
+alternative: an unfiltered search for `ceil(40 / selectivity)` neighbours (at most 10,000, with `ef` at least that), keeping those that pass.
+Timings are indicative: they ran as queued jobs on a shared 32-core host (x64, AMD Ryzen 9 7950X3D) whose load average was above 15 during the runs; an earlier run on a quiet host (load 4) gave 1.5 to 3 times the queries per second shown.
+Compare rows with each other, not with the unfiltered table. Recall does not depend on load.
+
+Recall@10 / queries per second, 384 dimensions, 150,000 vectors, float graph, `ef` 100 (the default):
+
+| Filter | Selectivity (accepted) | Filtered walk with switch | Walk alone | Exact scan | Post-filter |
+|---|---|---|---|---|---|
+| uncorrelated | 50% (75,002) | 0.866 / 937 | 0.866 / 821 | 1.000 / 56 | 0.843 / 1558 |
+| uncorrelated | 10% (15,003) | 0.909 / 1439 | 0.909 / 1236 | 1.000 / 202 | 0.930 / 519 |
+| uncorrelated | 1% (1,505) | 1.000 / 4123 | 0.833 / 2499 | 1.000 / 3729 | 0.993 / 74 |
+| uncorrelated | 0.1% (152) | 1.000 / 7537 | 0.958 / 5886 | 1.000 / 7481 | 0.210 / 38 |
+| correlated | 50% (75,000) | 0.880 / 1116 | 0.880 / 989 | 1.000 / 55 | 0.843 / 1403 |
+| correlated | 10% (15,000) | 0.897 / 1433 | 0.897 / 975 | 1.000 / 220 | 0.869 / 408 |
+| correlated | 1% (1,500) | 1.000 / 3938 | 0.907 / 2053 | 1.000 / 4362 | 0.801 / 66 |
+| correlated | 0.1% (150) | 1.000 / 6279 | 0.938 / 5322 | 1.000 / 7073 | 0.164 / 37 |
+
+At `ef` 450 (384 dimensions): uncorrelated 50% 0.966 / 304 (post-filter 0.954 / 406), 10% 0.984 / 305 (0.938 / 460), 1% and 0.1% 1.000 (exact scan); correlated 50% 0.969 / 303 (0.950 / 361),
+10% 0.980 / 282 (0.881 / 455), 1% and 0.1% 1.000 (exact scan; post-filter 0.801 and 0.164).
+
+768 dimensions, 75,000 vectors, float graph, `ef` 100: uncorrelated 50% 0.905 / 640 (post-filter 0.886 / 1100), 10% 0.938 / 719 (0.948 / 404), 1% 1.000 / 7515 (0.995 / 61), 0.1% 1.000 / 13843 (0.234 / 36);
+correlated 50% 0.903 / 770 (0.871 / 1100), 10% 0.930 / 971 (0.901 / 309), 1% 1.000 / 5839 (0.859 / 57), 0.1% 1.000 / 12474 (0.158 / 33). At `ef` 270: 50% 0.961 and 0.962, 10% 0.980 and 0.982,
+1% and 0.1% 1.000.
+
+int4 copy (oversample 3, float rerank), 384 dimensions, `ef` 100: uncorrelated 50% 0.862 / 1029, 10% 0.905 / 1511, 1% 1.000 / 3493, 0.1% 1.000 / 6738; correlated 0.870 / 1196, 0.889 / 2395, 1.000 / 3326, 1.000 / 7060. At `ef` 450 the recalls are 0.962,
+0.981, 1.000, 1.000 (uncorrelated) and 0.967, 0.979, 1.000, 1.000 (correlated). 768 dimensions, `ef` 100: uncorrelated 0.907 / 1228, 0.938 / 2330, 1.000 / 6882, 1.000 / 13564; correlated 0.903 / 1200, 0.932 / 1499, 1.000 / 7037, 1.000 / 13618;
+at `ef` 270: 0.963, 0.983, 1.000, 1.000 and 0.961, 0.980, 1.000, 1.000.
+
+What the rows say:
+
+* Filtered recall at a given `ef` is about the unfiltered recall at that `ef` (0.86 to 0.91 at 100, 0.96 to 0.98 at 450 or 270) from 50% down to 10%, and exact below the switch.
+* **Post-filtering is acceptable only for mild filters.** At 50% it is as accurate as the walk at the same `ef` and faster (it asks for 80 neighbours, hardly more than the walk visits).
+  At 10% it is comparable (uncorrelated) or worse (correlated, 0.87 against 0.90 at `ef` 100, 0.88 against 0.98 at 450). Below 10% it fails (correlated 1%: 0.80; 0.1%: 0.16 to 0.21, where the
+  10,000-neighbour cap stops it) or is 30 to 100 times slower than the scan (uncorrelated 1%: 74 against 4,123 queries per second). Post-filtering does not guarantee a full page of `k`; the walk and the scan return `min(k, accepted)`.
+* The walk alone loses recall at 1% (0.83 to 0.91 at `ef` 100): few accepted nodes are near a query and the second hop is capped. The switch removes that range.
+* The second-hop target (`2M`) was chosen on a sweep from 12 to 64 on the 384-dimension set at 50%, 10% and 4%: a smaller target is faster per `ef` and loses recall, and at matched recall
+  the curves are close, so 32 stays (it is the length of an unfiltered list).
+
+Information rows (no managed comparator implements a filtered graph search, so there is nothing to gate against): queries per second at the smallest swept `ef` that reaches the recall,
+filtered walk with switch, float graph, 384 dimensions at 0.90 / 0.95 recall: uncorrelated 50% 808 (`ef` 140) / 418 (300), 10% 860 (100) / 607 (200), 1% and 0.1% exact (2621, 5995); correlated 50% 688 / 376, 10% 1064 / 538, 1% and 0.1%
+exact (3457, 5893). 768 dimensions: uncorrelated 50% 793 (100) / 438 (200), 10% 1677 (70) / 671 (140); correlated 50% 685 / 461, 10% 1414 / 666; exact below. int4, 384 dimensions: uncorrelated 50% 1328 (140) / 352 (450), 10% 3252 / 1055;
+correlated 50% 1055 / 629, 10% 2005 / 716. Peak resident memory of the 384-dimension process was 980 MB for the float index and 982 MB for the int4 index (150,000 vectors; the process also holds the data and the truth sets).
+
 ## Method of the measurements
 
 * Embedding sets: `tools/embeddings.py` (the Wikipedia abstracts of the text benchmarks, BAAI/bge-small-en-v1.5 at 384 and
@@ -186,7 +260,8 @@ reorder the candidates, so a result's score is always the exact one, whatever th
 * Kernels: `bench/OneIndex.Bench` `KernelBenchmarks`.
 * Durability: `tests/Durability` carries a vector field (flat threshold 3, so merges of tiny segments build and continue graphs); every
   recovered snapshot is checked for the vector of every live document and for exact nearest neighbours against brute force.
-* Fuzz: `fuzz` target `vectors`.
+* Filtered search: `tools/vector_filtered_rows.sh`. The durability workload also runs filtered nearest-neighbour queries (a keyword term and a numeric range) after every recovery and requires every hit to pass the filter and the exact result to equal brute force.
+* Fuzz: `fuzz` target `vectors` (it includes a filtered walk).
 
 ## Measured
 

@@ -101,6 +101,17 @@ internal static class CommitTarget
             new byte[] { 9, 8, 7 },
             new Dictionary<string, string> { ["a"] = "1", ["b"] = "two" });
         File.WriteAllBytes(Path.Combine(directory, "commit-full"), [1, .. CommitFileFormat.Serialize(commit, Limits)]);
+        var packed = new CommitInfo(
+            4,
+            6,
+            [new SegmentInfo("s2", 7, 0, 0, [
+                new SegmentFile(SegmentParts.Terms, "s2.pack", new CodecRef(SegmentParts.Terms, 1), 60, 1, 8),
+                new SegmentFile(SegmentParts.Postings, "s2.pack", new CodecRef(SegmentParts.Postings, 1), 90, 2, 68),
+                new SegmentFile(SegmentParts.Ids, "s2.pack", new CodecRef(SegmentParts.Ids, 1), 30, 3, 158)])],
+            schema.Serialize(),
+            new byte[] { 1 },
+            new Dictionary<string, string>());
+        File.WriteAllBytes(Path.Combine(directory, "commit-packed"), [1, .. CommitFileFormat.Serialize(packed, Limits)]);
         File.WriteAllBytes(Path.Combine(directory, "commit-empty"), [1, .. CommitFileFormat.Serialize(new CommitInfo(1, 0, []), Limits)]);
         File.WriteAllBytes(Path.Combine(directory, "schema"), [2, .. schema.Serialize()]);
         File.WriteAllBytes(Path.Combine(directory, "commit-raw"), [0, .. CommitFileFormat.Serialize(commit, Limits)]);

@@ -291,6 +291,55 @@ public static class Workload
                 }
             }
         }
+
+        if (rows.Count > 0)
+        {
+            CheckFilteredVectors(context, searcher, rows, vectorOf);
+        }
+    }
+
+    /// <summary>
+    /// Filtered nearest-neighbour search after recovery: a keyword filter and a numeric range filter. Every hit must satisfy the filter and
+    /// be a live document; the exact search must equal brute force over the matching documents, and the graph search must return a full page.
+    /// </summary>
+    private static void CheckFilteredVectors(SearchContext context, IndexSearcher searcher, SortedDictionary<string, string> rows, Dictionary<string, float[]> vectorOf)
+    {
+        var rng = new Random(rows.Count + 7);
+        var filters = new (string Name, Query Filter, Func<string, bool> Matches)[]
+        {
+            ("tag=t1", new TermQuery("tag", "t1"), f => f.StartsWith("t1|", StringComparison.Ordinal)),
+            ("n<500000", new RangeQuery("n", null, FieldValue.FromInt64(500_000)) { IncludeUpper = false }, f => long.Parse(f[(f.LastIndexOf('|') + 1)..], System.Globalization.CultureInfo.InvariantCulture) < 500_000),
+        };
+        foreach ((string name, Query filter, Func<string, bool> matches) in filters)
+        {
+            var matching = rows.Where(r => matches(r.Value)).Select(r => r.Key).ToHashSet(StringComparer.Ordinal);
+            float[] query = VectorOf(rng.Next(1_000_000));
+            float[] unit = Unit(query);
+            double[] expected = matching.Select(id => Score(vectorOf[id], unit)).OrderByDescending(x => x).Take(5).ToArray();
+            foreach (bool exact in new[] { true, false })
+            {
+                TopDocs top = searcher.Search(new KnnQuery("v", query, 5) { Exact = exact, Filter = filter }, 5);
+                if (top.Hits.Count != expected.Length)
+                {
+                    throw new InvalidDataException($"filtered ({name}) nearest-neighbour search returned {top.Hits.Count} of {expected.Length} documents");
+                }
+
+                for (int i = 0; i < top.Hits.Count; i++)
+                {
+                    LeafContext leaf = context.Leaves.Last(l => l.DocBase <= top.Hits[i].DocId);
+                    string id = leaf.Reader.StoredFields!.GetDocument(top.Hits[i].DocId - leaf.DocBase).Get("id").AsText();
+                    if (!matching.Contains(id))
+                    {
+                        throw new InvalidDataException($"filtered ({name}) nearest-neighbour hit {id} does not match the filter");
+                    }
+
+                    if (exact && Math.Abs(expected[i] - top.Hits[i].Score) > 1e-4)
+                    {
+                        throw new InvalidDataException($"filtered ({name}) exact rank {i} scores {top.Hits[i].Score}, brute force finds {expected[i]}");
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>Every owned file in the storage must be listed by the newest commit (nothing leaked) once nothing else pins it.</summary>

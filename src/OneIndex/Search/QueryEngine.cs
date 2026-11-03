@@ -358,7 +358,9 @@ public sealed class QueryEngine : IWeightFactory
             }
 
             byte[] prefix = Encoding.UTF8.GetBytes(query.Term[..split]);
-            return ExpandClosest(def, query.Boost, query.Term, query.MaxEdits, query.MaxExpansions, leaf => leaf.Intersect(new LevenshteinAutomaton(query.Term, query.MaxEdits, query.Transpositions), prefix));
+            // One automaton for every segment: they are walked one after another on this thread, and its cached transitions carry over.
+            var automaton = new LevenshteinAutomaton(query.Term, query.MaxEdits, query.Transpositions);
+            return ExpandClosest(def, query.Boost, query.Term, query.MaxEdits, query.MaxExpansions, leaf => leaf.Intersect(automaton, prefix));
         }
 
         public override Weight VisitRegex(RegexQuery query)

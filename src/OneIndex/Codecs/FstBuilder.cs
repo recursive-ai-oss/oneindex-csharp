@@ -21,13 +21,20 @@ internal sealed class FstBuilder
     private readonly Dictionary<byte[], int> _register = new(ByteArrayComparer.Instance);
     private readonly Dictionary<byte[], int>.AlternateLookup<ReadOnlySpan<byte>> _lookup;
     private readonly int _maxTermBytes;
+    private readonly int _version;
     private BuildNode[] _stack = new BuildNode[16];
     private byte[] _previous = new byte[16];
     private int _previousLength;
     private bool _any;
 
-    public FstBuilder(int maxTermBytes)
+    /// <summary>Starts an empty automaton.</summary>
+    /// <param name="maxTermBytes">The longest term accepted.</param>
+    /// <param name="version">The node layout to write: 1 (arcs read in sequence) or 2 (fixed-width tables, arcs found by label).</param>
+    public FstBuilder(int maxTermBytes, int version = 2)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(version, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(version, 2);
+        _version = version;
         _maxTermBytes = maxTermBytes;
         _lookup = _register.GetAlternateLookup<ReadOnlySpan<byte>>();
         _stack[0] = new BuildNode();
@@ -127,16 +134,75 @@ internal sealed class FstBuilder
         }
 
         int address = _out.Length;
-        _out.WriteVarUInt(((ulong)node.ArcCount << 1) | (node.IsFinal ? 1UL : 0));
-        for (int i = 0; i < node.ArcCount; i++)
+        if (_version >= 2)
         {
-            _out.WriteByte(node.Labels[i]);
-            _out.WriteVarUInt((ulong)node.Words_[i]);
-            _out.WriteVarUInt((ulong)(address - node.Targets[i]));
+            WriteNode2(node, address);
+        }
+        else
+        {
+            _out.WriteVarUInt(((ulong)node.ArcCount << 1) | (node.IsFinal ? 1UL : 0));
+            for (int i = 0; i < node.ArcCount; i++)
+            {
+                _out.WriteByte(node.Labels[i]);
+                _out.WriteVarUInt((ulong)node.Words_[i]);
+                _out.WriteVarUInt((ulong)(address - node.Targets[i]));
+            }
         }
 
         _register.Add(_key.Span.ToArray(), address);
         return address;
+    }
+
+    // Version 2 node: one head byte (bit 0 final, bits 1-2 and 3-4 the byte widths of the cumulative counts and of the child
+    // distances, minus one, bits 5-7 the arc count when it is below 7, else 7 followed by a varint of count minus 7), then the labels,
+    // then the cumulative word counts (arc i holds the words of arcs 0 to i), then the distances to the children, little endian. A
+    // reader finds an arc by label in the label table and its ordinal offset in one table read.
+    private void WriteNode2(BuildNode node, int address)
+    {
+        int n = node.ArcCount;
+        long total = 0;
+        long maxDelta = 0;
+        for (int i = 0; i < n; i++)
+        {
+            total += node.Words_[i];
+            maxDelta = Math.Max(maxDelta, address - node.Targets[i]);
+        }
+
+        int cw = n == 0 ? 1 : Width(total);
+        int dw = n == 0 ? 1 : Width(maxDelta);
+        int code = Math.Min(n, 7);
+        _out.WriteByte((byte)((node.IsFinal ? 1 : 0) | ((cw - 1) << 1) | ((dw - 1) << 3) | (code << 5)));
+        if (code == 7)
+        {
+            _out.WriteVarUInt((ulong)(n - 7));
+        }
+
+        for (int i = 0; i < n; i++)
+        {
+            _out.WriteByte(node.Labels[i]);
+        }
+
+        long running = 0;
+        for (int i = 0; i < n; i++)
+        {
+            running += node.Words_[i];
+            WriteFixed(running, cw);
+        }
+
+        for (int i = 0; i < n; i++)
+        {
+            WriteFixed(address - node.Targets[i], dw);
+        }
+    }
+
+    private static int Width(long value) => value < 1L << 8 ? 1 : value < 1L << 16 ? 2 : value < 1L << 24 ? 3 : 4;
+
+    private void WriteFixed(long value, int width)
+    {
+        for (int k = 0; k < width; k++)
+        {
+            _out.WriteByte((byte)(value >> (8 * k)));
+        }
     }
 
     private sealed class BuildNode
