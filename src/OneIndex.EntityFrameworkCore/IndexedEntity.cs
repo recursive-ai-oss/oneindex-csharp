@@ -89,6 +89,43 @@ internal sealed class IndexedEntity<T> : IndexedEntity
         return await q.ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    // A commit that failed (a full disk, a revoked permission) stops the index writer for good, because it cannot know whether the commit
+    // became durable. The log still holds every row the failed commit would have applied, so the right recovery is to close the index and
+    // open it again at the next catch-up, which finds the last commit that stands. Without this a transient error would wedge the applier
+    // until the process restarted.
+    private void OnIndex(Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch
+        {
+            // Cancellation too: a commit cancelled after its files were written stops the writer the same way.
+            ResetIndex();
+            throw;
+        }
+    }
+
+    private void ResetIndex()
+    {
+        SearchIndex<T>? failed;
+        lock (this)
+        {
+            failed = _index;
+            _index = null;
+        }
+
+        try
+        {
+            failed?.Dispose();
+        }
+        catch (Exception e) when (e is IOException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            // The index is being replaced because it failed; closing it may fail the same way.
+        }
+    }
+
     // The index is trusted only when it was built against this log and has applied a position the log can still continue from.
     private static bool Continuable(SearchIndex<T> index, LogState state, out OutboxPosition position)
         => OutboxPosition.TryParse(index.AppliedPosition.Span, out position!)
@@ -155,13 +192,13 @@ internal sealed class IndexedEntity<T> : IndexedEntity
                     found.AddRange(Load(db, step.Ids.GetRange(i, Math.Min(LoadChunk, step.Ids.Count - i)), IdName, null, track: false));
                 }
 
-                Apply(index, step.Ids, found, cancellationToken);
+                OnIndex(() => Apply(index, step.Ids, found, cancellationToken));
                 runtime.Probe("apply.before-commit");
             }
 
             if (step.Ids.Count > 0 || step.Position is not null && !step.Position.Encode().AsSpan().SequenceEqual(index.AppliedPosition.Span))
             {
-                index.Commit(step.Position!.Encode(), cancellationToken);
+                OnIndex(() => index.Commit(step.Position!.Encode(), cancellationToken));
                 runtime.Probe("apply.after-commit");
                 applied += step.Ids.Count;
             }
@@ -206,13 +243,13 @@ internal sealed class IndexedEntity<T> : IndexedEntity
                     found.AddRange(await LoadAsync(db, step.Ids.GetRange(i, Math.Min(LoadChunk, step.Ids.Count - i)), IdName, null, track: false, cancellationToken).ConfigureAwait(false));
                 }
 
-                Apply(index, step.Ids, found, cancellationToken);
+                OnIndex(() => Apply(index, step.Ids, found, cancellationToken));
                 runtime.Probe("apply.before-commit");
             }
 
             if (step.Ids.Count > 0 || step.Position is not null && !step.Position.Encode().AsSpan().SequenceEqual(index.AppliedPosition.Span))
             {
-                index.Commit(step.Position!.Encode(), cancellationToken);
+                OnIndex(() => index.Commit(step.Position!.Encode(), cancellationToken));
                 runtime.Probe("apply.after-commit");
                 applied += step.Ids.Count;
             }
@@ -265,12 +302,12 @@ internal sealed class IndexedEntity<T> : IndexedEntity
                 seen.Add(IdOf(e)!);
             }
 
-            index.Upsert(page, cancellationToken);
+            OnIndex(() => index.Upsert(page, cancellationToken));
             last = IdOf(page[^1]);
             runtime.Probe("reindex.page");
         }
 
-        FinishReindex(index, state, present, seen, runtime, cancellationToken);
+        OnIndex(() => FinishReindex(index, state, present, seen, runtime, cancellationToken));
     }
 
     private async ValueTask ReindexAsync(OneIndexRuntime runtime, DbContext db, CancellationToken cancellationToken)
@@ -303,12 +340,12 @@ internal sealed class IndexedEntity<T> : IndexedEntity
                 seen.Add(IdOf(e)!);
             }
 
-            index.Upsert(page, cancellationToken);
+            OnIndex(() => index.Upsert(page, cancellationToken));
             last = IdOf(page[^1]);
             runtime.Probe("reindex.page");
         }
 
-        FinishReindex(index, state, present, seen, runtime, cancellationToken);
+        OnIndex(() => FinishReindex(index, state, present, seen, runtime, cancellationToken));
     }
 
     private void FinishReindex(SearchIndex<T> index, LogState state, List<long> present, HashSet<string> seen, OneIndexRuntime runtime, CancellationToken cancellationToken)
@@ -363,8 +400,11 @@ internal sealed class IndexedEntity<T> : IndexedEntity
     public void Refresh(OneIndexRuntime runtime, List<T> entities, CancellationToken cancellationToken)
     {
         SearchIndex<T> index = Index(runtime);
-        index.Upsert(entities, cancellationToken);
-        index.Commit(index.AppliedPosition.Span, cancellationToken);
+        OnIndex(() =>
+        {
+            index.Upsert(entities, cancellationToken);
+            index.Commit(index.AppliedPosition.Span, cancellationToken);
+        });
     }
 
     public override void Dispose()

@@ -172,6 +172,7 @@ public static class ChildApp
             o.PollInterval = TimeSpan.FromMilliseconds(15);
             o.BatchSize = rng.Next(3, 40);
             o.LateRowAge = TimeSpan.FromSeconds(a.Number("late", 5));
+            o.LateRowWindow = a.Number("window", 10_000);
         });
         rt = OneIndexRuntime.For(first);
         using var cts = new CancellationTokenSource();
@@ -379,7 +380,7 @@ public sealed class KillCampaign(Args a)
                     UseShellExecute = false,
                 };
                 foreach (string s in new[] { dll, "app", "--db", dbFile, "--root", dir, "--inst", inst, "--seed", (seed * 100003 + cycle * 7 + inst[0]).ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    "--ms", "2500", "--mode", rng.Next(3) == 0 ? "inline" : "threaded", "--writers", writers, "--hold", a.Get("hold", "0"), "--kill", kill, "--retain", (5 + rng.Next(60)).ToString(System.Globalization.CultureInfo.InvariantCulture) })
+                    "--ms", "2500", "--mode", rng.Next(3) == 0 ? "inline" : "threaded", "--writers", writers, "--hold", a.Get("hold", "0"), "--kill", kill, "--retain", (a.Number("retain-base", 5) + rng.Next(60)).ToString(System.Globalization.CultureInfo.InvariantCulture), "--window", a.Get("window", "10000") })
                 {
                     psi.ArgumentList.Add(s);
                 }
@@ -435,6 +436,14 @@ public sealed class KillCampaign(Args a)
                 }
 
                 p.Dispose();
+            }
+
+            if (pg.Length > 0)
+            {
+                // A killed client's transaction ends when the server notices the closed socket, a moment after the process is gone; a transaction whose
+                // commit was already on its way finishes then. Pruning the log in that moment (below) would delete the position it holds, which is the
+                // documented hazard of pruning past an open transaction, not something this campaign is meant to test.
+                await Task.Delay(500).ConfigureAwait(false);
             }
 
             if (rng.Next(100) < 40)
