@@ -71,7 +71,7 @@ internal sealed class RecordMapping<TRecord> : SearchMapping<TRecord>
     {
         null => null,
         string s => s.Length == 0 ? null : s,
-        Guid g => g == Guid.Empty ? null : g.ToString("D", CultureInfo.InvariantCulture),
+        Guid g => g.ToString("D", CultureInfo.InvariantCulture),
         IFormattable f => f.ToString(null, CultureInfo.InvariantCulture),
         _ => throw new NotSupportedException($"Keys of type {key.GetType().Name} are not supported; use string, Guid, int or long."),
     };
