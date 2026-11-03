@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using OneIndex.Files;
+using OneIndex.Storage;
 using OneIndex.Models;
 
 namespace OneIndex.Cli;
@@ -20,7 +21,7 @@ internal static class QueryCommand
 
         int limit = a.GetInt("--limit", 10, 1, 1000);
         BgeSmallEmbedder? embedder = a.Has("--hybrid") ? BgeSmallEmbedder.Load() : null;
-        using SearchIndex<FilePassage> index = FolderIndexer.OpenIndex(indexPath, embedder);
+        using SearchIndex<FilePassage> index = SearchIndex.OpenReadOnly<FilePassage>(indexPath, embedder);
 
         SearchQuery<FilePassage> q = index.Passages(a.Positionals[1]);
         if (a.Get("--filter") is { } filter)

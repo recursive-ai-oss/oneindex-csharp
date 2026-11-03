@@ -106,7 +106,8 @@ public static class StaticIndexBuilder
 
                 IvfOptions o = options.Ivf;
                 var withMetric = new IvfOptions { Metric = m.Metric, Lists = o.Lists, Iterations = o.Iterations, Seed = o.Seed, Storage = o.Storage, TrainingPerList = o.TrainingPerList };
-                byte[] ivf = IvfBuilder.Build(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(vectors), m.Dimensions, withMetric);
+                // The length comes from the stored vectors: an index built with another embedder may differ from the attribute.
+                byte[] ivf = IvfBuilder.Build(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(vectors), vectors.Count / ids.Count, withMetric);
                 files.Add(WriteChunks(outDirectory, IvfFileName(m.Name), options.ChunkBytes, ivf.Length, (offset, buffer) => ivf.AsSpan((int)offset, buffer.Length).CopyTo(buffer)));
                 byte[] table = IdTable(ids);
                 files.Add(WriteChunks(outDirectory, IdsFileName(m.Name), options.ChunkBytes, table.Length, (offset, buffer) => table.AsSpan((int)offset, buffer.Length).CopyTo(buffer)));
