@@ -245,6 +245,13 @@ public sealed partial class SearchQuery<T>
         if (vector is not null)
         {
             var knn = new KnnQuery(field!, vector, window);
+            if (_index.ExternalVectorArm is { } arm && arm.Handles(field!))
+            {
+                float[] queryVector = vector;
+                string vectorField = field!;
+                knn = knn with { CandidateSource = count => arm.Nearest(vectorField, queryVector, count) };
+            }
+
             knnArm = (KnnQuery)(_extras is null && _filters.Length == 0 ? knn : WithExtras(knn, applyFunction: false));
         }
 

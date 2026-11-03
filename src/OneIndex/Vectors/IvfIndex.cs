@@ -272,6 +272,13 @@ public sealed class IvfIndex : IDisposable
     /// <exception cref="ArgumentException">The query has the wrong length or is not finite.</exception>
     /// <exception cref="CorruptIndexException">A list is damaged.</exception>
     public IvfHit[] Search(ReadOnlySpan<float> query, int k, int nprobe = 8, Func<int, bool>? accept = null, int oversample = 4, CancellationToken cancellationToken = default)
+        => SearchCore(query, k, nprobe, accept, oversample, rerank: true, cancellationToken);
+
+    /// <summary>Like <see cref="Search"/> but, for 8-bit lists, ranks by the scores of the codes and never reads the full-precision region: the lists alone are read. For callers that only need a ranked candidate list (hybrid fusion), where a row read per candidate would cost far more than the lists.</summary>
+    internal IvfHit[] SearchApproximate(ReadOnlySpan<float> query, int k, int nprobe, CancellationToken cancellationToken = default)
+        => SearchCore(query, k, nprobe, null, 1, rerank: false, cancellationToken);
+
+    private IvfHit[] SearchCore(ReadOnlySpan<float> query, int k, int nprobe, Func<int, bool>? accept, int oversample, bool rerank, CancellationToken cancellationToken)
     {
         float[] q = PrepareQuery(query, k, ref nprobe);
         int[] probes = Probes(q, nprobe);
@@ -290,7 +297,7 @@ public sealed class IvfIndex : IDisposable
             ScanList(list, bytes, q, queryScale, accept, candidates);
         }
 
-        if (Storage != IvfStorage.EightBit)
+        if (Storage != IvfStorage.EightBit || !rerank)
         {
             return candidates.Result(k);
         }

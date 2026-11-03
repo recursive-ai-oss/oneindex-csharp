@@ -16,4 +16,4 @@ if [ ! -d "$bf" ]; then
   dotnet "$ONEINDEX_ARTIFACTS/bin/BrowserFixture/release/BrowserFixture.dll" --out "$bf" --corpus "$corpus" --docs "$docs" --chunk "$chunk"
 fi
 ls "$bf"
-dotnet "$ONEINDEX_ARTIFACTS/bin/StaticBytes/release/StaticBytes.dll" "$bf/static" --index "$bf/index"
+dotnet "$ONEINDEX_ARTIFACTS/bin/StaticBytes/release/StaticBytes.dll" "$bf/static" --index "$bf/index" --hybrid-nprobe "${HYBRID_NPROBE:-16}"
