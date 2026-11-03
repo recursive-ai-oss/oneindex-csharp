@@ -190,6 +190,45 @@ public abstract class SearchMapping<T>
         return new DimensionOverride<T>(this, members);
     }
 
+    /// <summary>Gives every <c>[Vector(From = ...)]</c> member that declares no length the embedder's dimension.</summary>
+    internal SearchMapping<T> ResolveDimensions(Vectors.IEmbedder? embedder)
+    {
+        MappedMember? unsized = null;
+        foreach (MappedMember m in _members)
+        {
+            if (m.Type == FieldType.Vector && m.From is not null && m.Dimensions == 0)
+            {
+                unsized = m;
+                break;
+            }
+        }
+
+        if (unsized is null)
+        {
+            return this;
+        }
+
+        if (embedder is null)
+        {
+            throw new InvalidOperationException($"[Vector] member '{unsized.Name}' declares no Dimensions, so its length comes from an embedder, and none was given. Pass one to Open, set SearchEmbedders.Default, or declare Dimensions.");
+        }
+
+        return WithUnsizedDimensions(embedder.Dimension);
+    }
+
+    /// <summary>Gives every <c>[Vector(From = ...)]</c> member that declares no length the given one (a tool description needs a schema, not a model).</summary>
+    internal SearchMapping<T> WithUnsizedDimensions(int dimensions)
+    {
+        var members = new MappedMember[_members.Length];
+        for (int i = 0; i < members.Length; i++)
+        {
+            MappedMember m = _members[i];
+            members[i] = m.Type == FieldType.Vector && m.From is not null && m.Dimensions == 0 ? m.WithDimensions(dimensions) : m;
+        }
+
+        return new DimensionOverride<T>(this, members);
+    }
+
     internal TextSettings SettingsForWrapper() => CreateSettings();
 
     /// <summary>The text settings the type's class-level attributes declare. The generated mapping overrides this; the default is <see cref="TextSettings.Default"/>.</summary>

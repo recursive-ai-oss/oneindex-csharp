@@ -20,6 +20,7 @@
   <ItemGroup>
     <!-- The model (Invoice, AppDb) and the seeded mutations are shared with the kill campaign. -->
     <ProjectReference Include="../EfDurability/EfDurability.csproj" />
+    <ProjectReference Include="../../samples/OneIndex.Samples/OneIndex.Samples.csproj" />
   </ItemGroup>
 
 </Project>

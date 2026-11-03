@@ -69,6 +69,15 @@ public sealed class IndexReader : IDisposable
         });
     }
 
+    /// <summary>Opens a reader on the newest commit of a storage (see <see cref="Open(IStorage, IReadOnlyList{ISegmentCodec}?, IndexLimits?, CancellationToken)"/>).</summary>
+    /// <param name="storage">The storage.</param>
+    /// <param name="codecs">The segment codecs; default the built-in set.</param>
+    /// <param name="limits">Limits; default <see cref="IndexLimits.Default"/>.</param>
+    /// <param name="cancellationToken">Cancels the open.</param>
+    /// <returns>The reader.</returns>
+    public static ValueTask<IndexReader> OpenAsync(IStorage storage, IReadOnlyList<ISegmentCodec>? codecs = null, IndexLimits? limits = null, CancellationToken cancellationToken = default)
+        => ValueTask.FromResult(Open(storage, codecs, limits, cancellationToken));
+
     internal static IndexReader Create(IndexSnapshot first, Func<IndexSnapshot, CancellationToken, IndexSnapshot?> refresh) => new(first, refresh);
 
     /// <summary>Gets the current snapshot with an extra reference. It stays valid, whatever <see cref="Refresh(CancellationToken)"/> does, until you dispose it.</summary>

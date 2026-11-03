@@ -22,9 +22,9 @@ public class Invoice {
 | `[Filterable]` | numbers, dates, `bool`, strings | Queries can filter on it. On a string it implies `[Keyword]`. |
 | `[Sortable]` | single-valued members | Kept column-wise for sorting with `OrderBy` and friends ([sorting.md](sorting.md)). |
 | `[Geo]` | one `GeoPoint` (or `GeoPoint?`) | Indexed and kept in a column for radius and bounding-box filters and distance sorting ([geo.md](geo.md)). |
-| `[Facet]` | keyword and value members | Kept for counts of values (facets arrive later); implies filterable. |
+| `[Facet]` | keyword and value members | Kept for counts of values (`Facets(x => x.Tags)`, [facets.md](facets.md)); implies filterable. |
 | `[Dynamic]` | a `System.Text.Json.JsonElement` (or `JsonElement?`) | A JSON value whose leaf paths are indexed on the fly and can be filtered by path; the whole value is stored and comes back unchanged. See dynamic.md. |
-| `[Vector]` | | Declared, not supported yet: a compile-time error. |
+| `[Vector(Dimensions, Metric, From)]` | `float[]` | A dense vector searched by `SearchVector`, `Hybrid` and `KnnQuery` ([vectors.md](vectors.md)). `From = nameof(Text)` embeds that text member automatically ([auto-embedding.md](auto-embedding.md)); then `Dimensions` may be left out and the embedder's dimension is used (an index opened without an embedder throws). An empty array means no vector was supplied. |
 
 Supported member types: `GeoPoint` (with `[Geo]`); `string`; `string[]`, `List<string>`, `IEnumerable<string>`, `IReadOnlyList<string>`, `IReadOnlyCollection<string>`, `IList<string>`, `ICollection<string>`; `sbyte`, `byte`, `short`, `ushort`, `int`, `uint`, `long`; `float`, `double`; `bool`; `DateTime`, `DateTimeOffset`; and the nullable forms of the value types (a null is simply absent).
 
@@ -39,7 +39,7 @@ The type must be a non-generic, non-abstract class, reachable from its assembly 
 | Id | Meaning |
 |---|---|
 | OI0001 | An attributed member has a type the attribute cannot map. |
-| OI0002 | `[Vector]`: declared but not supported yet. |
+| OI0002 | Reserved for an attribute that is declared but not supported; no current attribute raises it. |
 | OI0003 | Conflicting attributes (`[FullText]` with `[Keyword]`, or with a filtering attribute; `[Sortable]` on a collection; `[Dynamic]` with any other search attribute). |
 | OI0004 | A bad identifier: several `[SearchId]`, or one that is not a plain string. |
 | OI0005 | The type cannot be mapped (generic, abstract, private, no usable constructor). |

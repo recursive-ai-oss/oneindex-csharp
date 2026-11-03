@@ -1,0 +1,120 @@
+OneIndex.Analysis.Asian.AsianAnalyzers.static Register() : System.Void
+OneIndex.Analysis.Asian.AsianDictionaries.static Chinese : OneIndex.Analysis.Asian.WordList { get; }
+OneIndex.Analysis.Asian.AsianDictionaries.static Japanese : OneIndex.Analysis.Asian.LatticeLexicon { get; }
+OneIndex.Analysis.Asian.AsianDictionaries.static Khmer : OneIndex.Analysis.Asian.WordList { get; }
+OneIndex.Analysis.Asian.AsianDictionaries.static Korean : OneIndex.Analysis.Asian.LatticeLexicon { get; }
+OneIndex.Analysis.Asian.AsianDictionaries.static Lao : OneIndex.Analysis.Asian.WordList { get; }
+OneIndex.Analysis.Asian.AsianDictionaries.static Myanmar : OneIndex.Analysis.Asian.WordList { get; }
+OneIndex.Analysis.Asian.AsianDictionaries.static Thai : OneIndex.Analysis.Asian.WordList { get; }
+OneIndex.Analysis.Asian.AsianTokenizer.protected .ctor()
+OneIndex.Analysis.Asian.AsianTokenizer.protected Emit(System.Int32 start, System.Int32 length, System.String term, System.Boolean stacked) : System.Void
+OneIndex.Analysis.Asian.AsianTokenizer.protected Skip() : System.Void
+OneIndex.Analysis.Asian.AsianTokenizer.protected abstract IsTarget(System.Int32 codePoint) : System.Boolean
+OneIndex.Analysis.Asian.AsianTokenizer.protected abstract Produce(System.ReadOnlySpan<System.Char> span, System.Collections.Generic.IReadOnlyList<OneIndex.Analysis.Asian.Segment> segments) : System.Void
+OneIndex.Analysis.Asian.AsianTokenizer.protected abstract SegmentSpan(System.ReadOnlySpan<System.Char> span, System.Collections.Generic.List<OneIndex.Analysis.Asian.Segment> segments) : System.Void
+OneIndex.Analysis.Asian.AsianTokenizer.protected static IsHan(System.Int32 cp) : System.Boolean
+OneIndex.Analysis.Asian.AsianTokenizer.protected static IsHangul(System.Int32 cp) : System.Boolean
+OneIndex.Analysis.Asian.AsianTokenizer.protected static IsKana(System.Int32 cp) : System.Boolean
+OneIndex.Analysis.Asian.AsianTokenizer.virtual MoveNext() : System.Boolean
+OneIndex.Analysis.Asian.AsianTokenizer.virtual Reset(System.ReadOnlyMemory<System.Char> text) : System.Void
+OneIndex.Analysis.Asian.CharacterClass..ctor(System.String Name, System.Boolean Invoke, System.Boolean Group, System.Int32 Length)
+OneIndex.Analysis.Asian.CharacterClass.Group : System.Boolean { get; init; }
+OneIndex.Analysis.Asian.CharacterClass.Invoke : System.Boolean { get; init; }
+OneIndex.Analysis.Asian.CharacterClass.Length : System.Int32 { get; init; }
+OneIndex.Analysis.Asian.CharacterClass.Name : System.String { get; init; }
+OneIndex.Analysis.Asian.ChineseAnalyzer..ctor(OneIndex.Analysis.Asian.WordList dictionary = null)
+OneIndex.Analysis.Asian.ChineseAnalyzer.Name : System.String { get; }
+OneIndex.Analysis.Asian.ChineseAnalyzer.RegisteredName : System.String = zh
+OneIndex.Analysis.Asian.ChineseAnalyzer.protected virtual CreateStream() : OneIndex.Analysis.TokenSource
+OneIndex.Analysis.Asian.ChineseTokenizer..ctor(OneIndex.Analysis.Asian.WordList dictionary = null, System.Boolean searchMode = True)
+OneIndex.Analysis.Asian.ChineseTokenizer.protected virtual IsTarget(System.Int32 codePoint) : System.Boolean
+OneIndex.Analysis.Asian.ChineseTokenizer.protected virtual Produce(System.ReadOnlySpan<System.Char> span, System.Collections.Generic.IReadOnlyList<OneIndex.Analysis.Asian.Segment> segments) : System.Void
+OneIndex.Analysis.Asian.ChineseTokenizer.protected virtual SegmentSpan(System.ReadOnlySpan<System.Char> span, System.Collections.Generic.List<OneIndex.Analysis.Asian.Segment> segments) : System.Void
+OneIndex.Analysis.Asian.DictionaryFormatException..ctor(System.String message)
+OneIndex.Analysis.Asian.DictionaryLimits..ctor(System.Int32 MaxSectionBytes = 268435456, System.Int32 MaxEntries = 16777216)
+OneIndex.Analysis.Asian.DictionaryLimits.MaxEntries : System.Int32 { get; init; }
+OneIndex.Analysis.Asian.DictionaryLimits.MaxSectionBytes : System.Int32 { get; init; }
+OneIndex.Analysis.Asian.DictionaryLimits.static Default : OneIndex.Analysis.Asian.DictionaryLimits { get; }
+OneIndex.Analysis.Asian.JapaneseAnalyzer..ctor(OneIndex.Analysis.Asian.LatticeLexicon dictionary = null)
+OneIndex.Analysis.Asian.JapaneseAnalyzer.Name : System.String { get; }
+OneIndex.Analysis.Asian.JapaneseAnalyzer.RegisteredName : System.String = ja
+OneIndex.Analysis.Asian.JapaneseAnalyzer.protected virtual CreateStream() : OneIndex.Analysis.TokenSource
+OneIndex.Analysis.Asian.JapaneseTokenizer..ctor(OneIndex.Analysis.Asian.LatticeLexicon dictionary = null, OneIndex.Analysis.Asian.LatticeOptions options = null, System.Boolean baseForm = True, System.Boolean dropFunctionWords = True)
+OneIndex.Analysis.Asian.JapaneseTokenizer.protected virtual IsTarget(System.Int32 codePoint) : System.Boolean
+OneIndex.Analysis.Asian.JapaneseTokenizer.protected virtual Produce(System.ReadOnlySpan<System.Char> span, System.Collections.Generic.IReadOnlyList<OneIndex.Analysis.Asian.Segment> segments) : System.Void
+OneIndex.Analysis.Asian.JapaneseTokenizer.protected virtual SegmentSpan(System.ReadOnlySpan<System.Char> span, System.Collections.Generic.List<OneIndex.Analysis.Asian.Segment> segments) : System.Void
+OneIndex.Analysis.Asian.KoreanAnalyzer..ctor(OneIndex.Analysis.Asian.LatticeLexicon dictionary = null)
+OneIndex.Analysis.Asian.KoreanAnalyzer.Name : System.String { get; }
+OneIndex.Analysis.Asian.KoreanAnalyzer.RegisteredName : System.String = ko
+OneIndex.Analysis.Asian.KoreanAnalyzer.protected virtual CreateStream() : OneIndex.Analysis.TokenSource
+OneIndex.Analysis.Asian.KoreanTokenizer..ctor(OneIndex.Analysis.Asian.LatticeLexicon dictionary = null, System.Boolean dropFunctionWords = True)
+OneIndex.Analysis.Asian.KoreanTokenizer.protected virtual IsTarget(System.Int32 codePoint) : System.Boolean
+OneIndex.Analysis.Asian.KoreanTokenizer.protected virtual Produce(System.ReadOnlySpan<System.Char> span, System.Collections.Generic.IReadOnlyList<OneIndex.Analysis.Asian.Segment> segments) : System.Void
+OneIndex.Analysis.Asian.KoreanTokenizer.protected virtual SegmentSpan(System.ReadOnlySpan<System.Char> span, System.Collections.Generic.List<OneIndex.Analysis.Asian.Segment> segments) : System.Void
+OneIndex.Analysis.Asian.LatticeLexicon.Classes : System.Collections.Generic.IReadOnlyList<OneIndex.Analysis.Asian.CharacterClass> { get; }
+OneIndex.Analysis.Asian.LatticeLexicon.Count : System.Int32 { get; }
+OneIndex.Analysis.Asian.LatticeLexicon.Extra(System.Int32 word) : System.String
+OneIndex.Analysis.Asian.LatticeLexicon.PartOfSpeech(System.Int32 word) : System.String
+OneIndex.Analysis.Asian.LatticeLexicon.static Load(System.ReadOnlySpan<System.Byte> file, OneIndex.Analysis.Asian.DictionaryLimits limits = null) : OneIndex.Analysis.Asian.LatticeLexicon
+OneIndex.Analysis.Asian.LatticeLexicon.static TryLoad(System.ReadOnlySpan<System.Byte> file, out OneIndex.Analysis.Asian.LatticeLexicon dictionary) : System.Boolean
+OneIndex.Analysis.Asian.LatticeOptions..ctor(System.Int32 HanThreshold = 2, System.Int32 HanPenalty = 3000, System.Int32 KatakanaThreshold = 7, System.Int32 KatakanaPenalty = 10000)
+OneIndex.Analysis.Asian.LatticeOptions.HanPenalty : System.Int32 { get; init; }
+OneIndex.Analysis.Asian.LatticeOptions.HanThreshold : System.Int32 { get; init; }
+OneIndex.Analysis.Asian.LatticeOptions.KatakanaPenalty : System.Int32 { get; init; }
+OneIndex.Analysis.Asian.LatticeOptions.KatakanaThreshold : System.Int32 { get; init; }
+OneIndex.Analysis.Asian.LatticeOptions.static Normal : OneIndex.Analysis.Asian.LatticeOptions { get; }
+OneIndex.Analysis.Asian.LatticeOptions.static Search : OneIndex.Analysis.Asian.LatticeOptions { get; }
+OneIndex.Analysis.Asian.LatticeSegmenter..ctor(OneIndex.Analysis.Asian.LatticeLexicon dictionary, OneIndex.Analysis.Asian.LatticeOptions options = null)
+OneIndex.Analysis.Asian.LatticeSegmenter.Dictionary : OneIndex.Analysis.Asian.LatticeLexicon { get; }
+OneIndex.Analysis.Asian.LatticeSegmenter.Segment(System.ReadOnlySpan<System.Char> text, System.Collections.Generic.List<OneIndex.Analysis.Asian.Segment> output) : System.Void
+OneIndex.Analysis.Asian.MaximalMatchSegmenter..ctor(OneIndex.Analysis.Asian.WordList dictionary)
+OneIndex.Analysis.Asian.MaximalMatchSegmenter.Segment(System.ReadOnlySpan<System.Char> text, System.Collections.Generic.List<OneIndex.Analysis.Asian.Segment> output) : System.Void
+OneIndex.Analysis.Asian.Segment..ctor(System.Int32 Start, System.Int32 Length, System.Int32 Word, System.Int32 Pos, System.Boolean Stacked = False)
+OneIndex.Analysis.Asian.Segment.Length : System.Int32 { get; init; }
+OneIndex.Analysis.Asian.Segment.Pos : System.Int32 { get; init; }
+OneIndex.Analysis.Asian.Segment.Stacked : System.Boolean { get; init; }
+OneIndex.Analysis.Asian.Segment.Start : System.Int32 { get; init; }
+OneIndex.Analysis.Asian.Segment.Word : System.Int32 { get; init; }
+OneIndex.Analysis.Asian.UnigramSegmenter..ctor(OneIndex.Analysis.Asian.WordList dictionary, System.Boolean searchMode = True)
+OneIndex.Analysis.Asian.UnigramSegmenter.Segment(System.ReadOnlySpan<System.Char> text, System.Collections.Generic.List<OneIndex.Analysis.Asian.Segment> output) : System.Void
+OneIndex.Analysis.Asian.WordBreakAnalyzer..ctor(OneIndex.Analysis.Asian.WordBreakScript script, OneIndex.Analysis.Asian.WordList dictionary = null)
+OneIndex.Analysis.Asian.WordBreakAnalyzer.Name : System.String { get; }
+OneIndex.Analysis.Asian.WordBreakAnalyzer.protected virtual CreateStream() : OneIndex.Analysis.TokenSource
+OneIndex.Analysis.Asian.WordBreakAnalyzer.static Khmer() : OneIndex.Analysis.Asian.WordBreakAnalyzer
+OneIndex.Analysis.Asian.WordBreakAnalyzer.static Lao() : OneIndex.Analysis.Asian.WordBreakAnalyzer
+OneIndex.Analysis.Asian.WordBreakAnalyzer.static Myanmar() : OneIndex.Analysis.Asian.WordBreakAnalyzer
+OneIndex.Analysis.Asian.WordBreakAnalyzer.static Thai() : OneIndex.Analysis.Asian.WordBreakAnalyzer
+OneIndex.Analysis.Asian.WordBreakScript.Khmer : OneIndex.Analysis.Asian.WordBreakScript = 2
+OneIndex.Analysis.Asian.WordBreakScript.Lao : OneIndex.Analysis.Asian.WordBreakScript = 1
+OneIndex.Analysis.Asian.WordBreakScript.Myanmar : OneIndex.Analysis.Asian.WordBreakScript = 3
+OneIndex.Analysis.Asian.WordBreakScript.Thai : OneIndex.Analysis.Asian.WordBreakScript = 0
+OneIndex.Analysis.Asian.WordBreakTokenizer..ctor(OneIndex.Analysis.Asian.WordList dictionary, OneIndex.Analysis.Asian.WordBreakScript script)
+OneIndex.Analysis.Asian.WordBreakTokenizer.protected virtual IsTarget(System.Int32 codePoint) : System.Boolean
+OneIndex.Analysis.Asian.WordBreakTokenizer.protected virtual Produce(System.ReadOnlySpan<System.Char> span, System.Collections.Generic.IReadOnlyList<OneIndex.Analysis.Asian.Segment> segments) : System.Void
+OneIndex.Analysis.Asian.WordBreakTokenizer.protected virtual SegmentSpan(System.ReadOnlySpan<System.Char> span, System.Collections.Generic.List<OneIndex.Analysis.Asian.Segment> segments) : System.Void
+OneIndex.Analysis.Asian.WordList.Contains(System.ReadOnlySpan<System.Char> word) : System.Boolean
+OneIndex.Analysis.Asian.WordList.Count : System.Int32 { get; }
+OneIndex.Analysis.Asian.WordList.static Load(System.ReadOnlySpan<System.Byte> file, OneIndex.Analysis.Asian.DictionaryLimits limits = null) : OneIndex.Analysis.Asian.WordList
+OneIndex.Analysis.Asian.WordList.static TryLoad(System.ReadOnlySpan<System.Byte> file, out OneIndex.Analysis.Asian.WordList dictionary) : System.Boolean
+abstract class OneIndex.Analysis.Asian.AsianTokenizer : OneIndex.Analysis.Tokenizer
+enum OneIndex.Analysis.Asian.WordBreakScript : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
+sealed class OneIndex.Analysis.Asian.CharacterClass : System.IEquatable<OneIndex.Analysis.Asian.CharacterClass>
+sealed class OneIndex.Analysis.Asian.ChineseAnalyzer : OneIndex.Analysis.Analyzer
+sealed class OneIndex.Analysis.Asian.ChineseTokenizer : OneIndex.Analysis.Asian.AsianTokenizer
+sealed class OneIndex.Analysis.Asian.DictionaryFormatException : System.Exception, System.Runtime.Serialization.ISerializable
+sealed class OneIndex.Analysis.Asian.DictionaryLimits : System.IEquatable<OneIndex.Analysis.Asian.DictionaryLimits>
+sealed class OneIndex.Analysis.Asian.JapaneseAnalyzer : OneIndex.Analysis.Analyzer
+sealed class OneIndex.Analysis.Asian.JapaneseTokenizer : OneIndex.Analysis.Asian.AsianTokenizer
+sealed class OneIndex.Analysis.Asian.KoreanAnalyzer : OneIndex.Analysis.Analyzer
+sealed class OneIndex.Analysis.Asian.KoreanTokenizer : OneIndex.Analysis.Asian.AsianTokenizer
+sealed class OneIndex.Analysis.Asian.LatticeLexicon
+sealed class OneIndex.Analysis.Asian.LatticeOptions : System.IEquatable<OneIndex.Analysis.Asian.LatticeOptions>
+sealed class OneIndex.Analysis.Asian.LatticeSegmenter
+sealed class OneIndex.Analysis.Asian.MaximalMatchSegmenter
+sealed class OneIndex.Analysis.Asian.UnigramSegmenter
+sealed class OneIndex.Analysis.Asian.WordBreakAnalyzer : OneIndex.Analysis.Analyzer
+sealed class OneIndex.Analysis.Asian.WordBreakTokenizer : OneIndex.Analysis.Asian.AsianTokenizer
+sealed class OneIndex.Analysis.Asian.WordList
+static class OneIndex.Analysis.Asian.AsianAnalyzers
+static class OneIndex.Analysis.Asian.AsianDictionaries
+struct OneIndex.Analysis.Asian.Segment : System.IEquatable<OneIndex.Analysis.Asian.Segment>
