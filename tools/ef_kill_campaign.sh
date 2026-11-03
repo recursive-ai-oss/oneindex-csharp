@@ -17,5 +17,5 @@ for ((i = 0; i < LANES; i++)); do
 done
 rc=0
 for p in "${pids[@]}"; do wait "$p" || rc=1; done
-cat "$WORK"/logs/lane*.log | grep -E '^(cycles|FAIL|cycle)' | head -60
+cat "$WORK"/logs/lane*.log | grep -E '^(cycles|FAIL|cycle|  stage)' | head -60
 exit $rc
