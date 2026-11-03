@@ -141,6 +141,13 @@ public static class AnalyzerRegistry
     /// <returns><see langword="true"/> when the name is registered.</returns>
     public static bool TryCreate(string name, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Analyzer? analyzer)
     {
+        Func<Analyzer>? registered = null;
+        if (Volatile.Read(ref s_registered).TryGetValue(name, out registered))
+        {
+            analyzer = registered();
+            return true;
+        }
+
         analyzer = name switch
         {
             StandardAnalyzer.RegisteredName => new StandardAnalyzer(),
@@ -151,6 +158,35 @@ public static class AnalyzerRegistry
         };
         return analyzer is not null;
     }
+
+    private static IReadOnlyDictionary<string, Func<Analyzer>> s_registered = new Dictionary<string, Func<Analyzer>>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Makes an analyzer from another assembly (for example the Asian-language package) known by name, so a schema that stores that name
+    /// opens. Registration is explicit, one call at start-up, never discovered by reflection. Registering the same name again replaces
+    /// the factory; built-in names cannot be replaced (they are looked up after registered names only when not built in).
+    /// </summary>
+    /// <param name="name">The analyzer name the schema stores; it must not be empty.</param>
+    /// <param name="factory">Creates a new analyzer instance on each call; each thread gets its own.</param>
+    /// <exception cref="ArgumentException"><paramref name="name"/> is empty or is a built-in analyzer name.</exception>
+    public static void Register(string name, Func<Analyzer> factory)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(name);
+        ArgumentNullException.ThrowIfNull(factory);
+        if (name is StandardAnalyzer.RegisteredName or CjkAnalyzer.RegisteredName or WhitespaceLowercaseAnalyzer.RegisteredName or KeywordAnalyzer.RegisteredName
+            || TryCreateLanguage(name) is not null)
+        {
+            throw new ArgumentException($"'{name}' is a built-in analyzer name.", nameof(name));
+        }
+
+        lock (s_registerLock)
+        {
+            var copy = new Dictionary<string, Func<Analyzer>>(s_registered, StringComparer.Ordinal) { [name] = factory };
+            Volatile.Write(ref s_registered, copy);
+        }
+    }
+
+    private static readonly object s_registerLock = new();
 
     /// <summary>Creates a new analyzer instance by name.</summary>
     /// <param name="name">The analyzer name.</param>
