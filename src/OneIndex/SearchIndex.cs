@@ -71,7 +71,7 @@ public static class SearchIndex
     /// <param name="path">The index directory.</param>
     /// <param name="mapping">The mapping, which must be deterministic: the schema it builds is recorded in the index.</param>
     /// <returns>The index. It has no embedder, sparse encoder or reranker.</returns>
-    public static SearchIndex<T> Open<T>(string path, SearchMapping<T> mapping)
+    public static SearchIndex<T> OpenMapped<T>(string path, SearchMapping<T> mapping)
         where T : class
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
@@ -79,11 +79,11 @@ public static class SearchIndex
         return new SearchIndex<T>(new FileSystemStorage(path), mapping);
     }
 
-    /// <summary>Creates an in-memory index with a mapping built at run time (see <see cref="Open{T}(string, SearchMapping{T})"/>).</summary>
+    /// <summary>Creates an in-memory index with a mapping built at run time (see <see cref="OpenMapped{T}(string, SearchMapping{T})"/>).</summary>
     /// <typeparam name="T">The document type.</typeparam>
     /// <param name="mapping">The mapping.</param>
     /// <returns>The index.</returns>
-    public static SearchIndex<T> InMemory<T>(SearchMapping<T> mapping)
+    public static SearchIndex<T> InMemoryMapped<T>(SearchMapping<T> mapping)
         where T : class
     {
         ArgumentNullException.ThrowIfNull(mapping);

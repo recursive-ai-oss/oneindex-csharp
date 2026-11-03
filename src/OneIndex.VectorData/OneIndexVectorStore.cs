@@ -155,7 +155,7 @@ public sealed class OneIndexVectorStore : VectorStore
                 throw new VectorStoreException($"The collection '{name}' does not exist.") { CollectionName = name };
             }
 
-            SearchIndex<TRecord> index = _root is null ? SearchIndex.InMemory(mapping) : SearchIndex.Open(Path.Combine(_root, name), mapping);
+            SearchIndex<TRecord> index = _root is null ? SearchIndex.InMemoryMapped(mapping) : SearchIndex.OpenMapped(Path.Combine(_root, name), mapping);
             _open[name] = index;
             return index;
         }
