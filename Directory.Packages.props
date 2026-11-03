@@ -4,9 +4,9 @@
   </PropertyGroup>
   <ItemGroup Label="Shipped dependencies (adapter packages only)">
     <PackageVersion Include="RecursiveAI.OneModel" Version="1.0.0" />
-    <PackageVersion Include="RecursiveAI.OnePdf" Version="1.15.1" />
+    <PackageVersion Include="RecursiveAI.OnePdf" Version="1.17.1" />
     <PackageVersion Include="RecursiveAI.OneHtml" Version="1.5.1" />
-    <PackageVersion Include="RecursiveAI.OneArchive" Version="1.0.0" />
+    <PackageVersion Include="RecursiveAI.OneArchive" Version="1.1.1" />
     <PackageVersion Include="RecursiveAI.OneOcr" Version="1.0.0" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.0" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.0" />
@@ -23,6 +23,8 @@
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
     <!-- The SQLite provider brings 2.1.11 of the native library, which has a published advisory; take the patched release. -->
     <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.14" />
+    <!-- Renders the text of the scanned-page fixtures. -->
+    <PackageVersion Include="RecursiveAI.OneImage.Text" Version="1.10.4" />
   </ItemGroup>
   <ItemGroup Label="Comparators (tools, tests and benchmarks only; black-box, pinned releases)">
     <PackageVersion Include="Hnsw.Net" Version="0.1.4" />

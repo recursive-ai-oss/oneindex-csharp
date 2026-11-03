@@ -7,7 +7,16 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="OneIndex.Files.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../OneIndex/OneIndex.csproj" />
+  </ItemGroup>
+
+  <!-- The passage type is mapped by the source generator in this assembly, like a user's own document type. -->
+  <ItemGroup>
+    <ProjectReference Include="../OneIndex.Generators/OneIndex.Generators.csproj" ReferenceOutputAssembly="false" OutputItemType="Analyzer" />
   </ItemGroup>
 
   <ItemGroup>

@@ -10,7 +10,7 @@
 set -u
 export PATH="$HOME/dotnet10:$HOME/oneindex/dotnet:$PATH" DOTNET_ROOT="${DOTNET_ROOT:-$HOME/dotnet10}" DOTNET_CLI_TELEMETRY_OPTOUT=1
 sets=$1; native=${2:-}
-out=${ONEINDEX_BENCH_OUT:-$HOME/oneindex/u21/build}
+out=${ONEINDEX_BENCH_OUT:-$HOME/oneindex/bench-build}
 grid=110,140,180,220,270,320,450,640,900,1300
 
 echo "# machine: $(uname -sm), $( (lscpu 2>/dev/null | grep -m1 'Model name' | sed 's/.*: *//') || sysctl -n machdep.cpu.brand_string), $(nproc 2>/dev/null || sysctl -n hw.ncpu) cores"
