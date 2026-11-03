@@ -112,6 +112,9 @@ public sealed class MappedMember
     /// <summary>The oversample of a quantized vector field; 0 for the codec's default.</summary>
     public float Oversample { get; }
 
+    internal MappedMember WithDimensions(int dimensions)
+        => new(Name, Type, Multi, Indexed, Column, Facet, FullText, IsId, Boost, Analyzer, dimensions, Metric, HnswM, EfConstruction, FlatThreshold, Quantization, Oversample, From, Rerank);
+
     internal FieldDefinition ToDefinition()
     {
         if (Type == FieldType.Text)
@@ -169,6 +172,25 @@ public abstract class SearchMapping<T>
     /// <summary>The schema built from the members.</summary>
     /// <exception cref="InvalidOperationException">The type has no <see cref="SearchIdAttribute"/> member, or an analyzer is not registered.</exception>
     public Schema Schema => _schema ??= BuildSchema();
+
+    /// <summary>Creates a mapping that equals this one except that every automatically embedded <c>[Vector(From = ...)]</c> member has the given length.</summary>
+    /// <param name="dimensions">The length, from 1 to 65536; normally the embedder's <see cref="Vectors.IEmbedder.Dimension"/>.</param>
+    /// <returns>The mapping. The index's schema records the new length, so an index created with one length refuses to open with another.</returns>
+    public SearchMapping<T> WithEmbeddedVectorDimensions(int dimensions)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(dimensions, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(dimensions, 65536);
+        var members = new MappedMember[_members.Length];
+        for (int i = 0; i < members.Length; i++)
+        {
+            MappedMember m = _members[i];
+            members[i] = m.Type == FieldType.Vector && m.From is not null ? m.WithDimensions(dimensions) : m;
+        }
+
+        return new DimensionOverride<T>(this, members);
+    }
+
+    internal TextSettings SettingsForWrapper() => CreateSettings();
 
     /// <summary>The text settings the type's class-level attributes declare. The generated mapping overrides this; the default is <see cref="TextSettings.Default"/>.</summary>
     protected virtual TextSettings CreateSettings() => TextSettings.Default;
@@ -244,6 +266,18 @@ public abstract class SearchMapping<T>
 
         return builder.Build();
     }
+}
+
+internal sealed class DimensionOverride<T>(SearchMapping<T> inner, MappedMember[] members) : SearchMapping<T>(members)
+    where T : class
+{
+    protected override TextSettings CreateSettings() => inner.SettingsForWrapper();
+
+    public override string? GetId(T value) => inner.GetId(value);
+
+    public override Document ToDocument(T value) => inner.ToDocument(value);
+
+    public override T FromDocument(Document document) => inner.FromDocument(document);
 }
 
 /// <summary>Conversions the generated mappings share.</summary>

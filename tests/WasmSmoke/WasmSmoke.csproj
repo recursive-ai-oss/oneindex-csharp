@@ -19,6 +19,7 @@
     <Compile Include="../AotSmoke/QueryFormsLowLevelScenario.cs" Link="QueryFormsLowLevelScenario.cs" />
     <Compile Include="../AotSmoke/VectorScenario.cs" Link="VectorScenario.cs" />
     <Compile Include="../AotSmoke/RankingScenario.cs" Link="RankingScenario.cs" />
+    <Compile Include="../AotSmoke/StaticScenario.cs" Link="StaticScenario.cs" />
   </ItemGroup>
 
   <ItemGroup>

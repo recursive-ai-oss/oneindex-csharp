@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>OneIndex.BrowserSuite</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
+    <WasmMainJSPath>main.mjs</WasmMainJSPath>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- The JavaScript interop generator writes unsafe code; this test app is not a shipped package. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <SupportedOSPlatform>browser</SupportedOSPlatform>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <WasmExtraFilesToDeploy Include="main.mjs" />
+    <WasmExtraFilesToDeploy Include="opfs.mjs" />
+    <Compile Include="../BrowserDoc.cs" Link="BrowserDoc.cs" />
+    <Compile Include="../QuerySpec.cs" Link="QuerySpec.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../src/OneIndex.Generators/OneIndex.Generators.csproj" ReferenceOutputAssembly="false" OutputItemType="Analyzer" />
+    <ProjectReference Include="../../../src/OneIndex/OneIndex.csproj" />
+  </ItemGroup>
+
+</Project>

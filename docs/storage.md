@@ -66,6 +66,10 @@ The same seed gives the same result. After `Crash` the wrapper is usable again w
 
 `TransformingStorage` applies an `IBlockTransform` to every byte by file position: `Encode(offset, data)` on write and `Decode(offset, data)` on read, in place and length-preserving. The identity transform changes nothing. The slot is where encryption at rest will go; the transform must not depend on a file's name because files are renamed into place.
 
+## Read-only opens, static chunks and OPFS
+
+`SearchIndex.OpenReadOnly<T>(path)` opens the newest commit of an index directory without the writer lock: it works while another process writes, on read-only storage, and `Upsert`, `Delete` and `Commit` throw `NotSupportedException`. A read-only storage reports `IsReadOnly`. `ChunkedStaticStorage` ([static-index.md](static-index.md)) is a read-only `IStorage` over fetched chunks. In the browser, `OpfsPersistence` saves and loads an index held in `MemoryStorage` whole through an application-supplied `IOpfsHost` ([browser.md](browser.md)); the fault-injecting wrapper sits in front of the same storage interface, and the OPFS save was checked by crashing a fake host at every change index until the save completed (each state loaded and opened as the old or the new commit).
+
 ## Limits and exceptions
 
 `IndexLimits` bounds every count and length a reader accepts (commit size, segments, files per segment, string length, schema size, fields, vector dimensions). `CorruptIndexException` names the damaged file; `UnsupportedFormatException` (a subclass) means the file is intact but newer than this build understands.
