@@ -63,8 +63,43 @@ public static class MultiVector
         return bytes;
     }
 
+    /// <summary>Packs token vectors for a <see cref="MultiVectorAttribute"/> property, checking that every row has the declared length.</summary>
+    /// <param name="vectors">The token vectors, finite.</param>
+    /// <param name="dimension">The declared length of every row.</param>
+    /// <returns>The packed bytes (a document with no tokens packs to an 8-byte header).</returns>
+    /// <exception cref="ArgumentException">A row's length differs from <paramref name="dimension"/>, or a value is NaN or infinite.</exception>
+    public static byte[] Pack(IReadOnlyList<float[]> vectors, int dimension)
+    {
+        ArgumentNullException.ThrowIfNull(vectors);
+        foreach (float[] v in vectors)
+        {
+            if (v is null || v.Length != dimension)
+            {
+                throw new ArgumentException($"A token vector must have {dimension} values (the property's Dimensions).", nameof(vectors));
+            }
+        }
+
+        return Pack(vectors);
+    }
+
+    /// <summary>Reads packed token vectors as one array per token.</summary>
+    /// <param name="packed">Bytes written by <see cref="Pack(IReadOnlyList{float[]})"/>.</param>
+    /// <returns>The token vectors in order.</returns>
+    /// <exception cref="FormatException">The bytes are not a packed multi-vector.</exception>
+    public static float[][] ToRows(ReadOnlySpan<byte> packed)
+    {
+        float[] flat = Unpack(packed, out int count, out int dimension);
+        var rows = new float[count][];
+        for (int i = 0; i < count; i++)
+        {
+            rows[i] = flat.AsSpan(i * dimension, dimension).ToArray();
+        }
+
+        return rows;
+    }
+
     /// <summary>Reads packed token vectors.</summary>
-    /// <param name="packed">Bytes written by <see cref="Pack"/>.</param>
+    /// <param name="packed">Bytes written by <see cref="Pack(IReadOnlyList{float[]})"/>.</param>
     /// <param name="count">The number of token vectors.</param>
     /// <param name="dimension">The vector length.</param>
     /// <returns>The vectors, row after row.</returns>
@@ -157,7 +192,7 @@ public static class MaxSim
 
     /// <summary>
     /// Re-orders first-stage hits by MaxSim: the late-interaction rerank stage. The multi-vector of each document is read from the
-    /// document (a Bytes property written with <see cref="MultiVector.Pack"/>). Documents without one score 0 and sort last.
+    /// document (a Bytes property written with <see cref="MultiVector.Pack(IReadOnlyList{float[]})"/>). Documents without one score 0 and sort last.
     /// </summary>
     /// <typeparam name="T">The document type.</typeparam>
     /// <param name="hits">The first-stage hits, for example <c>index.Search("text").Take(100).Execute()</c>.</param>
@@ -208,9 +243,40 @@ public static class MaxSim
     }
 
     /// <summary>
+    /// Re-orders first-stage hits by MaxSim, reading the token vectors from a <see cref="MultiVectorAttribute"/> property.
+    /// Same ordering and tie rules as the packed-bytes overload.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="hits">The first-stage hits.</param>
+    /// <param name="multiVector">Reads a document's token vectors, for example <c>d => d.Tokens</c>.</param>
+    /// <param name="queryVectors">The query's token vectors.</param>
+    /// <param name="take">How many to return; null for all.</param>
+    /// <returns>The hits, best MaxSim first.</returns>
+    public static List<MaxSimHit<T>> Rerank<T>(IEnumerable<SearchHit<T>> hits, Func<T, float[][]?> multiVector, IReadOnlyList<float[]> queryVectors, int? take = null)
+        where T : class
+    {
+        ArgumentNullException.ThrowIfNull(multiVector);
+        return Rerank(hits, d => multiVector(d) is { } rows ? MultiVector.Pack(rows) : null, queryVectors, take);
+    }
+
+    /// <summary>Searches by MaxSim alone over a <see cref="MultiVectorAttribute"/> property; see the packed-bytes overload for the scan limits.</summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="candidates">The documents to scan.</param>
+    /// <param name="multiVector">Reads a document's token vectors.</param>
+    /// <param name="queryVectors">The query's token vectors.</param>
+    /// <param name="k">How many to return.</param>
+    /// <returns>The best <paramref name="k"/> documents, best first.</returns>
+    public static List<MaxSimHit<T>> Search<T>(SearchQuery<T> candidates, Func<T, float[][]?> multiVector, IReadOnlyList<float[]> queryVectors, int k)
+        where T : class
+    {
+        ArgumentNullException.ThrowIfNull(multiVector);
+        return Search(candidates, d => multiVector(d) is { } rows ? MultiVector.Pack(rows) : null, queryVectors, k);
+    }
+
+    /// <summary>
     /// Searches by MaxSim alone: scores every document that passes the optional filter and returns the best. This is an exact scan and
     /// reads at most <see cref="SearchQuery{T}.MaxResultWindow"/> candidates, so narrow large collections first with a filter or use
-    /// <see cref="Rerank"/> on a first-stage search.
+    /// <see cref="Rerank{T}(IEnumerable{SearchHit{T}}, Func{T, byte[]}, IReadOnlyList{float[]}, int?)"/> on a first-stage search.
     /// </summary>
     /// <typeparam name="T">The document type.</typeparam>
     /// <param name="candidates">The documents to scan, for example <c>index.Search().Where(...)</c>.</param>
