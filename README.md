@@ -1,30 +1,41 @@
 # OneIndex
 
-**An embedded search engine for .NET: SQLite for search.** Full-text (BM25F), vector (HNSW) and hybrid search in one in-process library, written in C# with no native code and no server. It runs from a directory, from memory, or, later, from a static bundle in the browser.
+**An embedded search engine for .NET: SQLite for search.** Full-text (BM25F), vector (HNSW) and hybrid search in one in-process library, written in C# with no native code and no server. It runs from a directory, from memory, or in the browser from a static bundle fetched over plain HTTP.
 
 OneIndex is unaffiliated with other products named OneIndex, OneSearch or similar.
 
-> **Status: preview (0.1.0-preview.1, not yet on nuget.org).** The text engine, the app-search features and the first vector, model and hybrid pieces work and are measured below. APIs and file formats may still change between previews. Gaps are listed, not hidden.
+> **Status: preview, not yet on nuget.org.** Everything in the table below works and is tested; APIs and file formats may still change between previews. Known gaps are listed in the table and in "Known gaps", not hidden.
 
 ## What exists
 
 | Feature | State |
 |---|---|
-| Storage interface (range reads, sync and async), memory and local-file backends, fault-injecting test double | Working, tested |
-| Segments, commits (fsync, then atomic rename), background merges, reader processes on committed snapshots, near-real-time readers | Working; see Durability below (independent review not yet done) |
-| Analysis: UAX #29 words and sentences (Unicode 17.0.0), NFC/NFKC, case and accent folding, Snowball stemmers (34 languages) and stop words, CJK bigrams | Working, conformance-tested |
-| Term dictionary, postings, block-max WAND, BM25F; term, boolean, phrase, prefix, fuzzy, regex, range queries | Working, measured |
-| Typo tolerance, as-you-type, "did you mean", synonyms, stop words | Working |
-| Columns, filters, facets with value search, aggregations, distinct, geo, sort and search-after, function scores, explain | Working |
-| `[Dynamic]` fields and schema evolution from stored source | Working |
-| Strict query syntax, filter strings, versioned query JSON, `SearchTool.For<T>()` | Working, fuzzed |
-| Vectors: HNSW and exact flat search; auto-embedding with an embedding cache; hybrid search (rank fusion, linear fusion) | Working (preview); quantized codecs, filtered traversal, sparse vectors and reranking in progress |
-| `RecursiveAI.OneIndex.Models`: WordPiece tokenizer, default English embedder (bge-small-en-v1.5, int8) | Working (preview) |
-| Entity Framework Core, folder indexing, vector-store adapter, command line tool | Not built yet (empty packages) |
-| `RecursiveAI.OneIndex.Analysis.Asian` (ja, zh, ko, th, lo, km, my), decompounding (de, nl, sv, da, no, fi, is), `RecursiveAI.OneIndex.Models.Multilingual` (multilingual-e5-small, SentencePiece) | Working (preview) |
-| Browser backends and static index, multi-vector, IVF | Not built yet |
+| Storage interface (range reads, sync and async); memory, local-file, read-only HTTP and browser backends; fault-injecting test double | Working, tested ([docs/storage.md](docs/storage.md)) |
+| Segments, commits (fsync, then atomic rename), background merges, reader processes on committed snapshots, near-real-time readers | Working. *Durability claims: placeholder, pending the independent review of the commit protocol.* |
+| Analysis: UAX #29 words and sentences (Unicode 17.0.0), NFC/NFKC, case and accent folding, Snowball stemmers (34 languages) and stop words, CJK bigrams | Working, conformance-tested ([docs/analysis.md](docs/analysis.md)) |
+| Term dictionary, postings, block-max WAND, BM25F; term, boolean, phrase, prefix, fuzzy, regex, range queries | Working, measured ([docs/benchmarks.md](docs/benchmarks.md)) |
+| Typo tolerance, as-you-type, "did you mean", synonyms, stop words | Working ([docs/typo-tolerance.md](docs/typo-tolerance.md)) |
+| Columns, filters, facets with value search, aggregations, distinct, geo, sort and search-after, function scores, ranking rules, explain | Working |
+| `[Dynamic]` fields and schema evolution from stored source | Working ([docs/schema-evolution.md](docs/schema-evolution.md)) |
+| Strict query syntax, filter strings, versioned query JSON, `SearchTool.For<T>()`, the LINQ builder (comparisons, `null`, `Contains`, `Any`) | Working, fuzzed ([docs/linq.md](docs/linq.md)) |
+| Vectors: HNSW and exact flat search, int8, int4 and sign-bit codecs with float rerank, filtered traversal, graph merge, learned sparse vectors, rank fusion, reranking, auto-embedding with an embedding cache | Working ([docs/vectors.md](docs/vectors.md), [docs/hybrid.md](docs/hybrid.md)) |
+| Multi-vector fields (`[MultiVector]`) with MaxSim as a rerank and as an exact scan | Working ([docs/multi-vector.md](docs/multi-vector.md)) |
+| `RecursiveAI.OneIndex.Models`: WordPiece tokenizer, bge-small-en-v1.5 embedder (int8), cross-encoder reranker, learned sparse encoder | Working ([docs/models.md](docs/models.md)) |
+| `RecursiveAI.OneIndex.Analysis.Asian` (ja, zh, ko, th, lo, km, my), decompounding (de, nl, sv, da, no, fi, is), `RecursiveAI.OneIndex.Models.Multilingual` (multilingual-e5-small, SentencePiece) | Working |
+| `RecursiveAI.OneIndex.EntityFrameworkCore`: transactional outbox, applier, pushdown with over-fetch, `ReindexAsync` | Working on SQLite and PostgreSQL ([docs/entity-framework.md](docs/entity-framework.md)). *Exactly-once wording: placeholder, pending the independent review.* |
+| `RecursiveAI.OneIndex.Files` / `.Files.Ocr`: folder indexing with citations | Working ([docs/files.md](docs/files.md)) |
+| `RecursiveAI.OneIndex.VectorData`: a vector store over an index | Working; the abstraction's conformance suite passes except the listed unsupported cases ([docs/vectordata.md](docs/vectordata.md)) |
+| `oneindex` command line tool | Working ([docs/cli.md](docs/cli.md)) |
+| Browser: memory and OPFS storage, static index over plain HTTP, IVF | Working; the static index's first query is heavy next to Pagefind's ([docs/static-index.md](docs/static-index.md), [docs/browser.md](docs/browser.md)) |
 
-### Relevance (BM25, nDCG@10, BEIR test sets)
+### Known gaps
+
+- **Entity Framework:** `ExecuteUpdate`, `ExecuteDelete` and raw SQL bypass `SaveChanges`, so they are not indexed; repair with `ReindexAsync(query)`. A log row that becomes visible after the applier gave up on its position is applied at the entity's next change or by `ReindexAsync`. SQL Server and MySQL have not been run ([docs/entity-framework.md](docs/entity-framework.md)).
+- **VectorData:** dynamic (dictionary) collections, store-side embedding generation, Manhattan and Hamming distance and whole-array equality filters are not supported, so 13 of the abstraction's conformance tests and the data-type suite (which needs dynamic collections) are excluded ([docs/vectordata.md](docs/vectordata.md)).
+- **Static index against Pagefind:** a first query costs 2.6 MB at 16 KiB chunks (Pagefind: 280 KB) because segment open still reads whole term dictionaries, lengths and identifier tables; later text queries cost about 210 KB (Pagefind: 46 KB). The .NET WebAssembly payload is 5.25 MB raw against 575 KB. Hybrid queries in the static index walk the HNSW graph, not the IVF lists. IVF is a library type and the static layout, not yet a per-field server option.
+- **Windows:** file locking semantics have not been run on Windows.
+
+### Relevance (BM25, nDCG@10, BEIR test sets; measured 2026-10)
 
 OneIndex at its defaults (BM25F, title weight 3, k1=0.9, b=0.4) against the published BM25 baseline (Kamalloo et al., SIGIR 2024, Table 3, multifield) and Lucene.NET 4.8.0-beta00018 on the same runs. Method and all layouts: [docs/relevance.md](docs/relevance.md).
 
@@ -39,11 +50,11 @@ BM25F scores a document as one weighted stream, so its like-for-like comparison 
 
 ### Speed
 
-Text rows against Lucene.NET 4.8.0-beta00018 with matched analysis and commits, on x64 and arm64, are in [docs/benchmarks.md](docs/benchmarks.md), with peak memory and index size beside each row. Most rows are faster than Lucene.NET. Rows still slower than 1.25x: fuzzy queries with 1 and 2 edits and typo-tolerant queries on x64, and commit latency on arm64. Work on these is in progress.
+Text rows against Lucene.NET 4.8.0-beta00018 with matched analysis and commits, and vector rows against Hnsw.Net at matched recall, on x64 and arm64, are in [docs/benchmarks.md](docs/benchmarks.md) and [docs/vectors.md](docs/vectors.md), with peak memory and index size beside each row (measured 2026-10 and 2026-11).
 
 ### Durability
 
-Tested by random process kills during writes, merges and schema backfills (over 10,000 kills) and by torn, lost and reordered writes injected through the storage interface (over 100,000 crash schedules), with zero failed opens and zero lost commits. On Linux, .NET cannot fsync a directory, so after a power cut an index may come back at its previous commit; it is never corrupt ([docs/storage.md](docs/storage.md)). An independent review of the commit protocol is still to come.
+*Placeholder: the durability statement is written after the independent review of the commit protocol.* The test methods are described in [docs/storage.md](docs/storage.md) and [docs/commit-format.md](docs/commit-format.md). On Linux, .NET cannot fsync a directory, so after a power cut an index may come back at its previous commit.
 
 ## Getting started (preview)
 
@@ -91,9 +102,9 @@ foreach (var hit in results)
 | `RecursiveAI.OneIndex.EntityFrameworkCore` | Keeps an index in step with `SaveChanges` |
 | `RecursiveAI.OneIndex.VectorData` | A vector store over an index for Microsoft.Extensions.VectorData |
 | `RecursiveAI.OneIndex.Files` / `.Files.Ocr` | Folder indexing through OnePDF, onehtml, onearchive and oneocr |
-| `RecursiveAI.OneIndex.Cli` | The `oneindex` command |
+| `RecursiveAI.OneIndex.Cli` | The `oneindex` command (`index`, `query`, `static build`) |
 
-All share one version. The core and `.Models` work today; the others are placeholders.
+All share one version.
 
 ## Build
 
