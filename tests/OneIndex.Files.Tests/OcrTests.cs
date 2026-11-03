@@ -65,6 +65,7 @@ public class OcrTests : IDisposable
             using (OnePdf.PdfPageContentBuilder b = page.BeginContent())
             {
                 b.DrawImage(image, 36, 300, 540, 343);
+                b.Commit();
             }
 
             using var ms = new MemoryStream();
@@ -74,9 +75,9 @@ public class OcrTests : IDisposable
 
         var options = new FolderIndexOptions { Extractors = [new TextExtractor(), new OcrPdfExtractor()], FileTimeout = TimeSpan.FromMinutes(5) };
         using SearchIndex<FilePassage> index = SearchIndex.InMemory<FilePassage>();
-        FolderIndexer.Run(index, pdfRoot, options);
+        FolderIndexResult run = FolderIndexer.Run(index, pdfRoot, options);
         List<SearchHit<FilePassage>> passages = index.Passages(null).Where(p => p.Format == "pdf").Take(100).ToList();
-        Assert.NotEmpty(passages);
+        Assert.True(passages.Count > 0, run + " / " + string.Join(" | ", index.Errors().Take(5).Select(e => e.Document.Error)));
         foreach (SearchHit<FilePassage> h in passages)
         {
             Citation c = h.Cite();
