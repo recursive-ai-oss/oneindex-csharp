@@ -116,6 +116,50 @@ public static class SearchIndex
         return new SearchIndex<T>(new MemoryStorage(), SearchMappings.Require<T>().WithEmbeddedVectorDimensions(embedder.Dimension), embedder, SearchSparseEncoders.Default, SearchRerankers.Default);
     }
 
+    /// <summary>
+    /// Opens the newest commit of an index directory for searching only. It takes no lock, so it works while another process writes,
+    /// and the searches it runs return what the writer's own would for that commit. <c>Upsert</c>, <c>Delete</c> and <c>Commit</c> throw <see cref="NotSupportedException"/>.
+    /// </summary>
+    /// <typeparam name="T">The attributed document type.</typeparam>
+    /// <param name="path">The index directory.</param>
+    /// <param name="embedder">Embeds query text for hybrid search, or <see langword="null"/> for none.</param>
+    /// <returns>The read-only index.</returns>
+    /// <exception cref="CorruptIndexException">The newest commit is damaged.</exception>
+    /// <exception cref="FileNotFoundException">The directory holds no commit.</exception>
+    public static SearchIndex<T> OpenReadOnly<T>(string path, IEmbedder? embedder = null)
+        where T : class
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        return OpenReadOnly<T>(new FileSystemStorage(path, readOnly: true), embedder);
+    }
+
+    /// <summary>Opens the newest commit in a storage for searching only (see <see cref="OpenReadOnly{T}(string, IEmbedder)"/>).</summary>
+    /// <typeparam name="T">The attributed document type.</typeparam>
+    /// <param name="storage">The storage; it may be read-only.</param>
+    /// <param name="embedder">Embeds query text for hybrid search, or <see langword="null"/> for none.</param>
+    /// <returns>The read-only index.</returns>
+    public static SearchIndex<T> OpenReadOnly<T>(IStorage storage, IEmbedder? embedder = null)
+        where T : class
+    {
+        ArgumentNullException.ThrowIfNull(storage);
+        IndexSnapshot snapshot = IndexSnapshot.Open(storage);
+        return new SearchIndex<T>(storage, SearchMappings.Require<T>(), snapshot, embedder, SearchRerankers.Default);
+    }
+
+    /// <summary>Async twin of <see cref="OpenReadOnly{T}(IStorage, IEmbedder)"/>, for storages that really wait (HTTP, browser storage).</summary>
+    /// <typeparam name="T">The attributed document type.</typeparam>
+    /// <param name="storage">The storage.</param>
+    /// <param name="embedder">Embeds query text, or <see langword="null"/>.</param>
+    /// <param name="cancellationToken">Cancels the reads.</param>
+    /// <returns>The read-only index.</returns>
+    public static async ValueTask<SearchIndex<T>> OpenReadOnlyAsync<T>(IStorage storage, IEmbedder? embedder = null, CancellationToken cancellationToken = default)
+        where T : class
+    {
+        ArgumentNullException.ThrowIfNull(storage);
+        IndexSnapshot snapshot = await IndexSnapshot.OpenAsync(storage, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return new SearchIndex<T>(storage, SearchMappings.Require<T>(), snapshot, embedder, SearchRerankers.Default);
+    }
+
     /// <summary>Creates an in-memory index with explicit embedder and sparse encoder (see <see cref="Open{T}(string, IEmbedder, ISparseEncoder)"/>).</summary>
     /// <typeparam name="T">The attributed document type.</typeparam>
     /// <param name="embedder">The embedder, or <see langword="null"/> for none.</param>
@@ -161,7 +205,9 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     where T : class
 {
     private readonly IStorage _storage;
-    private readonly IndexWriter _writer;
+    private readonly IndexWriter? _writer;
+
+    private IndexWriter Writer => _writer ?? throw new NotSupportedException("This index was opened read-only.");
     private readonly SearchMapping<T> _mapping;
     private readonly object _gate = new(); // writer calls and the changes waiting for the next commit
     private readonly object _readGate = new(); // the current generation: held only for a pointer swap, never across I/O
@@ -206,6 +252,21 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
             _writer.Dispose();
             throw;
         }
+    }
+
+    // A read-only view of a committed index: no writer, no lock, so it also opens indexes on read-only storage.
+    internal SearchIndex(IStorage storage, SearchMapping<T> mapping, IndexSnapshot snapshot, IEmbedder? embedder, IReranker? reranker)
+    {
+        Reranker = reranker;
+        _storage = storage;
+        _mapping = mapping;
+        _storesSource = true;
+        if (embedder is not null && mapping.Members.Any(static m => m.From is not null && m.Type == FieldType.Vector))
+        {
+            _auto = new AutoEmbedding(embedder, mapping.Members);
+        }
+
+        _current = new Generation(snapshot, _sourceCommitted);
     }
 
     /// <summary>The number of documents in the last commit.</summary>
@@ -262,7 +323,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         lock (_gate)
         {
             ThrowIfDisposed();
-            _writer.Upsert(doc, cancellationToken);
+            Writer.Upsert(doc, cancellationToken);
             if (!_storesSource)
             {
                 string id = (document is null ? doc.Get(_mapping.Schema.IdField!).AsText() : _mapping.GetId(document)) ?? string.Empty;
@@ -397,6 +458,39 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         return total;
     }
 
+    /// <summary>Every live document of the last commit, in segment order (the order is stable for a commit but is not insertion order), for export and for building derived files.</summary>
+    /// <returns>The documents, read lazily from stored source; enumerating pins the commit, so dispose the enumerator when you stop early.</returns>
+    /// <exception cref="InvalidOperationException">The index does not store source (stored source is on by default).</exception>
+    public IEnumerable<T> Documents()
+    {
+        Generation? generation = Acquire();
+        if (generation is null)
+        {
+            yield break;
+        }
+
+        try
+        {
+            foreach (LeafContext leaf in generation.Context.Leaves)
+            {
+                for (int local = 0; local < leaf.Reader.MaxDoc; local++)
+                {
+                    if (leaf.Reader.LiveDocs is { } live && !live.IsLive(local))
+                    {
+                        continue;
+                    }
+
+                    Document stored = Source(generation, leaf, local, out _) ?? throw new InvalidOperationException("The index holds no stored source for its documents.");
+                    yield return _mapping.FromDocument(stored);
+                }
+            }
+        }
+        finally
+        {
+            generation.Release();
+        }
+    }
+
     private int Reembed(AutoEmbedding? auto, AutoSparse? sparse, List<Document> batch, CancellationToken cancellationToken)
     {
         if (batch.Count == 0)
@@ -481,7 +575,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
                 _deletesPending.Add(id);
             }
 
-            return _writer.DeleteById(id);
+            return Writer.DeleteById(id);
         }
     }
 
@@ -498,7 +592,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         lock (_gate)
         {
             ThrowIfDisposed();
-            long generation = _writer.Commit(cancellationToken);
+            long generation = Writer.Commit(cancellationToken);
             if (!_storesSource)
             {
                 var next = new Dictionary<string, Document>(_sourceCommitted, StringComparer.Ordinal);
@@ -517,7 +611,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
 
             _deletesPending.Clear();
             _sourcePending.Clear();
-            var fresh = new Generation(_writer.OpenSnapshot(), _sourceCommitted);
+            var fresh = new Generation(Writer.OpenSnapshot(), _sourceCommitted);
             Generation? old;
             lock (_readGate)
             {
@@ -536,7 +630,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     /// rebuild by a few segments, and <see cref="CompleteSchemaEvolution(CancellationToken)"/> finishes it. The new schema becomes visible
     /// on all segments in one commit (docs/schema-evolution.md).
     /// </summary>
-    public SchemaEvolutionStatus SchemaEvolution => _writer.SchemaEvolution;
+    public SchemaEvolutionStatus SchemaEvolution => Writer.SchemaEvolution;
 
     /// <summary>Rebuilds every segment that still awaits the schema change, committing as it goes (see <see cref="SchemaEvolution"/>). Returns at once when nothing is waiting.</summary>
     /// <param name="cancellationToken">Cancels between segments; what was committed stays.</param>
@@ -546,12 +640,12 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         lock (_gate)
         {
             ThrowIfDisposed();
-            if (!_writer.SchemaEvolution.InProgress)
+            if (!Writer.SchemaEvolution.InProgress)
             {
                 return;
             }
 
-            _writer.CompleteSchemaEvolution(cancellationToken);
+            Writer.CompleteSchemaEvolution(cancellationToken);
         }
 
         Commit(cancellationToken);
@@ -778,7 +872,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
             }
 
             old?.Release();
-            _writer.Dispose();
+            _writer?.Dispose();
         }
     }
 
