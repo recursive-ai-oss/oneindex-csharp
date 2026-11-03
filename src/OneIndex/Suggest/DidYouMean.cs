@@ -172,6 +172,17 @@ public sealed class DidYouMean
         return maxEdits == 0 ? [] : Gather(segments, term, maxEdits, cancellationToken);
     }
 
+    /// <summary>Finds the dictionary terms near one word (see <see cref="SuggestTerm(IReadOnlyList{ITextFieldReader}, string, CancellationToken)"/>).</summary>
+    /// <param name="segments">The field's reader in each segment.</param>
+    /// <param name="term">An analyzed word.</param>
+    /// <param name="cancellationToken">Cancels the walks.</param>
+    /// <returns>The candidates, best first.</returns>
+    public ValueTask<IReadOnlyList<TermCandidate>> SuggestTermAsync(IReadOnlyList<ITextFieldReader> segments, string term, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return new ValueTask<IReadOnlyList<TermCandidate>>(SuggestTerm(segments, term, cancellationToken));
+    }
+
     private readonly record struct Word(string Term, int Start, int End, bool Correctable);
 
     private readonly record struct WordOption(string Term, int Edits, long DocFreq);

@@ -1,0 +1,14 @@
+OneIndex.Models.Multilingual.MultilingualE5Embedder.Dimension : System.Int32 { get; }
+OneIndex.Models.Multilingual.MultilingualE5Embedder.Dispose() : System.Void
+OneIndex.Models.Multilingual.MultilingualE5Embedder.DocumentPrefix : System.String = passage: 
+OneIndex.Models.Multilingual.MultilingualE5Embedder.Embed(System.Collections.Generic.IReadOnlyList<System.String> texts, OneIndex.Vectors.EmbeddingRole role, System.Span<System.Single> destination, System.Threading.CancellationToken cancellationToken = null) : System.Void
+OneIndex.Models.Multilingual.MultilingualE5Embedder.EmbedAsync(System.Collections.Generic.IReadOnlyList<System.String> texts, OneIndex.Vectors.EmbeddingRole role, System.Memory<System.Single> destination, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask
+OneIndex.Models.Multilingual.MultilingualE5Embedder.Encode(System.String text, System.Int32 maxTokens = 512) : System.Int32[]
+OneIndex.Models.Multilingual.MultilingualE5Embedder.IsNormalized : System.Boolean { get; }
+OneIndex.Models.Multilingual.MultilingualE5Embedder.KernelPath : System.String { get; }
+OneIndex.Models.Multilingual.MultilingualE5Embedder.ModelId : System.String { get; }
+OneIndex.Models.Multilingual.MultilingualE5Embedder.QueryPrefix : System.String = query: 
+OneIndex.Models.Multilingual.MultilingualE5Embedder.static Encode(OneIndex.Models.Tokenization.SentencePieceTokenizer tokenizer, System.String text, System.Int32 maxTokens = 512) : System.Int32[]
+OneIndex.Models.Multilingual.MultilingualE5Embedder.static Load() : OneIndex.Models.Multilingual.MultilingualE5Embedder
+OneIndex.Models.Multilingual.MultilingualE5Embedder.static Open(System.String modelPath, System.String sentencePiecePath, System.String variant, System.Int32 maxTokens = 512, System.Boolean exactArithmetic = False) : OneIndex.Models.Multilingual.MultilingualE5Embedder
+sealed class OneIndex.Models.Multilingual.MultilingualE5Embedder : OneIndex.Vectors.IEmbedder, System.IDisposable

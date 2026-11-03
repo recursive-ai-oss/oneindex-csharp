@@ -1,5 +1,7 @@
 using OneIndex.Samples.Ef;
 using OneIndex.Samples.HappyPath;
+using OneIndex.Samples.Migration;
+using OneIndex.Samples.ReadsLike;
 
 namespace OneIndex.EntityFrameworkCore.Tests;
 
@@ -34,5 +36,23 @@ public class SampleTests : IDisposable
     {
         string[] ids = await EfSample.RunAsync(Path.Combine(_root, "app.db"), Path.Combine(_root, "ef-search"));
         Assert.Equal(["a"], ids);
+    }
+
+    [Fact]
+    public void TheMigrationGuideExamplesRun()
+    {
+        (string[] ids, string[] facets, string highlight) = MigrationExample.HappyPath();
+        Assert.Equal(["p4", "p1"], ids);
+        Assert.Equal(["audio=2"], facets);
+        Assert.Contains("<em>", highlight, StringComparison.Ordinal);
+        string[] low = MigrationExample.LowLevel();
+        Assert.Equal(["p1"], low);   // the low-level schema indexes titles only
+    }
+
+    [Fact]
+    public void TheReadsLikeExamplesRun()
+    {
+        Assert.Equal(3.5, ReadsLikeExamples.SumPrices("""[{"price":1.5},{"price":2}]"""u8));
+        Assert.Equal(["head: 2 documents, 3 occurrences", "headphones: 1 documents, 1 occurrences", "headsets: 1 documents, 1 occurrences"], ReadsLikeExamples.WalkTitleTerms());
     }
 }

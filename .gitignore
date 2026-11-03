@@ -18,6 +18,7 @@
 !/src/
 !/tests/
 !/samples/
+!/api/
 !/bench/
 !/fuzz/
 !/tools/
