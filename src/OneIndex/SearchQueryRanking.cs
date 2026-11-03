@@ -52,7 +52,7 @@ public sealed partial class SearchQuery<T>
                     keys.AddRange(userKeys);
                     break;
                 case RankingRuleKind.Field:
-                    if (!schema.TryGetField(rule.Field!, out FieldDefinition? def) || !def.Column || def.Type is FieldType.Text or FieldType.GeoPoint or FieldType.Bytes or FieldType.Vector or FieldType.Json)
+                    if (!RankingRule.CanOrderBy(schema, rule.Field!))
                     {
                         throw new ArgumentException($"Ranking rule '{rule}': '{rule.Field}' is not a sortable property; mark a keyword, bool, numeric or date property [Sortable].", nameof(rules));
                     }

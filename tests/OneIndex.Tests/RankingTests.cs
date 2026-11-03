@@ -34,6 +34,9 @@ public class ProximityDoc
 
     [FullText]
     public string Body { get; set; } = string.Empty;
+
+    [Sortable]
+    public int Price { get; set; }
 }
 
 [Proximity(0f)]
@@ -434,12 +437,12 @@ public sealed class RankingTests
     {
         using SearchIndex<ProximityDoc> index = SearchIndex.InMemory<ProximityDoc>();
         // Rules keep the text, so that the words can be ranked after a round trip.
-        QueryRequest request = QueryJson.Read("""{"v":1,"q":"red apple","rankingRules":["words","Body:asc"]}""", index.Schema);
-        Assert.Equal(["words", "Body:asc"], request.RankingRules);
+        QueryRequest request = QueryJson.Read("""{"v":1,"q":"red apple","rankingRules":["words","Price:asc"]}""", index.Schema);
+        Assert.Equal(["words", "Price:asc"], request.RankingRules);
         Assert.Equal("red apple", request.Text);
         Assert.IsType<ProximityQuery>(request.Query);
         string written = QueryJson.Write(request);
-        Assert.Equal("""{"v":1,"q":"red apple","rankingRules":["words","Body:asc"]}""", written);
+        Assert.Equal("""{"v":1,"q":"red apple","rankingRules":["words","Price:asc"]}""", written);
         QueryRequest again = QueryJson.Read(written, index.Schema);
         Assert.Equal(request, again);
         Assert.Equal(written, QueryJson.Write(again));

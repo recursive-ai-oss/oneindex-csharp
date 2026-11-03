@@ -914,7 +914,7 @@ internal sealed partial class QueryJsonReader
         return new QueryRequest { Query = main, Filter = filter, Limit = limit, Offset = offset, CountExactly = exact, Highlight = highlight, Sort = sort, SearchAfter = after, Hybrid = hybrid, Rerank = rerank, RankingRules = rankingRules, Text = plainText };
     }
 
-    private static List<string> ReadRankingRules(JsonElement e)
+    private List<string> ReadRankingRules(JsonElement e)
     {
         const string path = "$.rankingRules";
         if (e.ValueKind != JsonValueKind.Array || e.GetArrayLength() > RankingRule.MaxRules)
@@ -928,9 +928,16 @@ internal sealed partial class QueryJsonReader
         {
             string ip = Index(path, i++);
             string text = ReadString(item, ip);
-            if (!RankingRule.TryParse(text, out _, out string? error))
+            if (!RankingRule.TryParse(text, out RankingRule? rule, out string? error))
             {
                 throw Err(ip, error!);
+            }
+
+            // A property rule orders by a column; the schema is known here, so a bad name is a positioned parse error and not a failure when the search runs.
+            if (rule!.Kind == RankingRuleKind.Field && !RankingRule.CanOrderBy(_schema, rule.Field!))
+            {
+                string? near = QuerySyntax.Nearest(rule.Field!, _schema.Fields.Where(static f => f.Column).Select(static f => f.Name));
+                throw Err(ip, $"\"{rule.Field}\" is not a sortable property; mark a keyword, bool, numeric or date property [Sortable]." + (near is null ? string.Empty : $" Did you mean \"{near}\"?"), near);
             }
 
             rules.Add(text);

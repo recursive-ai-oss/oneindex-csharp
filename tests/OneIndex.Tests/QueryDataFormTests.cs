@@ -287,6 +287,20 @@ public class QueryDataFormTests
         }
     }
 
+    [Fact]
+    public void ARankingRuleNamingAnUnsortableFieldIsAParseErrorWithItsPosition()
+    {
+        // Found by the query JSON fuzz target (testdata/fuzz/queryjson-ranking-rule-field.json): the rule was accepted when read and failed with an
+        // ArgumentException when the search ran, although the schema is known at read time.
+        string path = Path.Combine(Path.GetDirectoryName(ThisFile())!, "..", "..", "testdata", "fuzz", "queryjson-ranking-rule-field.json");
+        string found = File.ReadAllText(path);
+        Assert.Contains("\"rankingRules\":[\"Numbep:asc\"", found, StringComparison.Ordinal);
+        Assert.False(QueryJson.TryRead("{\"v\":1,\"rankingRules\":[\"words\",\"Numbep:asc\"]}", Schema, out _, out QueryParseException? error));
+        Assert.Equal("$.rankingRules[1]", error!.Path);
+        Assert.Contains("not a sortable property", error.Detail, StringComparison.Ordinal);
+        Assert.True(QueryJson.TryRead("{\"v\":1,\"rankingRules\":[\"words\",\"Count:asc\"]}", Schema, out _, out QueryParseException? ok), ok?.Message);
+    }
+
     private static string ThisFile([System.Runtime.CompilerServices.CallerFilePath] string path = "") => path;
 
     [Fact]
