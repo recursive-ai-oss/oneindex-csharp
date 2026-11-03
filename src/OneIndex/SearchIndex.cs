@@ -689,7 +689,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
         lock (_gate)
         {
             ThrowIfDisposed();
-            _writer.SetAppliedPosition(appliedPosition);
+            Writer.SetAppliedPosition(appliedPosition);
             return Commit(cancellationToken);
         }
     }
