@@ -7,9 +7,6 @@ using OneIndex.Vectors;
 
 namespace OneIndex.Tests;
 
-// The fuzz regression cases in VectorIndexTests switch checksum verification off for a moment (a process-wide setting); tests that
-// expect damaged vector blocks to be refused must not run beside them.
-[Collection("Vector checksum switch")]
 public sealed class QuantizedVectorTests
 {
     private static float[] Gaussian(Random rng, int dims, bool unit)

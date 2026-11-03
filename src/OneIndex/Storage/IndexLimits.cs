@@ -10,6 +10,13 @@ public sealed class IndexLimits
     /// <summary>The limits used when none are given.</summary>
     public static IndexLimits Default { get; } = new();
 
+    /// <summary>
+    /// When true, vector blocks and tables are not checked against their checksums as they are read. Only the fuzz targets set it, so that
+    /// mutated bytes reach the structure checks behind the checksums; the setting belongs to the limits object passed to one open and
+    /// affects nothing else in the process.
+    /// </summary>
+    internal bool SkipVectorChecksums { get; init; }
+
     /// <summary>The longest file name accepted by storage, in characters. Default 255.</summary>
     public int MaxFileNameLength { get; init; } = 255;
 

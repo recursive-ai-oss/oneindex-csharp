@@ -2,6 +2,8 @@ using global::VectorData.ConformanceTests;
 using global::VectorData.ConformanceTests.ModelTests;
 using global::VectorData.ConformanceTests.Support;
 using global::VectorData.ConformanceTests.TypeTests;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.VectorData;
 using OneIndex.VectorData;
 
@@ -117,5 +119,55 @@ public sealed class Hybrid(Hybrid.Fx1 a, Hybrid.Fx2 b) : HybridSearchTests<strin
     public sealed class Fx2 : HybridSearchTests<string>.MultiTextFixture
     {
         public override TestStore TestStore => OneIndexTestStore.Instance;
+    }
+}
+
+public sealed class DataTypes(DataTypes.Fx f) : DataTypeTests<string, DataTypeTests<string>.DefaultRecord>(f), IClassFixture<DataTypes.Fx>
+{
+    public sealed class Fx : DataTypeTests<string, DataTypeTests<string>.DefaultRecord>.Fixture
+    {
+        public override TestStore TestStore => OneIndexTestStore.Instance;
+    }
+}
+
+/// <summary>
+/// The dependency-injection suite. The package ships no registration extension (it would add a dependency beyond the abstraction), so the
+/// registrations the suite exercises are the ones an application writes: the store and its collections as services.
+/// </summary>
+public sealed class DependencyInjection : DependencyInjectionTests<OneIndexVectorStore, OneIndexRecords<string, DependencyInjectionTests<string>.Record>, string, DependencyInjectionTests<string>.Record>
+{
+    public override IEnumerable<Func<IServiceCollection, object?, ServiceLifetime, IServiceCollection>> StoreDelegates
+    {
+        get
+        {
+            yield return static (services, serviceKey, lifetime) =>
+            {
+                ArgumentNullException.ThrowIfNull(services);
+                services.Add(new ServiceDescriptor(typeof(OneIndexVectorStore), serviceKey, static (_, _) => new OneIndexVectorStore(), lifetime));
+                services.Add(new ServiceDescriptor(typeof(VectorStore), serviceKey, static (sp, key) => sp.GetRequiredKeyedService<OneIndexVectorStore>(key), lifetime));
+                return services;
+            };
+        }
+    }
+
+    public override IEnumerable<Func<IServiceCollection, object?, string, ServiceLifetime, IServiceCollection>> CollectionDelegates
+    {
+        get
+        {
+            yield return static (services, serviceKey, name, lifetime) =>
+            {
+                ArgumentNullException.ThrowIfNull(services);
+                ArgumentException.ThrowIfNullOrEmpty(name);
+                services.Add(new ServiceDescriptor(typeof(OneIndexRecords<string, Record>), serviceKey, (_, _) => new OneIndexVectorStore().GetCollection<string, Record>(name), lifetime));
+                services.Add(new ServiceDescriptor(typeof(VectorStoreCollection<string, Record>), serviceKey, static (sp, key) => sp.GetRequiredKeyedService<OneIndexRecords<string, Record>>(key), lifetime));
+                services.Add(new ServiceDescriptor(typeof(IVectorSearchable<Record>), serviceKey, static (sp, key) => sp.GetRequiredKeyedService<OneIndexRecords<string, Record>>(key), lifetime));
+                services.Add(new ServiceDescriptor(typeof(IKeywordHybridSearchable<Record>), serviceKey, static (sp, key) => sp.GetRequiredKeyedService<OneIndexRecords<string, Record>>(key), lifetime));
+                return services;
+            };
+        }
+    }
+
+    protected override void PopulateConfiguration(ConfigurationManager configuration, object? serviceKey)
+    {
     }
 }
