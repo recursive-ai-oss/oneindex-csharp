@@ -359,7 +359,7 @@ public sealed class KillCampaign(Args a)
             var procs = new List<(string Inst, Process P, long KillAtMs, bool Hook)>();
             foreach (string inst in new[] { "a", "b" })
             {
-                bool hook = rng.Next(100) < 55;
+                bool hook = rng.Next(100) < a.Number("hook", 55);
                 (string stage, int max) = Stages[rng.Next(Stages.Length)];
                 string kill = hook ? stage + ":" + (1 + rng.Next(max)).ToString(System.Globalization.CultureInfo.InvariantCulture) : "";
                 var psi = new ProcessStartInfo(Environment.ProcessPath!)

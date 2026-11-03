@@ -14,10 +14,10 @@ pids=()
 for ((i = 0; i < LANES; i++)); do
   s=$((SEED + i))
   rm -rf "$WORK/tmp/lane$s"
-  dotnet "$DLL" kill --dir "$WORK/tmp/lane$s" --cycles "$CYCLES" --seed "$s" --pg "${EF_PG:-}" --writers "${EF_WRITERS:-2}" > "$WORK/logs/lane$s.log" 2>&1 &
+  dotnet "$DLL" kill --dir "$WORK/tmp/lane$s" --cycles "$CYCLES" --seed "$s" --pg "${EF_PG:-}" --writers "${EF_WRITERS:-2}" --hook "${EF_HOOK:-55}" > "$WORK/logs/lane$s.log" 2>&1 &
   pids+=($!)
 done
 rc=0
 for p in "${pids[@]}"; do wait "$p" || rc=1; done
-cat "$WORK"/logs/lane*.log | grep -E '^(cycles|FAIL|cycle|  stage)' | head -60
+cat "$WORK"/logs/lane*.log | grep -E '^(cycles|FAIL|cycle|gap handling|  stage)' | head -60
 exit $rc
