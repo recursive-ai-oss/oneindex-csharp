@@ -82,6 +82,10 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
+      # The browser smoke app is not in OneIndex.slnx: it needs the wasm-tools workload, which hosted runners do not have,
+      # and no other job should depend on it.
+      - name: Install the wasm-tools workload
+        run: dotnet workload install wasm-tools
       - name: Build the browser smoke app
         run: dotnet build tests/WasmSmoke -c Release
       - name: Run it

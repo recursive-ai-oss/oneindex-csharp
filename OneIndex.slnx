@@ -22,7 +22,6 @@
     <Project Path="tests/Relevance/Relevance.csproj" />
     <Project Path="tests/Differential/Differential.csproj" />
     <Project Path="tests/AotSmoke/AotSmoke.csproj" />
-    <Project Path="tests/WasmSmoke/WasmSmoke.csproj" />
   </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/OneIndex.Samples/OneIndex.Samples.csproj" />

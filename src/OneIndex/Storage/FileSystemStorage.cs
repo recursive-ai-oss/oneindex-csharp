@@ -65,7 +65,9 @@ public sealed class FileSystemStorage : StorageBase, IStorage
         SafeFileHandle handle;
         try
         {
-            handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, FileOptions.Asynchronous);
+            // Windows: a synchronous read on a handle opened for overlapped I/O allocates on every call (the runtime sets up an
+            // overlapped operation and waits on it), so readers there use an ordinary handle and their async twin completes inline.
+            handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, OperatingSystem.IsWindows() ? FileOptions.None : FileOptions.Asynchronous);
         }
         catch (DirectoryNotFoundException)
         {
@@ -80,7 +82,7 @@ public sealed class FileSystemStorage : StorageBase, IStorage
     {
         ThrowIfReadOnly();
         cancellationToken.ThrowIfCancellationRequested();
-        SafeFileHandle handle = File.OpenHandle(PathOf(name), FileMode.CreateNew, FileAccess.Write, FileShare.Read, FileOptions.Asynchronous);
+        SafeFileHandle handle = File.OpenHandle(PathOf(name), FileMode.CreateNew, FileAccess.Write, FileShare.Read | FileShare.Delete, FileOptions.Asynchronous);
         lock (_gate)
         {
             _unsyncedNames.Add(name);
@@ -100,8 +102,19 @@ public sealed class FileSystemStorage : StorageBase, IStorage
             throw new FileNotFoundException($"No such file: {source}", source);
         }
 
-        // rename(2) on POSIX and MoveFileEx(REPLACE_EXISTING) on Windows replace the destination in one step.
-        File.Move(from, PathOf(destination), overwrite: true);
+        string to = PathOf(destination);
+        try
+        {
+            // rename(2) on POSIX and MoveFileEx(REPLACE_EXISTING) on Windows replace the destination in one step.
+            File.Move(from, to, overwrite: true);
+        }
+        catch (Exception e) when (OperatingSystem.IsWindows() && e is UnauthorizedAccessException or IOException && File.Exists(to))
+        {
+            // Windows refuses MoveFileEx over a destination that another handle has open. ReplaceFile swaps the two names
+            // atomically and works when that handle allows sharing delete, as every reader of this storage does.
+            File.Replace(from, to, null);
+        }
+
         lock (_gate)
         {
             _unsyncedNames.Remove(source);
@@ -326,9 +339,9 @@ public sealed class FileSystemStorage : StorageBase, IStorage
         public async ValueTask<int> ReadAsync(long offset, Memory<byte> destination, CancellationToken cancellationToken = default)
         {
             ArgumentOutOfRangeException.ThrowIfNegative(offset);
-            if (_view is not null)
+            if (_view is not null || OperatingSystem.IsWindows())
             {
-                // A mapped range is a copy from memory: nothing to wait for.
+                // A mapped range is a copy from memory, and a Windows reader has no overlapped handle: nothing to wait for.
                 return Read(offset, destination.Span, cancellationToken);
             }
 

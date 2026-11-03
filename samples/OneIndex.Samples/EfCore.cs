@@ -41,6 +41,7 @@ public static class EfSample
                            .AfterPendingChanges()                          // read your own writes: apply the log first
                            .Take(10)
                            .ToListAsync();
+        await OneIndexRuntime.For(db).DisposeAsync();                      // an app does this at shutdown: it closes the index files
         return [.. list.Select(i => i.Id)];
     }
 }
