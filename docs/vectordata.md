@@ -24,7 +24,8 @@ await foreach (var r in hotels.SearchAsync(queryVector, top: 5, new() { Filter =
 
 - **Dynamic collections** (`GetDynamicCollection`, dictionary records) and **embedding generation** by the store: `NotSupported`. Pass vectors yourself.
 - Distance functions Manhattan and Hamming.
-- Filter shapes the LINQ translator refuses by design ([linq.md](linq.md)): comparing with `null` (`r.Name == null`), and `Any(x => values.Contains(x))` over a collection property.
+- **Data-type suite.** Each of its tests also creates a dynamic collection, so all 16 are excluded; the typed path (`Guid`, `DateOnly`, `TimeOnly`, nullable values, string collections) is covered by `ContractTests`. Filters comparing a whole array (`r.StringArray == array`) are not translatable.
+- **Registration extensions.** The package ships no `AddOneIndex...` dependency-injection extension (it would add a dependency beyond the abstraction); applications register `OneIndexVectorStore` and their collections as services, as the tests do. Embedding generators are not resolved from the container (`EmbeddingGeneratorIsResolved` is excluded).
 - A caveat on `Guid` keys: the abstraction's key-type test also exercises a dynamic collection, which is not supported, so that one test is excluded.
 
 ## Reflection, trimming and AOT
@@ -33,12 +34,11 @@ The adapter reads and writes user record types through reflection, as the abstra
 
 ## Conformance
 
-The tests run the abstraction's own conformance suite (`Microsoft.Extensions.VectorData.ConformanceTests` 10.11.0) against a store over a temporary directory, plus 7 contract tests of our own.
+The tests run the abstraction's own conformance suite (`Microsoft.Extensions.VectorData.ConformanceTests` 10.11.0) against a store over a temporary directory, plus 8 contract tests of our own.
 
 | | Tests |
 |---|---:|
-| Contract tests (`ContractTests`) | 7 passed |
-| Conformance suite, test classes wired: collection management, distance functions, index kinds, filters (typed), basic, no-data, no-vector and multi-vector models, key types, hybrid search | 125 ran: 112 passed, 13 excluded |
-| Excluded | 13 (listed in `tests/OneIndex.VectorData.Tests/known-unsupported.txt`): Manhattan and Hamming distance (2); the `Guid` key test, which also needs a dynamic collection (1); filters comparing with `null` (5) and `Contains` / `Any` over a collection property (5) |
+| Everything `run.sh` runs (contract tests, conformance suites wired, dependency-injection suite) | 168 passed, 0 failed |
+| Excluded (`tests/OneIndex.VectorData.Tests/known-unsupported.txt`) | Manhattan and Hamming distance (2); the `Guid` key test, which also needs a dynamic collection (1); `EmbeddingGeneratorIsResolved` in 9 variants (lifetime and service key); the 16 data-type tests, which need a dynamic collection |
 
-Not wired: the dynamic-model, embedding-generation and embedding-type suites (the adapter has neither dynamic collections nor generated embeddings), and the data-type and dependency-injection suites (not run yet). `tests/OneIndex.VectorData.Tests/run.sh <dll>` runs everything except the excluded tests.
+Filters comparing with `null` and `Contains` / `Any` over a collection property, excluded before, now pass (10 tests). Wired suites: collection management, distance functions, index kinds, filters (typed), basic, no-data, no-vector and multi-vector models, key types, hybrid search, dependency injection, data types (all excluded). Not wired: dynamic-model, embedding-generation and embedding-type suites (no dynamic collections, no generated embeddings). `tests/OneIndex.VectorData.Tests/run.sh <dll>` runs everything except the excluded tests.

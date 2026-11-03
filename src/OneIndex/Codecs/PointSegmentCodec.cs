@@ -118,6 +118,16 @@ public sealed class PointSegmentCodec : ISegmentCodec
     public ISegmentPartReader? OpenReader(SegmentReaderContext context, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
+        if (context.DeferOptionalParts)
+        {
+            return context.Info.FindPart(SegmentParts.Points) is null ? null : new DeferredPointSource(new DeferredPart<PointPartReader>(() => OpenNow(context, cancellationToken)));
+        }
+
+        return OpenNow(context, cancellationToken);
+    }
+
+    private static PointPartReader? OpenNow(SegmentReaderContext context, CancellationToken cancellationToken)
+    {
         IRangeReader? reader = context.OpenPart(SegmentParts.Points, out _, cancellationToken);
         return reader is null ? null : PointPartReader.Open(reader, context.Info.DocCount, context.Limits, cancellationToken);
     }
@@ -886,4 +896,12 @@ internal sealed class SortedDocIterator : DocIdSetIterator
         _index = idx;
         return _doc = _index < _count ? _docs[_index] : NoMoreDocs;
     }
+}
+
+/// <summary>Point access that opens the points file when a query first asks for a field (static indexes).</summary>
+internal sealed class DeferredPointSource(DeferredPart<PointPartReader> part) : ISegmentPartReader, IPointSource
+{
+    public IPointIndexReader? GetPoints(string field) => part.Value?.GetPoints(field);
+
+    public void Dispose() => part.Dispose();
 }

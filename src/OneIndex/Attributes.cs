@@ -105,6 +105,18 @@ public sealed class SparseAttribute : Attribute
 }
 
 /// <summary>
+/// Marks a <c>float[][]</c> property as a multi-vector: one vector per token of the document, scored against a query's token vectors by
+/// MaxSim (late interaction, docs/multi-vector.md). It is stored with the document in a packed form; <see cref="Vectors.MaxSim"/> searches
+/// it as a rerank of a first stage or as an exact scan of the documents a filter admits. Every row must have <see cref="Dimensions"/> values.
+/// </summary>
+[AttributeUsage(AttributeTargets.Property | AttributeTargets.Field, AllowMultiple = false, Inherited = true)]
+public sealed class MultiVectorAttribute : Attribute
+{
+    /// <summary>The length of every token vector, from 1 to 65,536. There is no default.</summary>
+    public int Dimensions { get; set; }
+}
+
+/// <summary>
 /// Marks a <see cref="GeoPoint"/> property for geo search: radius and bounding box filters (<see cref="Geo"/>) and sorting by distance
 /// (<c>OrderByDistance</c>). Without it a <see cref="GeoPoint"/> is only stored and returned with the document.
 /// </summary>

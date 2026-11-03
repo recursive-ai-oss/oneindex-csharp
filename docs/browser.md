@@ -37,6 +37,8 @@ Over http, per query kind (the first query excluded; it opens the index):
 
 **Payload** of the .NET WebAssembly app (runtime, the engine, the test app): 5,247,641 bytes raw, 1,933,623 gzip, 1,539,151 brotli (the app bundle, symbols and maps excluded).
 
+**Re-run with parts opened on demand and 16 KiB chunks** (the current default; same 30,000 abstracts, Chromium 155.0.8059.84 headless, Node 22.22.1, playwright-core 1.49.1, the worker, x64): http 40 of 40 equal to the server, memory 32 of 32, OPFS 32 of 32. Http: median 100 ms, p95 912 ms; first query 2,686 KB; per kind (median ms, average KB, average requests): text 60 / 214 / 13.1, filter 75 / 111 / 6.8, hybrid 638 / 1,341 / 81.9, vector (IVF) 93 / 579 / 35.5, highlight 100 / 193 / 11.8. Text queries are faster and smaller than with 64 KiB chunks (98 ms, 536 KB); hybrid is slower (387 ms before) because its graph walk now makes 82 requests. App payload 5,332,316 bytes raw (gzip 1,969,036, brotli 1,570,672). Pagefind 1.6.0, same run: first query 280,271 bytes, median 5.5 ms, 65,923 bytes per query over all 12 (the table below keeps the earlier 46 KB figure for the 11 after the first). Details and the proposed next step: [static-index.md](static-index.md).
+
 ## Beside Pagefind
 
 Pagefind 1.6.0 (MIT, the npm package, run as a black box) indexes the same 30,000 abstracts as HTML pages (one per abstract; `tests/BrowserSuite/pagefind.mjs`), and the same Chromium build measures the 12 text queries of the suite: `search()` plus loading the first ten results' data.

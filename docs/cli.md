@@ -15,7 +15,7 @@ oneindex static build ~/papers-index ./site/search
 |---|---|
 | `oneindex index <folder> [--index <dir>] [--watch] [--embed] [--ocr]` | Reads every file under the folder (text, Markdown, HTML, PDF, archives) and keeps the passage index in `<dir>` (default `<folder>/.oneindex`). Prints progress. It commits as it goes, so stopping it (Ctrl+C or a kill) and running it again resumes. `--watch` keeps the index current until Ctrl+C. `--embed` also computes passage embeddings with the packaged embedder (slower; needed for `--hybrid`). `--ocr` reads scans: images and PDFs whose pages are pictures. |
 | `oneindex query <index> "<text>" [--limit N] [--filter "<filter>"] [--hybrid] [--json] [--files]` | Prints the best passages with their citation (file, page, character range, heading). `--filter` is the filter-string syntax ([filter-strings.md](filter-strings.md)) over the passage fields, named as in `FilePassage` (`Format = pdf AND Page > 2`). `--files` shows one hit per file. `--json` writes one JSON object: `totalHits`, `totalHitsExact` and the hits with their citations, boxes included. It opens the index read-only, so it works while `index --watch` writes. |
-| `oneindex static build <index> <out> [--chunk-kb N]` | Writes a static index of the newest commit into `<out>` (default chunks of 256 KiB) for plain file servers and the browser ([static-index.md](static-index.md)). Refuses an `<out>` that already holds one. |
+| `oneindex static build <index> <out> [--chunk-kb N]` | Writes a static index of the newest commit into `<out>` (default chunks of 16 KiB) for plain file servers and the browser ([static-index.md](static-index.md)). Refuses an `<out>` that already holds one. |
 | `oneindex --version`, `--help` | |
 
 ## Exit codes and errors

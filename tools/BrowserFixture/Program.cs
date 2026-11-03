@@ -5,15 +5,17 @@ using OneIndex.BrowserSuite;
 using OneIndex.StaticIndexes;
 
 // Builds what the browser suite needs: an index of a corpus, its static form, the queries, and what a server computes for them.
-// Usage: BrowserFixture --out <dir> [--corpus <abstracts.jsonl>] [--docs N]
+// Usage: BrowserFixture --out <dir> [--corpus <abstracts.jsonl>] [--docs N] [--chunk BYTES]
 string? outDir = null, corpusPath = null;
 int count = 3000;
+int chunk = 16 * 1024;
 for (int i = 0; i < args.Length; i++)
 {
     switch (args[i])
     {
         case "--out": outDir = args[++i]; break;
         case "--corpus": corpusPath = args[++i]; break;
+        case "--chunk": chunk = int.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
         case "--docs": count = int.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
         default: Console.Error.WriteLine($"unknown argument {args[i]}"); return 2;
     }
@@ -21,7 +23,7 @@ for (int i = 0; i < args.Length; i++)
 
 if (outDir is null)
 {
-    Console.Error.WriteLine("usage: BrowserFixture --out <dir> [--corpus <jsonl>] [--docs N]");
+    Console.Error.WriteLine("usage: BrowserFixture --out <dir> [--corpus <jsonl>] [--docs N] [--chunk BYTES]");
     return 2;
 }
 
@@ -41,7 +43,7 @@ using (SearchIndex<BrowserDoc> index = SearchIndex.Open<BrowserDoc>(indexDir, nu
     }
 }
 
-StaticManifest manifest = StaticIndexBuilder.Build<BrowserDoc>(indexDir, staticDir, new StaticBuildOptions { ChunkBytes = 64 * 1024 });
+StaticManifest manifest = StaticIndexBuilder.Build<BrowserDoc>(indexDir, staticDir, new StaticBuildOptions { ChunkBytes = chunk });
 byte[] queries = Queries(docs);
 File.WriteAllBytes(Path.Combine(staticDir, "queries.json"), queries);
 

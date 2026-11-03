@@ -9,8 +9,8 @@ namespace OneIndex.StaticIndexes;
 /// <summary>Settings of <see cref="StaticIndexBuilder"/>.</summary>
 public sealed class StaticBuildOptions
 {
-    /// <summary>The chunk size in bytes, 1 KiB to 64 MiB. Default 256 KiB: large enough to keep the request count of a query low, small enough that a query does not download much it does not use.</summary>
-    public int ChunkBytes { get; init; } = 256 * 1024;
+    /// <summary>The chunk size in bytes, 1 KiB to 64 MiB. Default 16 KiB: a query fetches about the chunks it touches, so smaller chunks mean fewer bytes and more requests (docs/static-index.md has the measurements: on 30,000 abstracts a text query after the first costs 209 KB in 13 requests at 16 KiB and 675 KB in 3 requests at 256 KiB).</summary>
+    public int ChunkBytes { get; init; } = 16 * 1024;
 
     /// <summary>The IVF settings of every vector field of the type. Default: cosine lists of 8-bit codes with full-precision rerank, about the square root of the count.</summary>
     public IvfOptions Ivf { get; init; } = new() { Storage = IvfStorage.EightBit };

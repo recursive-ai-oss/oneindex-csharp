@@ -37,11 +37,12 @@ internal sealed class RecordMapping<TRecord> : SearchMapping<TRecord>
         {
             Type t = Nullable.GetUnderlyingType(d.Type) ?? d.Type;
             bool multi = IsStringCollection(t);
-            FieldType kind = multi || t == typeof(string)
+            // A Guid is kept as its text, a DateOnly as its day number and a TimeOnly as its ticks, so that equality and ordering filters work.
+            FieldType kind = multi || t == typeof(string) || t == typeof(Guid)
                 ? (d.IsFullTextIndexed ? FieldType.Text : FieldType.Keyword)
                 : t == typeof(bool) ? FieldType.Bool
                 : t == typeof(DateTime) || t == typeof(DateTimeOffset) ? FieldType.Date
-                : IsIntegral(t) ? FieldType.Integral
+                : IsIntegral(t) || t == typeof(DateOnly) || t == typeof(TimeOnly) ? FieldType.Integral
                 : IsFractional(t) ? FieldType.Fractional
                 : throw new NotSupportedException($"The property '{d.Name}' has the type {t.Name}, which OneIndex cannot store. Use a string, number, bool, date or a collection of strings.");
             bool text = kind == FieldType.Text;
@@ -122,6 +123,15 @@ internal sealed class RecordMapping<TRecord> : SearchMapping<TRecord>
                     break;
                 case bool b:
                     doc.Add(d.Name, b);
+                    break;
+                case Guid g:
+                    doc.Add(d.Name, g.ToString("D", CultureInfo.InvariantCulture));
+                    break;
+                case DateOnly day:
+                    doc.Add(d.Name, (long)day.DayNumber);
+                    break;
+                case TimeOnly time:
+                    doc.Add(d.Name, time.Ticks);
                     break;
                 case DateTime dt:
                     doc.Add(d.Name, SearchMapping.ToDate(dt));
@@ -208,6 +218,18 @@ internal sealed class RecordMapping<TRecord> : SearchMapping<TRecord>
             else if (t == typeof(bool))
             {
                 p.Set(record, f.Value.AsBool());
+            }
+            else if (t == typeof(Guid))
+            {
+                p.Set(record, Guid.Parse(f.Value.AsText()));
+            }
+            else if (t == typeof(DateOnly))
+            {
+                p.Set(record, DateOnly.FromDayNumber((int)f.Value.AsInt64()));
+            }
+            else if (t == typeof(TimeOnly))
+            {
+                p.Set(record, new TimeOnly(f.Value.AsInt64()));
             }
             else if (t == typeof(DateTimeOffset))
             {

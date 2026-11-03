@@ -3,13 +3,6 @@
 *Distance.ManhattanDistance
 *Distance.HammingDistance
 *KeyTypes.Guid
-*Filters.Equal_with_null_reference_type
-*Filters.NotEqual_with_null_reference_type
-*Filters.Equal_with_null_captured
-*Filters.NotEqual_with_null_captured
-*Filters.Equal_int_property_with_null_nullable_int
-*Filters.Contains_with_MemoryExtensions_Contains_with_null_comparer
-*Filters.Any_with_Contains_over_captured_string_array
-*Filters.Any_with_Contains_over_inline_string_array
-*Filters.Any_over_List_with_Contains_over_captured_string_array
-*Filters.Any_with_Contains_over_captured_string_list
+*DependencyInjection.EmbeddingGeneratorIsResolved
+# Each data-type test also creates a dynamic (dictionary) collection, which the adapter does not support (the typed path is covered by ContractTests).
+*DataTypes.*

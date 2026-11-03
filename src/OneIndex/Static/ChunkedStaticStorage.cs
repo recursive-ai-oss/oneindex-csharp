@@ -133,7 +133,7 @@ public sealed class ChunkNotLoadedException : Exception
 /// throws <see cref="ChunkNotLoadedException"/>; an asynchronous read fetches what it needs. Every chunk is checked against the manifest's CRC-32C
 /// when it arrives.
 /// </summary>
-public sealed class ChunkedStaticStorage : IStorage
+public sealed class ChunkedStaticStorage : IStorage, IDeferredOpenStorage
 {
     private readonly IStaticSource _source;
     private readonly Dictionary<string, StaticFile> _files;
