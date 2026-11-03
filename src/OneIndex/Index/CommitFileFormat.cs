@@ -12,9 +12,10 @@ public static class CommitFileFormat
 {
     /// <summary>
     /// The newest commit format version this build reads. A commit is written as version 1 unless it carries schema evolution
-    /// state (a schema epoch above 0), in which case it is written as version 2; both are read.
+    /// state (a schema epoch above 0), in which case it is written as version 2, or lists a file that lives inside a pack file
+    /// (a nonzero offset), in which case it is written as version 3 (version 2's layout plus an offset per file). All are read.
     /// </summary>
-    public const int FormatVersion = 2;
+    public const int FormatVersion = 3;
 
     /// <summary>The file-type magic of a commit file ("OIXC").</summary>
     public static readonly uint Magic = IndexFile.Magic("OIXC");
@@ -34,9 +35,10 @@ public static class CommitFileFormat
         Check(commit.UserData.Count <= limits.MaxUserDataEntries, "user data entry count");
 
         var sink = new ByteSink();
-        bool evolved = commit.SchemaEpoch != 0 || commit.Pending is not null || commit.Segments.Any(static s => s.SchemaEpoch != 0);
+        bool packed = commit.Segments.Any(HasPackedFile) || (commit.Pending?.Rebuilt.Any(r => HasPackedFile(r.Info)) ?? false);
+        bool evolved = packed || commit.SchemaEpoch != 0 || commit.Pending is not null || commit.Segments.Any(static s => s.SchemaEpoch != 0);
         sink.WriteUInt32(Magic);
-        sink.WriteUInt32(evolved ? 2u : 1u);
+        sink.WriteUInt32(packed ? 3u : evolved ? 2u : 1u);
         sink.WriteUInt64((ulong)commit.Generation);
         sink.WriteUInt64(commit.NextSegmentId);
         sink.WriteBytes(commit.AppliedPosition.Span);
@@ -57,7 +59,7 @@ public static class CommitFileFormat
         var names = new HashSet<string>(StringComparer.Ordinal);
         foreach (SegmentInfo segment in commit.Segments)
         {
-            WriteSegment(sink, segment, limits, names, evolved);
+            WriteSegment(sink, segment, limits, names, evolved, packed);
         }
 
         if (evolved)
@@ -73,7 +75,7 @@ public static class CommitFileFormat
                 foreach (RebuiltSegment r in pending.Rebuilt)
                 {
                     Check(r.Info.SchemaEpoch == commit.SchemaEpoch + 1, "rebuilt segments belonging to the next schema epoch");
-                    WriteSegment(sink, r.Info, limits, names, evolved);
+                    WriteSegment(sink, r.Info, limits, names, evolved, packed);
                     sink.WriteString(r.Source);
                     sink.WriteVarUInt((ulong)r.SourceDeleted);
                 }
@@ -87,7 +89,9 @@ public static class CommitFileFormat
         return sink.ToArray();
     }
 
-    private static void WriteSegment(ByteSink sink, SegmentInfo segment, IndexLimits limits, HashSet<string> names, bool evolved)
+    private static bool HasPackedFile(SegmentInfo segment) => segment.Files.Any(static f => f.Offset != 0);
+
+    private static void WriteSegment(ByteSink sink, SegmentInfo segment, IndexLimits limits, HashSet<string> names, bool evolved, bool packed)
     {
         Check(names.Add(segment.Name), "segment names being unique");
         Check(segment.Files.Count <= limits.MaxFilesPerSegment, "files per segment");
@@ -100,7 +104,8 @@ public static class CommitFileFormat
         foreach (SegmentFile file in segment.Files)
         {
             StorageNames.Validate(file.FileName);
-            Check(names.Add(file.FileName), "file names being unique");
+            Check(file.Offset == 0 || file.Offset >= IndexFile.HeaderLength, "pack offsets");
+            Check(TrackFile(names, file.FileName, file.Offset), "file names being unique");
             CodecRegistry.EnsureSupported(file.FileName, file.Codec);
             sink.WriteString(file.Part);
             sink.WriteString(file.FileName);
@@ -108,12 +113,36 @@ public static class CommitFileFormat
             sink.WriteVarUInt((ulong)file.Codec.Version);
             sink.WriteVarUInt((ulong)file.Length);
             sink.WriteUInt32(file.Checksum);
+            if (packed)
+            {
+                sink.WriteVarUInt((ulong)file.Offset);
+            }
         }
 
         if (evolved)
         {
             sink.WriteVarUInt((ulong)segment.SchemaEpoch);
         }
+    }
+
+    /// <summary>
+    /// Records a listed file. A pack file is listed once per part it holds, each at its own offset; every other file once; a name is
+    /// never both. Returns false for a repeat or a clash.
+    /// </summary>
+    private static bool TrackFile(HashSet<string> seen, string name, long offset)
+    {
+        if (offset == 0)
+        {
+            return !seen.Contains("k:" + name) && seen.Add("p:" + name);
+        }
+
+        if (seen.Contains("p:" + name) || !seen.Add("k:" + name + "\0" + offset))
+        {
+            return false;
+        }
+
+        seen.Add("k:" + name);
+        return true;
     }
 
     private static void Check(bool ok, string what)
@@ -181,6 +210,7 @@ public static class CommitFileFormat
     private static CommitInfo ParseBody(ReadOnlySpan<byte> body, int version, string fileName, IndexLimits limits)
     {
         bool evolved = version >= 2;
+        bool packed = version >= 3;
         var src = new ByteSource(body);
         ulong generation = src.ReadUInt64();
         if (generation is 0 or > long.MaxValue)
@@ -222,9 +252,11 @@ public static class CommitFileFormat
         var segments = new List<SegmentInfo>(Math.Min(segmentCount, 1024));
         var seenSegments = new HashSet<string>(StringComparer.Ordinal);
         var seenFiles = new HashSet<string>(StringComparer.Ordinal);
+        bool anyPacked = false;
         for (int s = 0; s < segmentCount; s++)
         {
-            SegmentInfo info = ReadSegment(ref src, fileName, limits, evolved, commitEpoch, seenSegments, seenFiles);
+            SegmentInfo info = ReadSegment(ref src, fileName, limits, evolved, packed, commitEpoch, seenSegments, seenFiles);
+            anyPacked |= HasPackedFile(info);
             anyEpoch |= info.SchemaEpoch != 0;
             segments.Add(info);
         }
@@ -246,7 +278,8 @@ public static class CommitFileFormat
                 var sources = new HashSet<string>(StringComparer.Ordinal);
                 for (int r = 0; r < rebuiltCount; r++)
                 {
-                    SegmentInfo info = ReadSegment(ref src, fileName, limits, evolved, commitEpoch + 1, seenSegments, seenFiles);
+                    SegmentInfo info = ReadSegment(ref src, fileName, limits, evolved, packed, commitEpoch + 1, seenSegments, seenFiles);
+                    anyPacked |= HasPackedFile(info);
                     if (info.SchemaEpoch != (long)commitEpoch + 1)
                     {
                         throw new MalformedInputException($"rebuilt segment '{info.Name}' does not belong to the next schema epoch");
@@ -271,7 +304,13 @@ public static class CommitFileFormat
             throw new MalformedInputException($"{src.Remaining} unexpected bytes follow the last segment");
         }
 
-        if (evolved && !anyEpoch && pending is null)
+        if (packed && !anyPacked)
+        {
+            // Version 3 exists to carry pack offsets; without any, the canonical form is the older version.
+            throw new MalformedInputException("a version 3 commit lists no packed file");
+        }
+
+        if (evolved && !packed && !anyEpoch && pending is null)
         {
             // Version 2 exists to carry epochs; without any, the canonical form is version 1.
             throw new MalformedInputException("a version 2 commit carries no schema epoch");
@@ -288,7 +327,7 @@ public static class CommitFileFormat
         }
     }
 
-    private static SegmentInfo ReadSegment(ref ByteSource src, string fileName, IndexLimits limits, bool evolved, ulong maxEpoch, HashSet<string> seenSegments, HashSet<string> seenFiles)
+    private static SegmentInfo ReadSegment(ref ByteSource src, string fileName, IndexLimits limits, bool evolved, bool packed, ulong maxEpoch, HashSet<string> seenSegments, HashSet<string> seenFiles)
     {
         string name = src.ReadString(limits.MaxFileNameLength, "segment name");
         RequireName(name, "segment name");
@@ -312,18 +351,19 @@ public static class CommitFileFormat
             string part = src.ReadString(limits.MaxStringBytes, "part name");
             string fileNameInCommit = src.ReadString(limits.MaxFileNameLength, "file name");
             RequireName(fileNameInCommit, "file name");
-            if (!seenFiles.Add(fileNameInCommit))
-            {
-                throw new MalformedInputException($"file '{fileNameInCommit}' is listed twice");
-            }
-
             string codecName = src.ReadString(limits.MaxStringBytes, "codec name");
             ulong codecVersion = src.ReadVarUInt();
             ulong length = src.ReadVarUInt();
             uint checksum = src.ReadUInt32();
-            if (codecVersion > int.MaxValue || length > long.MaxValue)
+            ulong offset = packed ? src.ReadVarUInt() : 0;
+            if (codecVersion > int.MaxValue || length > long.MaxValue || offset > long.MaxValue || (offset != 0 && (offset < IndexFile.HeaderLength || length > (ulong)long.MaxValue - offset)))
             {
-                throw new MalformedInputException("codec version or file length is out of range");
+                throw new MalformedInputException("codec version, file length or offset is out of range");
+            }
+
+            if (!TrackFile(seenFiles, fileNameInCommit, (long)offset))
+            {
+                throw new MalformedInputException($"file '{fileNameInCommit}' is listed twice");
             }
 
             var codec = new CodecRef(codecName, (int)codecVersion);
@@ -332,7 +372,7 @@ public static class CommitFileFormat
                 throw new UnsupportedFormatException(fileName, $"file '{fileNameInCommit}' uses codec '{codecName}' version {codecVersion}, which this build does not read");
             }
 
-            files.Add(new SegmentFile(part, fileNameInCommit, codec, (long)length, checksum));
+            files.Add(new SegmentFile(part, fileNameInCommit, codec, (long)length, checksum, (long)offset));
         }
 
         ulong segmentEpoch = 0;

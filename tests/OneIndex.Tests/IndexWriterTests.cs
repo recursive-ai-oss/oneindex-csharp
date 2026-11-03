@@ -193,7 +193,7 @@ public class IndexWriterTests
             Assert.Equal(1, w.Generation);
             w.Upsert(Workload.ToDocument(Put("b")));
             w.Flush();
-            Assert.True(storage.Exists("s000000000000009a.ids")); // names are never reused after a leftover
+            Assert.True(storage.Exists("s000000000000009a.pack")); // names are never reused after a leftover
         }
     }
 
@@ -235,21 +235,21 @@ public class IndexWriterTests
             w.Commit();
         }
 
-        byte[] ids = TestHelpers.ReadAll(storage, "s0000000000000001.ids");
-        ids[^13] ^= 0xFF; // a body byte: the open reads only the footer, a full verification reads everything
-        storage.Delete("s0000000000000001.ids");
-        TestHelpers.WriteAll(storage, "s0000000000000001.ids", ids);
+        byte[] ids = TestHelpers.ReadAll(storage, "s0000000000000001.pack");
+        ids[24] ^= 0xFF; // a body byte of the first part in the pack: the open reads only the footers, a full verification reads everything
+        storage.Delete("s0000000000000001.pack");
+        TestHelpers.WriteAll(storage, "s0000000000000001.pack", ids);
         using (IndexSnapshot snap = IndexSnapshot.Open(storage, Workload.Codecs))
         {
             CorruptIndexException body = Assert.ThrowsAny<CorruptIndexException>(() => snap.Verify());
-            Assert.Contains("s0000000000000001.ids", body.Message, StringComparison.Ordinal);
+            Assert.Contains("s0000000000000001.pack", body.Message, StringComparison.Ordinal);
         }
 
-        ids[^1] ^= 0xFF; // the footer checksum the commit recorded
-        storage.Delete("s0000000000000001.ids");
-        TestHelpers.WriteAll(storage, "s0000000000000001.ids", ids);
+        ids[^13] ^= 0xFF; // the last part's footer checksum, which the commit recorded
+        storage.Delete("s0000000000000001.pack");
+        TestHelpers.WriteAll(storage, "s0000000000000001.pack", ids);
         CorruptIndexException e = Assert.ThrowsAny<CorruptIndexException>(() => IndexWriter.Open(storage, Workload.Schema, Workload.Options()));
-        Assert.Contains("s0000000000000001.ids", e.Message, StringComparison.Ordinal);
+        Assert.Contains("s0000000000000001.pack", e.Message, StringComparison.Ordinal);
     }
 
     [Fact]

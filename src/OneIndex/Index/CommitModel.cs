@@ -8,7 +8,9 @@ namespace OneIndex.Index;
 /// <param name="Codec">The codec and version it was written with.</param>
 /// <param name="Length">Its length in bytes, footer included.</param>
 /// <param name="Checksum">The CRC-32C in its footer, which identifies the exact bytes that were committed.</param>
-public sealed record SegmentFile(string Part, string FileName, CodecRef Codec, long Length, uint Checksum);
+/// <param name="Offset">0 when the file holds the part alone. Otherwise <paramref name="FileName"/> is a pack file holding several
+/// parts, and the part's own framed bytes (header to footer, <paramref name="Length"/> of them) start at this offset in it.</param>
+public sealed record SegmentFile(string Part, string FileName, CodecRef Codec, long Length, uint Checksum, long Offset = 0);
 
 /// <summary>An immutable segment: a name, its document counts, the delete generation and the files that make it up.</summary>
 public sealed class SegmentInfo
@@ -57,6 +59,24 @@ public sealed class SegmentInfo
 
     /// <summary>The files of the segment in a fixed order.</summary>
     public IReadOnlyList<SegmentFile> Files { get; }
+
+    /// <summary>The names of the storage files the segment occupies, each once, in listing order. Parts packed together share one name.</summary>
+    public IReadOnlyList<string> FileNames
+    {
+        get
+        {
+            var names = new List<string>(Files.Count);
+            foreach (SegmentFile file in Files)
+            {
+                if (!names.Contains(file.FileName))
+                {
+                    names.Add(file.FileName);
+                }
+            }
+
+            return names;
+        }
+    }
 
     /// <summary>Finds the file of a part.</summary>
     /// <param name="part">The part name.</param>

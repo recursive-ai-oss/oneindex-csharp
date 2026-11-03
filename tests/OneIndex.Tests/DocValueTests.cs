@@ -204,8 +204,8 @@ public sealed class DocValueTests
             Assert.Equal(1, b.SegmentCount);
             foreach (string part in new[] { SegmentParts.Columns, SegmentParts.Points, SegmentParts.Stored })
             {
-                byte[] x = TestHelpers.ReadAll(merged, a.GetSegment(0).Info.FindPart(part)!.FileName);
-                byte[] y = TestHelpers.ReadAll(flushed, b.GetSegment(0).Info.FindPart(part)!.FileName);
+                byte[] x = TestHelpers.ReadPart(merged, a.GetSegment(0).Info.FindPart(part)!);
+                byte[] y = TestHelpers.ReadPart(flushed, b.GetSegment(0).Info.FindPart(part)!);
                 Assert.True(x.AsSpan().SequenceEqual(y), $"part '{part}' differs between merge and flush for seed {seed}");
             }
         }

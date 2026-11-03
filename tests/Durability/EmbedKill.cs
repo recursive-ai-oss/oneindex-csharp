@@ -154,7 +154,7 @@ public static class EmbedKill
     }
 
     /// <summary>Runs the campaign in one directory.</summary>
-    public static Result Run(string directory, int kills, int seed, int maxDelayMs, string[] childCommand)
+    public static Result Run(string directory, int kills, int seed, int maxDelayMs, string[] childCommand, bool clear = false)
     {
         var rng = new Random(seed);
         var messages = new List<string>();
@@ -162,7 +162,7 @@ public static class EmbedKill
         int duringCommit = 0;
         long documents = 0;
         string lastHash = Hash([]);
-        Directory.CreateDirectory(directory);
+        CampaignDirectory.Prepare(directory, clear);
         int failures = 0;
         for (int done = 0; done < kills; done++)
         {
