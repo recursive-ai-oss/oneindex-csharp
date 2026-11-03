@@ -7,6 +7,25 @@ namespace OneIndex.Queries;
 
 public static partial class QueryJson
 {
+    // {"type":"proximity","query":<node>,"words":[<word node>...],"weight":0.5}; the default weight is left out.
+    private static void WriteProximity(Utf8JsonWriter w, ProximityQuery q)
+    {
+        w.WriteString("type", "proximity");
+        w.WritePropertyName("query");
+        WriteNode(w, q.Inner);
+        w.WriteStartArray("words");
+        foreach (Query word in q.Words)
+        {
+            WriteNode(w, word);
+        }
+
+        w.WriteEndArray();
+        if (q.Weight != Proximity.DefaultWeight)
+        {
+            w.WriteNumber("weight", q.Weight);
+        }
+    }
+
     // The function-score node. Defaults are left out, so a document that spells them out reads back to the same query and writes the same text.
     private static void WriteFunctionScore(Utf8JsonWriter w, FunctionScoreQuery q)
     {
@@ -119,6 +138,35 @@ public static partial class QueryJson
 
 internal sealed partial class QueryJsonReader
 {
+    private Query ReadProximity(JsonElement e, string path, int depth)
+    {
+        CheckProperties(e, path, ["type", "query", "words", "weight", "boost"]);
+        Query inner = ReadNode(Require(e, path, "query"), Child(path, "query"), depth + 1);
+        string wp = Child(path, "words");
+        JsonElement arr = Require(e, path, "words");
+        if (arr.ValueKind != JsonValueKind.Array || arr.GetArrayLength() > 64)
+        {
+            throw Err(wp, "words is an array of at most 64 single-word queries (term, multiFieldTerm or typoTerm).");
+        }
+
+        var words = new List<Query>();
+        int i = 0;
+        foreach (JsonElement item in arr.EnumerateArray())
+        {
+            string ip = Index(wp, i++);
+            Query word = ReadNode(item, ip, depth + 1);
+            if (!WordResolver.IsWord(word))
+            {
+                throw Err(ip, "A proximity word is a term, multiFieldTerm or typoTerm query.");
+            }
+
+            words.Add(word);
+        }
+
+        float weight = e.TryGetProperty("weight", out JsonElement wt) ? (float)ReadNumber(wt, Child(path, "weight"), 0, 4) : Proximity.DefaultWeight;
+        return Boosted(new ProximityQuery(inner, words) { Weight = weight }, e, path);
+    }
+
     private static readonly string[] FunctionTypes = ["weight", "fieldValueFactor", "gauss", "exp", "linear"];
 
     private Query ReadFunctionScore(JsonElement e, string path, int depth)

@@ -7,6 +7,7 @@ HappyPathScenario.Run();
 DynamicAndEvolutionScenario.Run();
 SortingGeoScenario.Run();
 FunctionScoreScenario.Run();
+RankingScenario.Run();
 QueryFormsScenario.Run();
 QueryFormsLowLevelScenario.Run();
 ModelsScenario.Run();

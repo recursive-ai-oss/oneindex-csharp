@@ -60,10 +60,10 @@ public sealed class OneIndexEngine : ITextEngine
         }
         else if (settings.Profile == IndexProfile.Beir && settings.Analysis == AnalysisKind.English)
         {
-            FieldDefinition Text(string name) => new(name, FieldType.Text) { Analyzer = "en", IndexOptions = IndexOptions.Freqs, Stored = false };
+            FieldDefinition Text(string name) => new(name, FieldType.Text) { Analyzer = "en", IndexOptions = ProximityIndexOptions, Stored = false };
             // A match in the title says more than one in the body: its BM25F weight is 3 (chosen on the four BEIR gate sets, docs/scoring.md).
             float titleBoost = float.TryParse(Environment.GetEnvironmentVariable("ONEINDEX_TITLE_WEIGHT"), System.Globalization.CultureInfo.InvariantCulture, out float w) ? w : 3f;
-            schema = new SchemaBuilder().Id("id").Add(new FieldDefinition("title", FieldType.Text) { Analyzer = "en", IndexOptions = IndexOptions.Freqs, Stored = false, Boost = titleBoost }).Add(Text("text")).Add(Text("all")).Build();
+            schema = new SchemaBuilder().Id("id").Add(new FieldDefinition("title", FieldType.Text) { Analyzer = "en", IndexOptions = ProximityIndexOptions, Stored = false, Boost = titleBoost }).Add(Text("text")).Add(Text("all")).Build();
         }
         else
         {
@@ -161,7 +161,7 @@ public sealed class OneIndexEngine : ITextEngine
         Query q = query switch
         {
             MatchQuery m => Match(m),
-            TermsQuery t => TermsOf(t.Terms),
+            TermsQuery t => Proximate(TermsOf(t.Terms), t.Terms),
             FacetQuery f => TermsOf(f.Terms),
             StatsQuery st => TermsOf(st.Terms),
             PhraseQuery p => new global::OneIndex.Search.PhraseQuery("text", p.Terms),
@@ -293,14 +293,27 @@ public sealed class OneIndexEngine : ITextEngine
     private static BooleanQuery With(string[] required, Query last)
         => new([.. required.Select(t => new BooleanClause(new TermQuery("text", t), Occur.Must)), new BooleanClause(last, Occur.Must)]);
 
-    private static BooleanQuery TermsOf(string[] terms) => new([.. terms.Select(x => new BooleanClause(new TermQuery("text", x), Occur.Should))]);
+    // Information runs: ONEINDEX_PROXIMITY=<weight> adds the term-proximity bonus to the disjunction rows (Terms2, Terms5) so that its cost can be read.
+    private static Query Proximate(BooleanQuery disjunction, string[] terms)
+        => ProximityWeight > 0f && terms.Length >= 2 ? new ProximityQuery(disjunction, [.. terms.Select(t => new TermQuery("text", t))]) { Weight = ProximityWeight } : disjunction;
+
+    // Information runs: ONEINDEX_CONJUNCTION=1 requires every word in the Terms rows, which is what user text compiles to by default (the match sets then differ from the comparator's).
+    private static readonly Occur TermsOccur = Environment.GetEnvironmentVariable("ONEINDEX_CONJUNCTION") == "1" ? Occur.Must : Occur.Should;
+
+    private static BooleanQuery TermsOf(string[] terms) => new([.. terms.Select(x => new BooleanClause(new TermQuery("text", x), TermsOccur))]);
 
     private QueryEngineOptions Engine() => new() { Bm25 = new Bm25Parameters(_k1, _b), Overflow = ExpansionOverflow.KeepMostFrequent };
 
     // Information runs only: ONEINDEX_TYPO=on matches the Bm25F layout's words with the default typo budgets and the typo factor.
     private static readonly bool TypoTolerant = Environment.GetEnvironmentVariable("ONEINDEX_TYPO") == "on";
 
-    private static BooleanQuery Match(MatchQuery m)
+    // Information runs: ONEINDEX_PROXIMITY=<weight> keeps positions in the title and text fields and adds the term-proximity bonus of that weight to the Bm25F layout.
+    private static readonly float ProximityWeight = float.TryParse(Environment.GetEnvironmentVariable("ONEINDEX_PROXIMITY"), System.Globalization.CultureInfo.InvariantCulture, out float pw) ? pw : 0f;
+
+    // Positions whenever the variable is set (also at 0, the baseline of a sweep over one index).
+    private static IndexOptions ProximityIndexOptions => Environment.GetEnvironmentVariable("ONEINDEX_PROXIMITY") is not null ? IndexOptions.Positions : IndexOptions.Freqs;
+
+    private static global::OneIndex.Search.Query Match(MatchQuery m)
     {
         // The text is analyzed like the corpus and the terms are OR-ed, one clause per token as every engine in the harness does.
         Analyzer analyzer = AnalyzerRegistry.Create("en");
@@ -319,7 +332,14 @@ public sealed class OneIndexEngine : ITextEngine
             FieldLayout.MultiFieldSum => terms.SelectMany(t => new Query[] { new TermQuery("title", t), new TermQuery("text", t) }),
             _ => throw new NotSupportedException($"{m.Layout} needs a dis-max query, which OneIndex does not have; its default is {FieldLayout.Bm25F}."),
         };
-        return new BooleanQuery([.. perTerm.Select(q => new BooleanClause(q, Occur.Should))]);
+        Query[] queries = [.. perTerm];
+        var disjunction = new BooleanQuery([.. queries.Select(q => new BooleanClause(q, Occur.Should))]);
+        if (ProximityWeight > 0f && m.Layout == FieldLayout.Bm25F && queries.Length >= 2)
+        {
+            return new ProximityQuery(disjunction, queries) { Weight = ProximityWeight };
+        }
+
+        return disjunction;
     }
 }
 

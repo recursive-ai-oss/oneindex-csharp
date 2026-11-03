@@ -260,7 +260,9 @@ int HybridGate()
     }
 
     Directory.CreateDirectory(indexDir);
-    FieldDefinition Text(string name, float boost = 1f) => new(name, FieldType.Text) { Analyzer = "en", IndexOptions = IndexOptions.Freqs, Stored = false, Boost = boost };
+    // ONEINDEX_PROXIMITY=<weight> adds the term-proximity bonus to the text arm (positions are then indexed).
+    float proximity = float.TryParse(Environment.GetEnvironmentVariable("ONEINDEX_PROXIMITY"), CultureInfo.InvariantCulture, out float pw) ? pw : 0f;
+    FieldDefinition Text(string name, float boost = 1f) => new(name, FieldType.Text) { Analyzer = "en", IndexOptions = proximity > 0f ? IndexOptions.Positions : IndexOptions.Freqs, Stored = false, Boost = boost };
     Schema schema = new SchemaBuilder().Id("id").Add(Text("title", 3f)).Add(Text("text"))
         .Add(new FieldDefinition("vec", FieldType.Vector) { Dimensions = d, Metric = VectorMetric.Cosine, Stored = false }).Build();
     var storage = new FileSystemStorage(indexDir);
@@ -388,7 +390,8 @@ int HybridGate()
                 terms.Add(tokens.Token.Term.ToString());
             }
 
-            var bm25 = new BooleanQuery([.. terms.Select(t => new BooleanClause(new MultiFieldTermQuery(["title", "text"], t), Occur.Should))]);
+            var disjunction = new BooleanQuery([.. terms.Select(t => new BooleanClause(new MultiFieldTermQuery(["title", "text"], t), Occur.Should))]);
+            Query bm25 = proximity > 0f && terms.Count >= 2 ? new ProximityQuery(disjunction, [.. terms.Select(t => (Query)new MultiFieldTermQuery(["title", "text"], t))]) { Weight = proximity } : disjunction;
             var knn = new KnnQuery("vec", queryVectors.AsSpan(q * d, d).ToArray(), Window) { Exact = true };
             TopDocs top = searcher.Search(make(bm25, knn), 11);
             var list = new List<(string, double)>(10);

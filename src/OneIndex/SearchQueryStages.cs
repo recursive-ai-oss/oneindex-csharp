@@ -83,30 +83,38 @@ public sealed partial class SearchQuery<T>
 
     private SearchQuery<T> With(QueryStages stages) => new(_index, _text, _query, _filters, _take, _skip, _exact, _highlight, stages, _extras);
 
-    private SearchResults<T> ExecuteStages(Search.Query query, Search.Query textQuery, SearchIndex<T>.Generation? generation, CancellationToken cancellationToken)
+    private SearchResults<T> ExecuteStages(Search.Query query, Search.Query textQuery, SearchIndex<T>.Generation? generation, CancellationToken cancellationToken, IReadOnlyList<RankingRule>? rules = null, IReadOnlyList<Search.Query>? groups = null)
     {
-        QueryStages stages = _stages!;
+        QueryStages stages = _stages ?? QueryStages.None;
         Schema schema = _index.Mapping.Schema;
+        // With ranking rules the ordering is the rules' buckets, then the user's ordering at the sort rule, then relevance: one sort over all keys.
+        SortCriterion[]? keys = stages.Sort?.Keys;
+        RankingEvaluator? evaluator = null;
+        if (rules is not null)
+        {
+            keys = generation is null ? [new ScoreSort()] : RuleKeys(rules, generation.Searcher, groups ?? [], stages.Sort?.Keys ?? [], out evaluator);
+        }
+
         var collectors = new List<Collector>();
         TopScoreCollector? top = null;
         TopFieldCollector? sorted = null;
         CountCollector? counter = null;
         DistinctCollector? distinct = null;
-        if (stages.Sort is { } plan)
+        if (keys is not null)
         {
             if (stages.Distinct is not null)
             {
-                throw new NotSupportedException("Distinct cannot be combined with OrderBy: distinct ranks its groups by relevance.");
+                throw new NotSupportedException("Distinct cannot be combined with OrderBy or ranking rules: distinct ranks its groups by relevance.");
             }
 
-            if (plan.After is not null && _skip > 0)
+            if (stages.Sort?.After is not null && _skip > 0)
             {
                 throw new InvalidOperationException("Skip cannot be combined with SearchAfter: the cursor already says where the page starts.");
             }
 
             if (_take > 0)
             {
-                sorted = new TopFieldCollector(plan.Keys, _skip + _take, plan.After, schema.IdField);
+                sorted = new TopFieldCollector(keys, _skip + _take, stages.Sort?.After, schema.IdField);
                 collectors.Add(sorted);
             }
             else
@@ -197,10 +205,15 @@ public sealed partial class SearchQuery<T>
                 if (sortedDocs is not null)
                 {
                     FieldDoc fd = sortedDocs[i];
-                    hit.Cursor = SortCursor.After(stages.Sort!.Keys, fd);
-                    for (int key = 0; key < stages.Sort.Keys.Length; key++)
+                    hit.Cursor = SortCursor.After(keys!, fd);
+                    if (rules is not null && hit.Explanation is not null)
                     {
-                        if (stages.Sort.Keys[key] is GeoDistanceSort && !fd.Values[key].IsMissing)
+                        hit.Explanation = RuleExplanation(keys!, fd, evaluator!.GroupCount, hit.Explanation);
+                    }
+
+                    for (int key = 0; key < keys!.Length; key++)
+                    {
+                        if (keys[key] is GeoDistanceSort && !fd.Values[key].IsMissing)
                         {
                             hit.GeoDistance = fd.Values[key].AsDouble();
                             break;

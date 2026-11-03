@@ -221,6 +221,8 @@ public sealed class IndexSearcher(SearchContext context, IWeightFactory factory)
 
     private IWeightFactory Factory { get; } = factory ?? throw new ArgumentNullException(nameof(factory));
 
+    internal Weight CreateWeight(Query query, ScoreMode scoreMode) => Factory.CreateWeight(query, Context, scoreMode);
+
     /// <summary>Searches and feeds <paramref name="collector"/>.</summary>
     /// <param name="query">The query.</param>
     /// <param name="collector">Receives the matches.</param>

@@ -164,3 +164,10 @@ At matched layout and parameters OneIndex's BM25 scores equal Lucene.NET's withi
 `ONEINDEX_TYPO=on` makes the OneIndex adapter match the Bm25F layout with `TypoTermQuery` (default typo budgets on the analyzed word, the
 typo and exactness factors, no prefix matching). It is information only; the gated runs leave it off, where queries are exactly the plain
 BM25F term queries.
+
+
+## Term proximity bonus (default weight 0.1)
+
+The bonus of docs/scoring.md ("Term proximity") on the gate sets, by weight. The table and its reading are in that section; the default keeps
+every set at or above the no-bonus numbers of the table above (within noise on ArguAna at 1.2/0.75) and adds 0.1 to 0.3 points at the default
+BM25 setting.

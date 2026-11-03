@@ -291,7 +291,7 @@ public sealed class TopFieldCollector : Collector
             _readers = new KeyReader?[k];
             for (int j = 0; j < k; j++)
             {
-                _readers[j] = KeyReader.Create(owner._keys[j], leaf.Reader);
+                _readers[j] = KeyReader.Create(owner._keys[j], leaf);
                 IsText[j] = _readers[j] is KeywordReader;
             }
 
@@ -366,12 +366,15 @@ public sealed class TopFieldCollector : Collector
     // allocates per document and the value stays valid while the collector compares it.
     private abstract class KeyReader
     {
-        public static KeyReader? Create(SortCriterion key, ISegmentReader segment)
+        public static KeyReader? Create(SortCriterion key, LeafContext leaf)
         {
+            ISegmentReader segment = leaf.Reader;
             switch (key)
             {
                 case ScoreSort:
                     return null;
+                case RuleSort r:
+                    return new RuleReader(r.Evaluator.ForLeaf(leaf), r.Kind);
                 case FieldSort f:
                     IColumnReader? column = segment.GetColumn(f.Field);
                     return column is null ? null : column.Type switch
@@ -390,6 +393,16 @@ public sealed class TopFieldCollector : Collector
         }
 
         public abstract bool Read(int doc, bool ascending, out long number);
+    }
+
+    // A text rule's bucket for the document: always present, smaller is better.
+    private sealed class RuleReader(RankingEvaluator.LeafRules rules, RankingRuleKind kind) : KeyReader
+    {
+        public override bool Read(int doc, bool ascending, out long number)
+        {
+            number = rules.Value(kind, doc);
+            return true;
+        }
     }
 
     private sealed class IntegerReader(IColumnReader column) : KeyReader

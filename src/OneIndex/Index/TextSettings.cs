@@ -74,10 +74,66 @@ public sealed class TextSettings
     /// <summary>Words dropped from user text before matching. Default none.</summary>
     public IReadOnlyList<string> StopWords { get; init; } = [];
 
-    /// <summary>Whether every setting has its default value.</summary>
-    public bool IsDefault => Typo.IsDefault && PrefixSearch && Synonyms.Count == 0 && StopWords.Count == 0;
+    /// <summary>
+    /// The weight of the term-proximity bonus that user text with two or more words adds to its BM25F score (docs/scoring.md), 0 to 4.
+    /// Default 0.5; 0 turns the bonus off.
+    /// </summary>
+    public float ProximityWeight { get; init; } = Search.Proximity.DefaultWeight;
 
-    internal void Validate() => Typo.Validate();
+    /// <summary>
+    /// Ranking rules for user-text searches, in order, as <see cref="Search.RankingRule"/> writes them (<c>words</c>, <c>typo</c>,
+    /// <c>proximity</c>, <c>attribute</c>, <c>sort</c>, <c>exactness</c>, <c>field:asc</c>, <c>field:desc</c>). Default <see langword="null"/>:
+    /// no rules, results are ordered by BM25F score. An empty list also means no rules.
+    /// </summary>
+    public IReadOnlyList<string>? RankingRules { get; init; }
+
+    /// <summary>Whether every setting has its default value.</summary>
+    public bool IsDefault => IsTextDefault && !HasRankingSettings;
+
+    internal bool IsTextDefault => Typo.IsDefault && PrefixSearch && Synonyms.Count == 0 && StopWords.Count == 0;
+
+    internal bool HasRankingSettings => ProximityWeight != Search.Proximity.DefaultWeight || RankingRules is { Count: > 0 };
+
+    internal void WriteRanking(ByteSink sink)
+    {
+        sink.WriteUInt32(BitConverter.SingleToUInt32Bits(ProximityWeight));
+        WriteList(sink, RankingRules ?? []);
+    }
+
+    internal static (float ProximityWeight, IReadOnlyList<string>? Rules) ReadRanking(ref ByteSource src, IndexLimits limits)
+    {
+        float weight = BitConverter.UInt32BitsToSingle(src.ReadUInt32());
+        if (!(weight >= 0f && weight <= 4f))
+        {
+            throw new MalformedInputException("the proximity weight is out of range");
+        }
+
+        List<string> rules = ReadList(ref src, limits);
+        try
+        {
+            _ = Search.RankingRule.ParseList(rules);
+        }
+        catch (ArgumentException e)
+        {
+            throw new MalformedInputException(e.Message);
+        }
+
+        return (weight, rules.Count == 0 ? null : rules);
+    }
+
+    internal void Validate()
+    {
+        Typo.Validate();
+        if (!(ProximityWeight >= 0f && ProximityWeight <= 4f))
+        {
+            throw new ArgumentException($"The proximity weight is 0 to 4, got {ProximityWeight}.");
+        }
+
+        if (RankingRules is { } rules)
+        {
+            _ = Search.RankingRule.ParseList(rules);
+        }
+    }
 
     internal void Write(ByteSink sink)
     {

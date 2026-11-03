@@ -202,6 +202,8 @@ public sealed class MappingGenerator : IIncrementalGenerator
         string? prefix = null;
         var synonyms = new List<string>();
         var stop = new List<string>();
+        string? rules = null;
+        string? proximity = null;
         foreach (AttributeData a in type.GetAttributes())
         {
             if (!IsOurs(a))
@@ -236,10 +238,20 @@ public sealed class MappingGenerator : IIncrementalGenerator
                 case "StopWordsAttribute":
                     stop.AddRange(ParamsItems(a, 0));
                     break;
+                case "RankingRulesAttribute":
+                    rules = ParamsArray(a, 0);
+                    break;
+                case "ProximityAttribute":
+                    if (a.ConstructorArguments.Length == 1 && a.ConstructorArguments[0].Value is float weight)
+                    {
+                        proximity = weight.ToString("R", CultureInfo.InvariantCulture) + "f";
+                    }
+
+                    break;
             }
         }
 
-        if (typo is null && prefix is null && synonyms.Count == 0 && stop.Count == 0)
+        if (typo is null && prefix is null && synonyms.Count == 0 && stop.Count == 0 && rules is null && proximity is null)
         {
             return null;
         }
@@ -258,6 +270,16 @@ public sealed class MappingGenerator : IIncrementalGenerator
         if (synonyms.Count > 0)
         {
             init.Add("Synonyms = new global::System.Collections.Generic.List<global::OneIndex.Index.SynonymRule> { " + string.Join(", ", synonyms) + " }");
+        }
+
+        if (rules is not null)
+        {
+            init.Add("RankingRules = " + rules);
+        }
+
+        if (proximity is not null)
+        {
+            init.Add("ProximityWeight = " + proximity);
         }
 
         if (stop.Count > 0)

@@ -172,6 +172,7 @@ public sealed class Schema : IEquatable<Schema>
     private const int SectionDynamicFields = 1;
     private const int SectionVectorSettings = 3;
     private const int SectionQuantization = 4;
+    private const int SectionRanking = 5;
 
     private const int TextSettingsSection = 2;
     private static readonly byte[] MagicBytes = "OIXS"u8.ToArray();
@@ -454,7 +455,8 @@ public sealed class Schema : IEquatable<Schema>
     // keep their bytes.
     private static byte[] Write(Schema schema, bool withSettings)
     {
-        bool settings = withSettings && !schema.Settings.IsDefault;
+        bool settings = withSettings && !schema.Settings.IsTextDefault;
+        bool ranking = withSettings && schema.Settings.HasRankingSettings;
         var sink = new ByteSink();
         foreach (byte b in MagicBytes)
         {
@@ -464,7 +466,7 @@ public sealed class Schema : IEquatable<Schema>
         bool hasDerived = schema.Fields.Any(static f => f.DynamicParent is not null);
         bool hasVectorSettings = schema.Fields.Any(static f => f.HasCustomVectorSettings);
         bool hasQuantization = schema.Fields.Any(static f => f.HasCustomQuantization);
-        sink.WriteUInt32(hasDerived || settings || hasVectorSettings || hasQuantization ? 2u : 1u);
+        sink.WriteUInt32(hasDerived || settings || hasVectorSettings || hasQuantization || ranking ? 2u : 1u);
         sink.WriteVarUInt((ulong)schema.Fields.Count);
         foreach (FieldDefinition f in schema.Fields)
         {
@@ -478,11 +480,11 @@ public sealed class Schema : IEquatable<Schema>
         }
 
         sink.WriteString(schema.IdField ?? string.Empty);
-        if (hasDerived || settings || hasVectorSettings || hasQuantization)
+        if (hasDerived || settings || hasVectorSettings || hasQuantization || ranking)
         {
             // Version 2 appends sections: a count, then for each an id (ascending) and its bytes. Section 1 lists the derived
             // (dynamic) fields, section 2 holds the text settings, section 3 the vector field settings, section 4 the compressed copies.
-            sink.WriteVarUInt((ulong)((hasDerived ? 1 : 0) + (settings ? 1 : 0) + (hasVectorSettings ? 1 : 0) + (hasQuantization ? 1 : 0)));
+            sink.WriteVarUInt((ulong)((hasDerived ? 1 : 0) + (settings ? 1 : 0) + (hasVectorSettings ? 1 : 0) + (hasQuantization ? 1 : 0) + (ranking ? 1 : 0)));
             if (hasDerived)
             {
                 var section = new ByteSink();
@@ -570,6 +572,16 @@ public sealed class Schema : IEquatable<Schema>
                 sink.WriteVarUInt(SectionQuantization);
                 sink.WriteBytes(section.ToArray());
             }
+
+            if (ranking)
+            {
+                // Section 5: the proximity weight (bits of a float) and the ranking rules. A reader that does not know the section
+                // skips it and ranks by BM25F with the default proximity weight.
+                var section = new ByteSink();
+                schema.Settings.WriteRanking(section);
+                sink.WriteVarUInt(SectionRanking);
+                sink.WriteBytes(section.WrittenSpan);
+            }
         }
 
         return sink.ToArray();
@@ -617,6 +629,7 @@ public sealed class Schema : IEquatable<Schema>
         bool skippedSection = false;
         bool knownSection = false;
         TextSettings settingsRead = TextSettings.Default;
+        (float ProximityWeight, IReadOnlyList<string>? Rules)? rankingRead = null;
         var settings = new VectorSettings[count];
         Array.Fill(settings, VectorSettings.Default);
         var quantization = new (VectorQuantization Codec, float Oversample)[count];
@@ -726,6 +739,16 @@ public sealed class Schema : IEquatable<Schema>
 
                     knownSection = true;
                 }
+                else if (sectionId == SectionRanking)
+                {
+                    var inner = new ByteSource(payload);
+                    rankingRead = TextSettings.ReadRanking(ref inner, limits);
+                    knownSection = true;
+                    if (inner.Remaining != 0)
+                    {
+                        throw new MalformedInputException("unexpected bytes after the ranking settings");
+                    }
+                }
                 else if (sectionId == TextSettingsSection)
                 {
                     var inner = new ByteSource(payload);
@@ -782,7 +805,9 @@ public sealed class Schema : IEquatable<Schema>
         }
 
         builder.IdFieldName = id.Length == 0 ? null : id;
-        builder.Settings = settingsRead;
+        builder.Settings = rankingRead is { } ranked
+            ? new TextSettings { Typo = settingsRead.Typo, PrefixSearch = settingsRead.PrefixSearch, Synonyms = settingsRead.Synonyms, StopWords = settingsRead.StopWords, ProximityWeight = ranked.ProximityWeight, RankingRules = ranked.Rules }
+            : settingsRead;
         return builder.Build();
     }
 }

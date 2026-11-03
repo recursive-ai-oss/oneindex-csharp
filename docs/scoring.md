@@ -65,7 +65,76 @@ A document's score is the sum over the expansions it contains, as for any disjun
     query word 'planet' matched 'plnaet' (whole word with typos, 1 typos): typo factor 0.5 = 1 / (1 + typos), exactness factor 1, boost 0.5
 
 with the term's own explanation below it. With typos and prefix matching off the query is a plain term query: no factor, same scores
-as before. Proximity and the other Meilisearch-style rules are not part of this; they belong to the optional ranking rules.
+as before. The other Meilisearch-style rules are optional ranking rules ([ranking-rules.md](ranking-rules.md)).
+
+## Term proximity
+
+User text with two or more words (not quoted phrases) adds a proximity bonus to the BM25F score: documents whose query words occur close
+together, in any order, score higher. It uses the positions already in the postings; no index format changes.
+
+Büttcher, Clarke and Lushman, "Term proximity scoring for ad-hoc retrieval on very large text collections", SIGIR 2006, define it. In a field of
+the document, take the occurrences of the query words in position order. Every two neighbours in that order that are occurrences of
+*different* words (no other query word occurrence between them) at distance *d* add `idf(other) / d²` to the accumulator of each word:
+
+    acc_t   = sum over adjacent pairs (t, u) at distance d of  idf(u) / d^2        (d >= 1; two words at one position count as 1)
+    K       = k1 * (1 - b + b * len_f / avglen_f)                                   the BM25 length normalisation of field f
+    bonus_f = sum over query words t of  min(1, idf(t)) * acc_t * (k1 + 1) / (acc_t + K)
+    score   = bm25f(d) + weight * max over fields f of bonus_f
+
+- `idf(t)` is the word's own idf, as in the BM25F term; `k1` and `b` are the BM25F parameters; `len_f` and `avglen_f` are the field's length in
+  the document and its average. A word with typo or prefix expansions uses the positions of all its matched terms (up to the 32 best terms per
+  word) and the idf of the closest one.
+- **Deviations from the paper**, each deliberate: the bonus of a document is its best field, because a query word pair split across title and
+  body is not close, and positions are compared inside a field only. The paper has one text field; `weight` is ours (the paper's weight is 1).
+- **The bound.** `acc * (k1 + 1) / (acc + K) < k1 + 1`, so the bonus is below `weight * (k1 + 1) * sum of min(1, idf)` (at most 32 words). A
+  scorer reports its inner bound plus that, and the inner scorer is told the threshold minus that, so block-max WAND skips only what cannot
+  reach the top k; the returned top k and scores equal exhaustive scoring (a test checks 120 random queries, pruned against exhaustive, bit for bit).
+- A document in which fewer than two query words occur gets no bonus and its positions are not read.
+- At most 32 words are compared (the rarest), and a repeated word counts once.
+- `weight` is `TextSettings.ProximityWeight` / `[Proximity(w)]`, default 0.1, 0 to 4; 0 removes the bonus. In query objects it is
+  `ProximityQuery`; query JSON `{"type":"proximity",...}` (a user-text query compiles to it, so it appears in written query JSON).
+- Not applied: with ranking rules (they have a `proximity` rule), to one-word queries, to phrases, to typed query objects unless wrapped.
+
+The default weight was chosen on the four BEIR gate sets; see below.
+
+Cost (302,567 Wikipedia abstracts, one thread, median ms per query over 200 seeded queries, indicative runs on a loaded 32-core x64 machine; Lucene.NET's disjunctive rows on the same run: Terms2 0.373, Terms5 0.648):
+
+| Query shape | No bonus | Bonus, weight 0.1 | Notes |
+|---|---|---|---|
+| User text, every word required (what the default compiles), 2 words | 0.16 to 0.18 | 0.28 | +0.10 ms; 1.6x its own base, 0.75x Lucene.NET's Terms2 |
+| Same, 5 words | 0.100 | 0.17 | 1.7x its own base, 0.27x Lucene.NET's Terms5 |
+| Typed disjunction wrapped by hand, 2 words | 0.25 | 0.44 to 0.59 | 1.8x to 2.4x; against Lucene.NET 1.2x to 1.6x |
+| Typed disjunction wrapped by hand, 5 words | 0.80 | 1.36 to 1.74 | 1.7x to 2.2x; against Lucene.NET 2.1x to 2.7x |
+
+The default never builds a disjunction: user text requires every word, so the bonus is paid only on documents that contain all the words. A
+hand-wrapped disjunction pays for the positions of every document that matches two of the words and loses most pruning headroom, so wrapping
+disjunctions is for callers who want it. Typed queries that are not wrapped (and so the benchmark rows Terms1, Terms2, Terms5 and Phrase) are not
+changed by the bonus.
+
+Measured effect of the weight (BEIR gate sets):
+
+| Proximity weight | SciFact | ArguAna | SCIDOCS | NQ |
+|---|---|---|---|---|
+| 0 (no bonus) | 0.6912 \| 0.6998 | 0.4333 \| 0.5072 | 0.1531 \| 0.1601 | 0.3420 \| 0.3377 |
+| **0.1 (default)** | 0.6918 \| 0.7033 | 0.4347 \| 0.5067 | 0.1544 \| 0.1615 | 0.3452 \| 0.3412 |
+| 0.25 | 0.6920 \| 0.7032 | 0.4347 \| 0.5045 | 0.1555 \| 0.1623 | 0.3476 \| 0.3428 |
+| 0.5 | 0.6903 \| 0.6960 | 0.4343 \| 0.5007 | 0.1556 \| 0.1608 | 0.3451 \| 0.3384 |
+| 1 | 0.6726 \| 0.6831 | 0.4359 \| 0.4940 | 0.1548 \| 0.1593 | not run |
+| 2 | 0.6594 \| 0.6540 | 0.4327 \| 0.4810 | 0.1493 \| 0.1501 | not run |
+| Lucene.NET, summed fields (flat for SCIDOCS 0.1509 at 0.9/0.4) | 0.6647 \| 0.6628 | 0.4240 \| 0.4880 | 0.1587 \| 0.1619 | 0.3252 \| 0.3051 |
+
+Each cell is nDCG@10 under the BEIR convention at k1/b = 0.9/0.4 \| 1.2/0.75, BM25F with title weight 3 over the BEIR queries as OR-ed words, the bonus
+wrapped around them. Weight 0 is the earlier no-bonus score and reproduces the numbers above. Runs of the sweep on the other CPU architecture
+(x64 and arm64) gave identical values.
+
+- **Default 0.1.** It is at or above the no-bonus score on all four sets at both settings except ArguAna at 1.2/0.75 (0.5067 against 0.5072, within
+  noise). Gains at the default setting: SciFact +0.06 points, ArguAna +0.14, SCIDOCS +0.13, NQ +0.32. A weight of 0.25 gains more on NQ (+0.56) and
+  SCIDOCS (+0.24) but gives up 0.27 points on ArguAna at 1.2/0.75; from 0.5 up the bonus costs SciFact and ArguAna, and at 1 and 2 it costs clearly.
+  The sets with long queries (ArguAna) and many near-duplicate documents lose first because an additive bonus reorders near ties.
+- The first formulation of the bonus (unbounded idf-weighted, no length normalisation, weight 0.5) lost 0.6 points on SciFact and 2.0 on ArguAna at
+  1.2/0.75; the paper's form (word weight capped at 1, BM25 length normalisation) with a small weight does not.
+- **Hybrid.** With the bonus in the text arm at the default weight, hybrid (RRF, k 10, ratio 0.75) gives SciFact 0.7258, ArguAna 0.6105,
+  SCIDOCS 0.2061, mean 0.5141 (without it 0.7257, 0.6100, 0.2064, mean 0.5140): still above both arms on every set.
 
 ## Relevance results
 

@@ -185,6 +185,12 @@ public sealed class HighlightTerms
             query.Inner.Accept(this);
             return 0;
         }
+
+        public override int VisitProximity(ProximityQuery query)
+        {
+            query.Inner.Accept(this);
+            return 0;
+        }
     }
 }
 

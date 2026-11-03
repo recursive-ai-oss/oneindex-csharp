@@ -495,7 +495,16 @@ public static class SearchTool
         w.WriteNumber("maxItems", 16);
         w.WriteString("description", "Orders the hits instead of by relevance. Each key is a field name with :asc or :desc (and :first to put documents without a value first), applied in turn; ties go to the next key. Fields: " + string.Join(", ", sortable) + ". _score:desc sorts by relevance." + (geo.Count > 0 ? " _geoPoint(lat, lng):asc sorts by distance from a point." : string.Empty));
         w.WriteEndObject();
-        Str(w, "searchAfter", "The cursor of the last hit of the previous page of a sorted search; returns the hits after it. Needs sort; do not combine with offset.");
+        Str(w, "searchAfter", "The cursor of the last hit of the previous page of a sorted search; returns the hits after it. Needs sort or rankingRules; do not combine with offset.");
+        w.WriteStartObject("rankingRules");
+        w.WriteString("type", "array");
+        w.WriteStartObject("items");
+        w.WriteString("type", "string");
+        w.WriteNumber("maxLength", QueryJson.MaxStringLength);
+        w.WriteEndObject();
+        w.WriteNumber("maxItems", RankingRule.MaxRules);
+        w.WriteString("description", "Ranks hits by bucket sort over these rules in order instead of by score: words (more query words matched), typo (fewer typos), proximity (matched words closer), attribute (matched in earlier fields), sort (the sort keys go here), exactness (whole words), or field:asc / field:desc for one of: " + string.Join(", ", sortable) + ". Meilisearch's default order is words, typo, proximity, attribute, sort, exactness. Omit to use the index's setting; [] ranks by score.");
+        w.WriteEndObject();
         w.WriteStartObject("highlight");
         w.WriteString("description", "Snippet settings: true for the defaults, or an object.");
         w.WriteStartArray("oneOf");

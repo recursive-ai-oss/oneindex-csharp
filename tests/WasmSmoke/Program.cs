@@ -5,6 +5,7 @@ using OneIndex.Storage;
 SmokeScenario.Run(new MemoryStorage());
 AnalysisScenario.Run();
 QueryFormsLowLevelScenario.Run();
+RankingScenario.Run();
 VectorScenario.RunLowLevel();
 SmokeScenario.RunWriter(new MemoryStorage(), threadedMerges: false);
 

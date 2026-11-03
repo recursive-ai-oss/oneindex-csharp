@@ -403,6 +403,48 @@ public sealed class QueryEngine : IWeightFactory
             return GeoWeightFactory.BoundingBox(context.Schema, query);
         }
 
+        public override Weight VisitProximity(ProximityQuery query)
+        {
+            CheckBoost(query);
+            if (!(query.Weight >= 0f && query.Weight <= 4f))
+            {
+                throw new QueryException($"The weight of a proximity query is 0 to 4, got {query.Weight}.");
+            }
+
+            if (++_depth > options.MaxDepth)
+            {
+                throw new QueryException($"Queries are nested deeper than {options.MaxDepth} levels.");
+            }
+
+            try
+            {
+                Weight inner = query.Inner.Accept(this);
+                var fields = new WordFields(context.Schema);
+                var words = new List<QueryWord>(query.Words.Count);
+                foreach (Query w in query.Words)
+                {
+                    ArgumentNullException.ThrowIfNull(w);
+                    if (!WordResolver.IsWord(w))
+                    {
+                        throw new QueryException($"A proximity query compares single words (term, multi-field term or typo-tolerant term), got {w.GetType().Name}.");
+                    }
+
+                    // A repeated word is one word; of a long query only the rarest words are compared (the rest add little and cost a pass each).
+                    if (WordResolver.Resolve(context, fields, w) is { Terms.Count: > 0 } word && !words.Exists(x => string.Equals(x.Text, word.Text, StringComparison.Ordinal)))
+                    {
+                        words.Add(word);
+                    }
+                }
+
+                QueryWord[] chosen = words.Count <= ProximityWeight.MaxWords ? [.. words] : [.. words.OrderByDescending(static x => x.Idf).Take(ProximityWeight.MaxWords)];
+                return new ProximityWeight(inner, context, fields, chosen, options.Bm25.K1, options.Bm25.B, query.Weight, query.Boost);
+            }
+            finally
+            {
+                _depth--;
+            }
+        }
+
         public override Weight VisitFunctionScore(FunctionScoreQuery query)
         {
             CheckBoost(query);
