@@ -41,6 +41,11 @@
     <None Include="$(OneIndexSparseWeights)/LICENSE-neural-sparse.txt" Pack="true" PackagePath="models/neural-sparse/" Visible="false" />
   </ItemGroup>
 
+  <Target Name="RequireModelWeights" BeforeTargets="CoreCompile" Condition="'$(OneIndexRequireWeights)' == 'true'">
+    <!-- The release build sets OneIndexRequireWeights so that a package can never be published without its weights. -->
+    <Error Condition="!Exists('$(OneIndexModelWeights)/model.onemodel') Or !Exists('$(OneIndexRerankerWeights)/model.onemodel') Or !Exists('$(OneIndexSparseWeights)/model.onemodel')" Text="OneIndexRequireWeights is set but model weights are missing (looked in $(OneIndexModelWeights), $(OneIndexRerankerWeights), $(OneIndexSparseWeights)). Run tools/models/fetch-release-weights.sh." />
+  </Target>
+
   <ItemGroup>
     <!-- The character table of the nmt_nfkc normalizer, observed from the released SentencePiece normalizer. -->
     <EmbeddedResource Include="Tokenization/nmt_nfkc.tsv" LogicalName="OneIndex.Models.Tokenization.nmt_nfkc.tsv" />
