@@ -58,7 +58,7 @@ A field is named like its property. `[FullText]` strings are text fields with po
 
 The index is thread-safe. A search in flight keeps the commit it started on, even if a newer commit is published meanwhile.
 
-**Stored source is not built yet.** Hits return the document from a copy the index keeps in memory, so a hit's `Document` is available for documents added in the current session; searching a directory index reopened later works, but reading its hits throws `InvalidOperationException` until stored source lands.
+**Stored source** is on by default (see [stored-source.md](stored-source.md)): a hit's `Document` is rebuilt from the compressed source in the segment, so a directory index reopened later returns its documents.
 
 ## Highlights
 

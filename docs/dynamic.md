@@ -12,6 +12,16 @@ public class Ticket
 index.Search().Where(t => t.Fields.Path("customer.age") >= 18 && t.Fields.Path("tags") == "red");
 ```
 
+A `[Dynamic]` property may also be a class of plain properties instead of a `JsonElement`; the generated mapping writes it to JSON and reads it back, as ordinary C# (no reflection, AOT-safe):
+
+```csharp
+public class Customer { public string Name { get; set; } = ""; public Address? Home { get; set; } public List<Address> Branches { get; set; } = []; }
+public class Ticket { [SearchId] public string Id { get; set; } = ""; [Dynamic] public Customer Customer { get; set; } = new(); }
+index.Search().Where("Customer.Home.City = Paris");
+```
+
+The JSON keys are the property names. Supported property types: strings, booleans, integers, floating point (a non-finite value is written as null), `decimal`, `DateTime`, `DateTimeOffset`, `Guid`, nullable versions of those value types, nested classes of plain properties (a type may refer to itself), and arrays or `List<T>`/`IEnumerable<T>`/`IReadOnlyList<T>`/`IList<T>` of those (not of arrays or of nullable values). Only public properties with a public getter and a plain setter take part; the class needs a parameterless constructor. Anything else is a build error (OI0001) naming the property. This is also how an EF Core owned type or JSON column reaches the index.
+
 At the low level the field is `FieldType.Json` (`SchemaBuilder.Json(name)`), the value `FieldValue.FromJson`. A JSON field is indexed by default; with `Indexed = false` it is only stored (and can be switched on later, which rebuilds the index from stored source: schema-evolution.md).
 
 ## Paths
