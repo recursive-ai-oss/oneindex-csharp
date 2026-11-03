@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../OneIndex/OneIndex.csproj" />
+    <ProjectReference Include="../OneIndex.Files/OneIndex.Files.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -12,6 +12,8 @@
     <InternalsVisibleTo Include="OneIndex.Bench" />
     <!-- The embedders reuse the Unicode decomposition of the analysis layer for accent stripping. -->
     <InternalsVisibleTo Include="OneIndex.Models" />
+    <!-- The folder chunker splits oversized blocks at the sentence boundaries of the analysis layer. -->
+    <InternalsVisibleTo Include="OneIndex.Files" />
     <InternalsVisibleTo Include="OneIndex.VectorBench" />
     <InternalsVisibleTo Include="OneIndex.VectorBench.Curiosity" />
   </ItemGroup>

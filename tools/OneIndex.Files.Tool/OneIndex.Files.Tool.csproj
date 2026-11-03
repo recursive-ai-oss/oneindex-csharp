@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Corpus generator, kill campaign, citation checker and throughput runner for folder indexing. A plain console program, so the
+       campaign can start its own indexing child from the same binary. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>OneIndex.Files.Tool</RootNamespace>
+    <AssemblyName>oneindex-files-tool</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/OneIndex.Files/OneIndex.Files.csproj" />
+    <ProjectReference Include="../../src/OneIndex.Files.Ocr/OneIndex.Files.Ocr.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Writes the PDF fixtures. -->
+    <PackageReference Include="RecursiveAI.OnePdf" />
+    <PackageReference Include="RecursiveAI.OneArchive" />
+    <PackageReference Include="RecursiveAI.OneImage.Text" />
+  </ItemGroup>
+
+</Project>

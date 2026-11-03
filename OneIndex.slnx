@@ -12,6 +12,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/OneIndex.Tests/OneIndex.Tests.csproj" />
+    <Project Path="tests/OneIndex.Files.Tests/OneIndex.Files.Tests.csproj" />
     <Project Path="tests/Durability/Durability.csproj" />
     <Project Path="tests/Relevance/Relevance.csproj" />
     <Project Path="tests/Differential/Differential.csproj" />
@@ -22,6 +23,7 @@
     <Project Path="tools/OneIndex.Harness/OneIndex.Harness.csproj" />
     <Project Path="tools/OneIndex.Harness.Cli/OneIndex.Harness.Cli.csproj" />
     <Project Path="tools/OneIndex.Models.Tool/OneIndex.Models.Tool.csproj" />
+    <Project Path="tools/OneIndex.Files.Tool/OneIndex.Files.Tool.csproj" />
     <Project Path="tools/UcdTables/UcdTables.csproj" />
     <Project Path="tools/SnowballGen/SnowballGen.csproj" />
   </Folder>
