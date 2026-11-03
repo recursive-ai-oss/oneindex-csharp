@@ -5,6 +5,7 @@ SmokeScenario.Run(new MemoryStorage());
 AnalysisScenario.Run();
 HappyPathScenario.Run();
 DynamicAndEvolutionScenario.Run();
+DynamicObjectScenario.Run();
 SortingGeoScenario.Run();
 FunctionScoreScenario.Run();
 RankingScenario.Run();
