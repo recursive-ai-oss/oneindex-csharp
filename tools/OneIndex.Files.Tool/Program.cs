@@ -16,11 +16,32 @@ namespace OneIndex.Files.Tool;
 /// </summary>
 public static class Program
 {
+    private const string Usage = """
+        usage: oneindex-files-tool <command> [--option value]...
+
+          gen --out DIR [--seed 1] [--files 6000] [--mib 1100] [--scans 12] [--scale 1.0] [--font FILE]
+              Writes a mixed folder of text, Markdown, HTML, PDF, archives and rendered scans. The default is the full-size corpus (6,000 files, about 1.1 GiB);
+              scans are written only when a TrueType font is given with --font, and they are read only with --ocr below.
+          index --root DIR --index DIR [--ocr] [--parallel 1] [--commit-files 200] [--timeout 300] [--quiet]
+              Indexes a folder; an interrupted run resumes. --ocr adds the image extractor (package OneIndex.Files.Ocr, which brings oneocr's models);
+              without it no extractor handles image files.
+          snapshot --index DIR --out FILE      Dumps an index in a comparable form.
+          errors --index DIR                   Lists the error documents of an index.
+          campaign --root DIR --work DIR [--kills 50] [--seed 1] [--min-ms 1500] [--max-ms N] [--kill-commit-files 25] [--ocr]
+              Indexes the folder cleanly, then repeatedly kills indexing at random times, resumes, and compares the final index with the clean one.
+              --work must be a fresh directory (the tool refuses one that already holds indexes). Pass --ocr when the corpus has scans, or the
+              killed and clean runs both leave them out. Use the full-size corpus from gen: the default kill delays (1.5 s and up) only land inside a run of that size.
+          cite-check --root DIR --index DIR [--sample 1000] [--seed 1]
+              Re-reads the cited pages of a sample of passages and compares them with the indexed text.
+          throughput --root DIR --work DIR [--ocr]
+              Times the first index of each format folder.
+        """;
+
     public static int Main(string[] args)
     {
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("usage: oneindex-files-tool gen|index|snapshot|campaign|cite-check|throughput [--option value]...");
+            Console.Error.WriteLine(Usage);
             return 2;
         }
 

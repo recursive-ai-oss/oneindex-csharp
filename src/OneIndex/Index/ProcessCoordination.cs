@@ -145,11 +145,19 @@ internal static class IndexLocks
                 }
             }
         }
-        catch (Exception e) when (e is IOException or CorruptIndexException)
+        catch (CorruptIndexException)
         {
-            // A lease for a commit that is gone or damaged protects nothing it could still read.
+            // A lease for a commit whose file is damaged protects nothing it could still read.
             pinned.Add(commitName);
         }
+        catch (FileNotFoundException)
+        {
+            // The commit is gone, so its files were already released.
+            pinned.Add(commitName);
+        }
+
+        // Any other I/O error is transient and says nothing about the commit: guessing "nothing to pin" would let the writer delete files a live
+        // reader is using, so the error goes to the caller, which keeps every candidate file until a scan succeeds.
     }
 
     /// <summary>
