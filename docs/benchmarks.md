@@ -248,6 +248,24 @@ Machine records: x64 as above (Ryzen 9 7950X3D, 32 logical cores, ext4 NVMe, .NE
 before / during / after: OneIndex run 3.3 / 3.0 / 2.5, Lucene.NET run 7.3 / 5.9 / 5.2 (other users' light jobs on the host), matched
 typo run 1.3 / 1.2 / 1.2. arm64: Apple M2, 8 cores, .NET 10.0.14, load 3.0 / 2.9 / 2.9.
 
+### Commit and Phrase with packed flush parts (commit format 3) and term dictionary version 2 together
+
+Both engines in one exclusive benchmark-class job per machine, filtered to the Phrase row (the index and commit rows always run), same
+settings as above.
+
+| Row | OneIndex x64 | Lucene.NET x64 | ratio | OneIndex arm64 | Lucene.NET arm64 | ratio |
+|---|---|---|---|---|---|---|
+| index (docs/s) | 60,363 | 37,169 | 0.62 | 65,505 | 37,308 | 0.57 |
+| commit (median ms, 5 x 200 docs) | 22.3 | 36.0 | 0.62 | 14.1 | 14.6 | 0.96 |
+| commit (max ms) | n/r | n/r | | 90.5 | 16.0 | 5.7 |
+| Phrase (ms/query) | 0.165 | 0.241 | 0.68 | 0.239 | 0.641 | 0.37 |
+
+The Phrase figure for Lucene.NET moves a lot between passes (0.157 to 0.241 ms on x64, 0.389 to 0.641 ms on arm64 across the runs in this
+document, with the same index layout), so its ratio is noisy; OneIndex's own figure is stable (0.165 to 0.179 ms x64). Against the best
+Lucene.NET figure seen on x64 (0.157) Phrase is 1.05. The arm64 commit maximum is one slow commit (90 ms) among five. Index size 70,161,632
+bytes after the bulk commit and 60,589,958 settled. Load (1 minute, before / after): x64 2.6 / 2.0 (OneIndex), 1.9 / 1.7 (Lucene.NET);
+arm64 3.4 / 3.0 and 2.9 / 2.8.
+
 ## Earlier indicative pass (not publishable)
 
 A first run of the driver on 50,000 abstracts, to prove the rows run end to end and to capture memory and size. It ran as a shared-queue
