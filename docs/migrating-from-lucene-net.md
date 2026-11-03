@@ -129,7 +129,7 @@ var doc = new Document
     new TextField("body", "Over-ear wireless headphones with noise cancelling.", Field.Store.YES),
     new DoubleField("price", 89, Field.Store.YES),
     new StringField("category", "audio", Field.Store.YES),
-    new NumericDocValuesField("price_dv", NumericUtils.DoubleToSortableInt64(89)),
+    new DoubleDocValuesField("price", 89),                  // doc values, for sorting
     new SortedSetDocValuesFacetField("category", "audio"),
 };
 writer.UpdateDocument(new Term("id", "p1"), facetsConfig.Build(doc));
@@ -146,7 +146,7 @@ var query = new BooleanQuery
 };
 var sort = new Sort(new SortField("price", SortFieldType.DOUBLE));
 var fc = new FacetsCollector();
-TopDocs top = FacetsCollector.Search(searcher, query, 10, sort, fc);
+TopDocs top = FacetsCollector.Search(searcher, query, null, 10, sort, fc);   // null: no Filter
 var facets = new SortedSetDocValuesFacetCounts(new DefaultSortedSetDocValuesReaderState(reader), fc);
 foreach (ScoreDoc hit in top.ScoreDocs)
 {
