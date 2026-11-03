@@ -123,6 +123,9 @@ public sealed class MappedMember
     /// <summary>The IVF list count of a vector field; 0 for automatic.</summary>
     public int IvfLists { get; }
 
+    /// <summary>Whether this is a <c>[MultiVector]</c> member: a Bytes field with a declared token-vector length.</summary>
+    internal bool IsMultiVector => Type == FieldType.Bytes && Dimensions > 0;
+
     internal MappedMember WithDimensions(int dimensions)
         => new(Name, Type, Multi, Indexed, Column, Facet, FullText, IsId, Boost, Analyzer, dimensions, Metric, HnswM, EfConstruction, FlatThreshold, Quantization, Oversample, From, Rerank, VectorIndex, IvfLists);
 
@@ -300,6 +303,15 @@ public abstract class SearchMapping<T>
                     }
 
                     builder.Add(new FieldDefinition(AutoSparse.KeyFieldName(m.Name), FieldType.Bytes));
+                }
+                else if (m.IsMultiVector && m.From is not null)
+                {
+                    if (!_byName.TryGetValue(m.From, out MappedMember? mvSource) || mvSource.Type is not (FieldType.Text or FieldType.Keyword))
+                    {
+                        throw new InvalidOperationException($"Member '{m.Name}': [MultiVector(From = \"{m.From}\")] must name a text or keyword member of {typeof(T).Name}.");
+                    }
+
+                    builder.Add(new FieldDefinition(AutoMultiVector.KeyFieldName(m.Name), FieldType.Bytes));
                 }
                 else if (m.From is not null)
                 {

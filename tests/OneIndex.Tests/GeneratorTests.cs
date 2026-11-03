@@ -141,6 +141,14 @@ public class GeneratorTests
     [InlineData("[Keyword] public string V { get; } = \"\";", "OI0006")]
     [InlineData("[Keyword] public string V = \"\";", "OI0006")]
     [InlineData("[FullText(Boost = 0)] public string V { get; set; } = \"\";", "OI0007")]
+    [InlineData("[MultiVector(Dimensions = 4)] public float[] V { get; set; } = [];", "OI0001")]
+    [InlineData("[MultiVector(Dimensions = 4)] public string V { get; set; } = \"\";", "OI0001")]
+    [InlineData("[MultiVector] public float[][] V { get; set; } = [];", "OI0007")]
+    [InlineData("[MultiVector(Dimensions = 70000)] public float[][] V { get; set; } = [];", "OI0007")]
+    [InlineData("[MultiVector(Dimensions = 4), Keyword] public float[][] V { get; set; } = [];", "OI0003")]
+    [InlineData("[MultiVector(Dimensions = 4, From = \"Nope\")] public float[][] V { get; set; } = [];", "OI0007")]
+    [InlineData("[MultiVector(Dimensions = 4, From = \"\")] public float[][] V { get; set; } = [];", "OI0007")]
+    [InlineData("[MultiVector(Dimensions = 4, From = \"V\")] public float[][] V { get; set; } = [];", "OI0007")]
     public void AnUnsupportedMemberIsACompileErrorThatNamesIt(string member, string id)
     {
         string source = "using OneIndex; public class Bad { [SearchId] public string Id { get; set; } = \"\"; " + member + " }";

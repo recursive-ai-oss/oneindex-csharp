@@ -402,6 +402,11 @@ public sealed class MappingGenerator : IIncrementalGenerator
                         {
                             m.Dimensions = mvDimensions.ToInt32(CultureInfo.InvariantCulture);
                         }
+
+                        if (arg.Key == "From")
+                        {
+                            m.From = arg.Value.Value as string ?? string.Empty;
+                        }
                     }
 
                     break;
@@ -555,6 +560,11 @@ public sealed class MappingGenerator : IIncrementalGenerator
             if (m.Dimensions < 1 || m.Dimensions > 65536)
             {
                 diagnostics.Add(Diagnostic.Create(BadAttributeValue, location, property.Name, "[MultiVector] needs Dimensions from 1 to 65536"));
+            }
+
+            if (m.From is not null && (m.From.Length == 0 || m.From == property.Name || !HasMember(property.ContainingType, m.From)))
+            {
+                diagnostics.Add(Diagnostic.Create(BadAttributeValue, location, property.Name, "[MultiVector(From = ...)] must name another text member of the same type"));
             }
         }
 
@@ -849,7 +859,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
         string? analyzerName = m.FullText ? (m.Analyzer ?? m.Language) : null;
         string analyzer = analyzerName is null ? "null" : Lit(analyzerName);
 
-        string sparse = m.Shape == Shape.Sparse && m.From is not null ? ", from: " + Lit(m.From) : string.Empty;
+        string sparse = (m.Shape == Shape.Sparse || m.Shape == Shape.MultiVector) && m.From is not null ? ", from: " + Lit(m.From) : string.Empty;
         indexed |= m.Shape == Shape.Sparse;
         string vector = m.Shape == Shape.Vector
             ? ", dimensions: " + m.Dimensions.ToString(CultureInfo.InvariantCulture) + ", metric: (global::OneIndex.Vectors.VectorMetric)" + m.Metric.ToString(CultureInfo.InvariantCulture)
@@ -866,6 +876,22 @@ public sealed class MappingGenerator : IIncrementalGenerator
 
         return "new global::OneIndex.MappedMember(" + Lit(m.Name) + ", global::OneIndex.Index.FieldType." + kind + ", multi: " + Bool(m.Multi) + ", indexed: " + Bool(indexed) + ", column: " + Bool(column)
             + ", facet: " + Bool(m.Facet) + ", fullText: " + Bool(m.FullText) + ", isId: " + Bool(m.IsId) + ", boost: " + boost + ", analyzer: " + analyzer + vector + sparse + (m.FullText && m.Rerank ? ", rerank: true" : string.Empty) + ")";
+    }
+
+    private static bool HasMember(INamedTypeSymbol? type, string name)
+    {
+        for (INamedTypeSymbol? t = type; t is not null; t = t.BaseType)
+        {
+            foreach (ISymbol member in t.GetMembers(name))
+            {
+                if (member is IPropertySymbol or IFieldSymbol)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static string Bool(bool b) => b ? "true" : "false";

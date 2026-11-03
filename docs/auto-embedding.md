@@ -53,3 +53,7 @@ Embedding happens before the write, so the commit protocol is unchanged: a docum
 ## Limits
 
 One vector field per `From` member; the source member must fit the model's input (the model cuts, it does not refuse). Texts are embedded in the caller's thread; a slow embedder slows `Upsert`.
+
+## Sparse and multi-vector members
+
+`[Sparse(From = ...)]` (docs/sparse.md) and `[MultiVector(From = ...)]` (docs/multi-vector.md) use the same scheme with their own encoders (`ISparseEncoder`, `IMultiVectorEncoder`; defaults `SearchSparseEncoders.Default` and `SearchMultiVectorEncoders.Default`) and their own hidden cache fields (`<Member>#sparse`, `<Member>#multivector`). `ReembedStale` handles all three kinds in one pass.

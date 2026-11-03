@@ -61,7 +61,7 @@ static int Run(string[] args)
         case "sparse-kill":
         {
             string sparseRoot = Option("dir", Path.Combine(Path.GetTempPath(), "oneindex-sparse-kill"));
-            string[] sparseChild = [Environment.ProcessPath!, .. Environment.GetCommandLineArgs().Take(1).Where(a => a.EndsWith(".dll", StringComparison.Ordinal))];
+            string[] sparseChild = SelfCommand.Get();
             var sparseClock = Stopwatch.StartNew();
             SparseKill.Result sr = SparseKill.Run(sparseRoot, Number("kills", 100), Number("seed", 1), Number("max-delay-ms", 600), sparseChild, Option("clear", "false") == "true");
             Console.WriteLine($"sparse-kill: {sr.Kills} kills (seed {Number("seed", 1)}), {sr.Commits} commits acknowledged, {sr.KilledDuringCommit} kills inside a commit call, {sr.Documents} documents checked, {sr.Failures} failures, {sparseClock.Elapsed.TotalSeconds:F0} s");
@@ -79,7 +79,7 @@ static int Run(string[] args)
         case "embed-kill":
         {
             string root = Option("dir", Path.Combine(Path.GetTempPath(), "oneindex-embed-kill"));
-            string[] childCommand = [Environment.ProcessPath!, .. Environment.GetCommandLineArgs().Take(1).Where(a => a.EndsWith(".dll", StringComparison.Ordinal))];
+            string[] childCommand = SelfCommand.Get();
             var clock = Stopwatch.StartNew();
             EmbedKill.Result r = EmbedKill.Run(root, Number("kills", 100), Number("seed", 1), Number("max-delay-ms", 600), childCommand, Option("clear", "false") == "true");
             Console.WriteLine($"embed-kill: {r.Kills} kills (seed {Number("seed", 1)}), {r.Commits} commits acknowledged, {r.KilledDuringCommit} kills inside a commit call, {r.Documents} documents checked, {r.Failures} failures, {clock.Elapsed.TotalSeconds:F0} s");
@@ -106,7 +106,7 @@ static int Run(string[] args)
                 Number("kills", 200),
                 Number("max-delay-ms", 800),
                 Number("pace-ms", 2),
-                [Environment.ProcessPath!, .. Environment.GetCommandLineArgs().Take(1).Where(a => a.EndsWith(".dll", StringComparison.Ordinal))]);
+                SelfCommand.Get());
 
         case "kill":
         {
@@ -117,7 +117,7 @@ static int Run(string[] args)
             int maxDelay = Number("max-delay-ms", 600);
             string failures = Option("failures", Path.Combine(root, "failures"));
             bool evolve = Option("evolve", "false") == "true";
-            string[] childCommand = [Environment.ProcessPath!, .. Environment.GetCommandLineArgs().Take(1).Where(a => a.EndsWith(".dll", StringComparison.Ordinal))];
+            string[] childCommand = SelfCommand.Get();
             var clock = Stopwatch.StartNew();
             var tasks = new List<Task<KillHarness.Summary>>();
             for (int lane = 0; lane < lanes; lane++)
