@@ -39,6 +39,9 @@ public sealed class OneIndexOptions
     /// <summary>
     /// How many of the newest log positions retention keeps; the applier loop prunes older rows. An index that has not applied a pruned row
     /// rebuilds itself from the tables. Default 100,000; 0 or less disables pruning (call <see cref="OneIndexRuntime.PruneAsync(long, CancellationToken)"/> yourself).
+    /// The applier loop never prunes into the newest <see cref="LateRowWindow"/> positions, so a smaller value acts as that window: a transaction still open
+    /// there can commit its row afterwards and have it applied. An explicit call to <c>Prune</c> or <c>PruneAsync</c> keeps exactly the rows it is told to,
+    /// and a transaction open across such a call can lose its row (docs/entity-framework.md).
     /// </summary>
     public long RetainRows { get; set; } = 100_000;
 
@@ -267,7 +270,9 @@ public sealed class OneIndexRuntime : IAsyncDisposable, IDisposable
                 int n = await CatchUpAsync(cancellationToken).ConfigureAwait(false);
                 if (Options.RetainRows > 0 && (n > 0 || ++rounds % 64 == 0))
                 {
-                    await PruneAsync(Options.RetainRows, cancellationToken).ConfigureAwait(false);
+                    // Retention never reaches into the window in which a transaction's log row may still become visible: a row pruned past an open
+                    // transaction would be lost for good, because positions below the pruning mark are not looked at again.
+                    await PruneAsync(Math.Max(Options.RetainRows, Options.LateRowWindow), cancellationToken).ConfigureAwait(false);
                 }
 
                 LastApplyError = null;
