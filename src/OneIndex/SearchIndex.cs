@@ -226,6 +226,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     {
         Reranker = reranker;
         _storage = storage;
+        mapping = mapping.ResolveDimensions(embedder);
         _mapping = mapping;
         if (embedder is not null && mapping.Members.Any(static m => m.From is not null && m.Type == FieldType.Vector))
         {
@@ -259,6 +260,7 @@ public sealed class SearchIndex<T> : IDisposable, IAsyncDisposable
     {
         Reranker = reranker;
         _storage = storage;
+        mapping = mapping.ResolveDimensions(embedder);
         _mapping = mapping;
         _storesSource = true;
         if (embedder is not null && mapping.Members.Any(static m => m.From is not null && m.Type == FieldType.Vector))

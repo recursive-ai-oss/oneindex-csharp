@@ -64,7 +64,7 @@ public sealed class VectorAttribute : Attribute
     /// <summary>The name of a text property to embed automatically when an embedder is configured. Default none: the application supplies the vector.</summary>
     public string? From { get; set; }
 
-    /// <summary>The vector length. Required: 1 to 65,536. (A model-supplied length is added with automatic embedding.)</summary>
+    /// <summary>The vector length, 1 to 65,536. Required unless <see cref="From"/> is set; with <see cref="From"/> and no length the embedder's dimension is used, and opening the index without an embedder throws <see cref="InvalidOperationException"/>.</summary>
     public int Dimensions { get; set; }
 
     /// <summary>How closeness is measured. Default <see cref="Vectors.VectorMetric.Cosine"/>.</summary>

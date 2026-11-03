@@ -1,6 +1,7 @@
 using System.Linq.Expressions;
 using OneIndex.Aggregations;
 using OneIndex.Index;
+using OneIndex.Queries;
 using OneIndex.Search;
 using OneIndex.Vectors;
 
@@ -222,6 +223,7 @@ public sealed partial class SearchQuery<T>
         }
 
         Search.Query? sparseArm = null;
+        Search.Query? knnExclusion = null;
         if (sparseSpec is not null)
         {
             AutoSparse auto2 = _index.AutoSparse ?? throw new InvalidOperationException("Sparse search needs a sparse encoder: open the index with one, or set SearchSparseEncoders.Default (docs/sparse.md).");
@@ -240,11 +242,29 @@ public sealed partial class SearchQuery<T>
         }
 
         int window = spec.Window;
+        // An excluded word of the text (-draft) removes documents from every list, not only the keyword one: the vector list would otherwise bring them back.
+        IReadOnlyList<Search.Query> exclusions = _query is null && !string.IsNullOrWhiteSpace(text) ? new UserTextCompiler(_index.Mapping.Schema).CompileExclusions(text) : [];
+        if (exclusions.Count > 0)
+        {
+            var not = new List<BooleanClause>(exclusions.Count + 1) { new(new MatchAllQuery(), Occur.Filter) };
+            not.AddRange(exclusions.Select(static e => new BooleanClause(e, Occur.MustNot)));
+            var excluding = new BooleanQuery(not);
+            if (vector is not null)
+            {
+                knnExclusion = excluding;
+            }
+
+            if (sparseArm is not null)
+            {
+                sparseArm = new BooleanQuery([new BooleanClause(sparseArm, Occur.Must), .. not.Skip(1)]);
+            }
+        }
+
         Search.Query textArm = _extras is null && _filters.Length == 0 ? textQuery : WithExtras(textQuery, applyFunction: false);
         KnnQuery? knnArm = null;
         if (vector is not null)
         {
-            var knn = new KnnQuery(field!, vector, window);
+            var knn = new KnnQuery(field!, vector, window) { Filter = knnExclusion };
             knnArm = (KnnQuery)(_extras is null && _filters.Length == 0 ? knn : WithExtras(knn, applyFunction: false));
         }
 

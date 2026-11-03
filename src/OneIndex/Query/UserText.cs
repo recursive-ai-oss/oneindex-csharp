@@ -266,6 +266,21 @@ public sealed class UserTextCompiler
 
     internal Search.Query CompileConjunctive(string? input, out IReadOnlyList<Search.Query> groups) => CompileCore(input, proximity: false, ranked: false, out groups);
 
+    /// <summary>The queries of the excluded operands (<c>-word</c>, <c>-"phrase"</c>) of the text, which a hybrid search also applies to its vector and sparse lists.</summary>
+    internal IReadOnlyList<Search.Query> CompileExclusions(string? input)
+    {
+        var result = new List<Search.Query>();
+        foreach (UserTextOperand operand in UserText.Parse(input).Excluded)
+        {
+            if (CompileOperand(operand, false, exact: true) is { } q)
+            {
+                result.Add(q);
+            }
+        }
+
+        return result;
+    }
+
     private Search.Query CompileCore(string? input, bool proximity, bool ranked, out IReadOnlyList<Search.Query> groups)
     {
         groups = [];

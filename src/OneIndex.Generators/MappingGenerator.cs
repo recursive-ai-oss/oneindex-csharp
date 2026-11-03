@@ -506,9 +506,9 @@ public sealed class MappingGenerator : IIncrementalGenerator
                 diagnostics.Add(Diagnostic.Create(Conflict, location, property.Name, "a [Vector] member cannot also be [FullText], [Keyword], [Filterable], [Sortable], [Facet], [Geo] or [SearchId]"));
             }
 
-            if (m.Dimensions < 1 || m.Dimensions > 65536 || m.Metric < 0 || m.Metric > 2 || m.HnswM < 2 || m.HnswM > 256 || m.EfConstruction < m.HnswM || m.EfConstruction > 4096 || m.FlatThreshold < 0 || m.FlatThreshold > 100000000 || m.Quantization < 0 || m.Quantization > 3 || !(m.Oversample == 0 || (m.Oversample >= 1 && m.Oversample <= 100)))
+            if ((m.Dimensions < 1 && !(m.Dimensions == 0 && m.From is not null)) || m.Dimensions > 65536 || m.Metric < 0 || m.Metric > 2 || m.HnswM < 2 || m.HnswM > 256 || m.EfConstruction < m.HnswM || m.EfConstruction > 4096 || m.FlatThreshold < 0 || m.FlatThreshold > 100000000 || m.Quantization < 0 || m.Quantization > 3 || !(m.Oversample == 0 || (m.Oversample >= 1 && m.Oversample <= 100)))
             {
-                diagnostics.Add(Diagnostic.Create(BadAttributeValue, location, property.Name, "[Vector] needs Dimensions from 1 to 65536, a known Metric, M from 2 to 256, EfConstruction from M to 4096, FlatThreshold from 0 to 100 million, a known Quantization and an Oversample of 0 or 1 to 100"));
+                diagnostics.Add(Diagnostic.Create(BadAttributeValue, location, property.Name, "[Vector] needs Dimensions from 1 to 65536 (or none with From, the embedder then sets it), a known Metric, M from 2 to 256, EfConstruction from M to 4096, FlatThreshold from 0 to 100 million, a known Quantization and an Oversample of 0 or 1 to 100"));
             }
         }
 
@@ -828,7 +828,8 @@ public sealed class MappingGenerator : IIncrementalGenerator
                 sb.AppendLine("            if (" + p + " is { } s_" + m.Name + ") { document.Add(" + n + ", s_" + m.Name + "); }");
                 break;
             case Shape.Vector:
-                sb.AppendLine("            if (" + p + " is { } v_" + m.Name + ") { document.Add(" + n + ", v_" + m.Name + "); }");
+                // An empty array is the default of a non-nullable property: no vector supplied.
+                sb.AppendLine("            if (" + p + " is { Length: > 0 } v_" + m.Name + ") { document.Add(" + n + ", v_" + m.Name + "); }");
                 break;
             case Shape.Sparse:
                 sb.AppendLine("            if (" + p + " is { } sp_" + m.Name + ") { document.Add(" + n + ", sp_" + m.Name + "); }");
