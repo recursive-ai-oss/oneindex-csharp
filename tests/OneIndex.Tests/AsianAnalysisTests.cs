@@ -137,6 +137,17 @@ public class AsianAnalysisTests
     }
 
     [Fact]
+    public void SectionOffsetThatWrapsIsRejected()
+    {
+        // Found by the dictionary fuzz target (testdata/fuzz/dictionary-crash-b69cbc22.bin): a section offset near 2^64 wrapped the bounds check.
+        byte[] input = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(ThisFile())!, "..", "..", "testdata", "fuzz", "dictionary-crash-b69cbc22.bin"));
+        Assert.False(LatticeLexicon.TryLoad(input, out _));
+        Assert.False(WordList.TryLoad(input, out _));
+    }
+
+    private static string ThisFile([System.Runtime.CompilerServices.CallerFilePath] string path = "") => path;
+
+    [Fact]
     public void RegisteredAnalyzersResolveByName()
     {
         AsianAnalyzers.Register();

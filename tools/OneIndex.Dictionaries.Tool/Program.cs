@@ -130,11 +130,16 @@ internal static class Evaluate
             segment(l); // warm up
         }
 
+        // Repeat the text until it is a few million characters, so a short sample still gives a stable time.
+        int repeats = (int)Math.Max(1, 3_000_000 / Math.Max(1, lines.Sum(l => (long)l.Length)));
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        foreach (string l in lines)
+        for (int r = 0; r < repeats; r++)
         {
-            segment(l);
-            chars += l.Length;
+            foreach (string l in lines)
+            {
+                segment(l);
+                chars += l.Length;
+            }
         }
 
         sw.Stop();

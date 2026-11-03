@@ -137,7 +137,7 @@ internal static class DictionaryContainer
             uint storedLength = BinaryPrimitives.ReadUInt32LittleEndian(e[12..]);
             uint rawLength = BinaryPrimitives.ReadUInt32LittleEndian(e[16..]);
             uint codec = BinaryPrimitives.ReadUInt32LittleEndian(e[20..]);
-            if (offset < (ulong)(HeaderSize + (long)count * EntrySize) || offset + storedLength > (ulong)body)
+            if (offset < (ulong)(HeaderSize + (long)count * EntrySize) || offset > (ulong)body || storedLength > (ulong)body - offset)
             {
                 throw new DictionaryFormatException($"Section {id} lies outside the file.");
             }
