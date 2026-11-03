@@ -143,4 +143,60 @@ public class PackedSegmentTests
 
         Assert.Null(Workload.FindLeaks(storage));
     }
+
+    private static string ThisFile([System.Runtime.CompilerServices.CallerFilePath] string path = "") => path;
+
+    [Fact]
+    public void AnIndexWrittenByTheEarlierFormatOpensSearchesAndMergesIntoPackedSegments()
+    {
+        // testdata/format2-index was written by the previous release's writer (commit format 2: one file per segment part).
+        string source = Path.Combine(Path.GetDirectoryName(ThisFile())!, "..", "..", "testdata", "format2-index");
+        string dir = TestHelpers.NewTempDirectory();
+        try
+        {
+            foreach (string f in Directory.GetFiles(source))
+            {
+                File.Copy(f, Path.Combine(dir, Path.GetFileName(f)));
+            }
+
+            var storage = new FileSystemStorage(dir);
+            SortedDictionary<string, string> before;
+            using (IndexSnapshot snap = IndexSnapshot.Open(storage, Workload.Codecs))
+            {
+                Assert.DoesNotContain(storage.List(), n => n.EndsWith(".pack", StringComparison.Ordinal));
+                snap.Verify();
+                before = Workload.ReadContent(snap);
+                Assert.NotEmpty(before);
+                Assert.Null(Workload.CheckSearch(snap, before));
+            }
+
+            using (IndexWriter w = IndexWriter.Open(storage, Workload.Schema, Workload.Options(maxBuffered: 3, autoMerge: false)))
+            {
+                w.Upsert(Workload.ToDocument(Put("x1", "even", "fresh", 77)));
+                w.Commit();
+                Assert.Contains(storage.List(), n => n.EndsWith(".pack", StringComparison.Ordinal));
+                w.ForceMerge(1);
+                w.Commit();
+            }
+
+            using (IndexSnapshot merged = IndexSnapshot.Open(storage, Workload.Codecs))
+            {
+                merged.Verify();
+                SortedDictionary<string, string> after = Workload.ReadContent(merged);
+                Assert.Equal(before.Count + 1, after.Count);
+                foreach (KeyValuePair<string, string> kv in before)
+                {
+                    Assert.Equal(kv.Value, after[kv.Key]);
+                }
+
+                Assert.Null(Workload.CheckSearch(merged, after));
+            }
+
+            Assert.Null(Workload.FindLeaks(storage));
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
 }
