@@ -40,8 +40,13 @@ public sealed class CliToolTests : IDisposable
         string feed = Path.Combine(_work, "feed");
         string tools = Path.Combine(_work, "tools");
         Directory.CreateDirectory(feed);
-        (int pack, string po, string pe) = Run(dotnet, $"pack \"{Path.Combine(RepoRoot, "src", "OneIndex.Cli", "OneIndex.Cli.csproj")}\" -c Release -o \"{feed}\" -p:EnablePackageValidation=false -v quiet");
-        Assert.True(pack == 0, po + pe);
+        // The tool's package depends on the library packages, so they go into the same local feed.
+        foreach (string project in new[] { "OneIndex", "OneIndex.Analysis.Asian", "OneIndex.Models", "OneIndex.Files", "OneIndex.Files.Ocr", "OneIndex.Cli" })
+        {
+            (int pack, string po, string pe) = Run(dotnet, $"pack \"{Path.Combine(RepoRoot, "src", project, project + ".csproj")}\" -c Release -o \"{feed}\" -p:EnablePackageValidation=false -v quiet");
+            Assert.True(pack == 0, project + ": " + po + pe);
+        }
+
         string nupkg = Directory.EnumerateFiles(feed, "RecursiveAI.OneIndex.Cli.*.nupkg").Single();
         string version = Path.GetFileNameWithoutExtension(nupkg)["RecursiveAI.OneIndex.Cli.".Length..];
         (int install, string io, string ie) = Run(dotnet, $"tool install RecursiveAI.OneIndex.Cli --tool-path \"{tools}\" --add-source \"{feed}\" --version {version}");
