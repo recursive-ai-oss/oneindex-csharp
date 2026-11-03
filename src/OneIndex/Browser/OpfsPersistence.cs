@@ -21,7 +21,11 @@ public interface IOpfsHost
     /// <exception cref="FileNotFoundException">There is no such file.</exception>
     ValueTask<byte[]> ReadAsync(string name, CancellationToken cancellationToken = default);
 
-    /// <summary>Writes a whole file, replacing it; the write is complete (closed) when the task completes.</summary>
+    /// <summary>
+    /// Writes a whole file, replacing it; the write is complete (closed) when the task completes. The write must be atomic: a page that is closed or
+    /// crashes half way leaves the old file or the new one, never a mixture. The File System Standard expects a writable stream's close to update the file
+    /// atomically, so a host built on <c>createWritable()</c> meets this. A host that can leave a torn file can make the newest commit unreadable, which opens as a corruption error.
+    /// </summary>
     /// <param name="name">The file's name.</param>
     /// <param name="bytes">The content.</param>
     /// <param name="cancellationToken">Cancels the call.</param>
