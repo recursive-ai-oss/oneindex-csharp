@@ -630,6 +630,9 @@ public static partial class QueryJson
             case ProximityQuery px:
                 WriteProximity(w, px);
                 break;
+            case MoreLikeThisQuery mlt:
+                WriteMoreLikeThis(w, mlt);
+                break;
             case HybridQuery hq:
                 w.WriteString("type", "hybrid");
                 w.WritePropertyName("text");
@@ -778,7 +781,7 @@ internal sealed partial class QueryJsonReader
     private static readonly string[] Reserved = ["facets", "aggregations", "distinct", "vector"];
 
     private static readonly string[] NodeTypes =
-        ["matchAll", "text", "strict", "filter", "term", "phrase", "prefix", "fuzzy", "regex", "range", "exists", "multiFieldTerm", "typoTerm", "geoRadius", "geoBoundingBox", "bool", "functionScore", "proximity", "knn", "sparse", "hybrid"];
+        ["matchAll", "text", "strict", "filter", "term", "phrase", "prefix", "fuzzy", "regex", "range", "exists", "multiFieldTerm", "typoTerm", "geoRadius", "geoBoundingBox", "bool", "functionScore", "proximity", "moreLikeThis", "knn", "sparse", "hybrid"];
 
     private readonly Schema _schema;
     private readonly UserTextCompiler _userText;
@@ -1184,6 +1187,8 @@ internal sealed partial class QueryJsonReader
                 return ReadFunctionScore(e, path, depth);
             case "proximity":
                 return ReadProximity(e, path, depth);
+            case "moreLikeThis":
+                return ReadMoreLikeThis(e, path);
             case "knn":
                 return ReadKnn(e, path, depth);
             case "sparse":
@@ -1197,6 +1202,47 @@ internal sealed partial class QueryJsonReader
                     throw Err(Child(path, "type"), $"Unknown query type \"{type}\".{hint} Types: {string.Join(", ", NodeTypes)}.", near);
                 }
         }
+    }
+
+    // {"type":"moreLikeThis","text":"..."|"id":"...","fields":[...],"maxQueryTerms":25,...} (docs/more-like-this.md).
+    private Query ReadMoreLikeThis(JsonElement e, string path)
+    {
+        CheckProperties(e, path, ["type", "text", "id", "fields", "maxQueryTerms", "minTermFrequency", "minDocFrequency", "minimumShouldMatch", "boostTerms", "includeSource", "boost"]);
+        bool hasText = e.TryGetProperty("text", out JsonElement te);
+        bool hasId = e.TryGetProperty("id", out JsonElement ie);
+        if (hasText == hasId)
+        {
+            throw Err(path, "A moreLikeThis node needs exactly one of \"text\" and \"id\".");
+        }
+
+        var fields = ReadFieldNames(e, path, "fields", required: false);
+        foreach (string name in fields)
+        {
+            if (!_schema.TryGetField(name, out FieldDefinition? mltField) || mltField.Type != FieldType.Text)
+            {
+                throw Err(Child(path, "fields"), $"Field \"{name}\" is not a full-text field.");
+            }
+        }
+
+        var q = new MoreLikeThisQuery
+        {
+            Text = hasText ? ReadString(te, Child(path, "text")) : null,
+            DocumentId = hasId ? ReadString(ie, Child(path, "id")) : null,
+            Fields = fields,
+            MaxQueryTerms = e.TryGetProperty("maxQueryTerms", out JsonElement a) ? ReadInt(a, Child(path, "maxQueryTerms"), 1, MoreLikeThisQuery.MaxTermsLimit) : 25,
+            MinTermFrequency = e.TryGetProperty("minTermFrequency", out JsonElement b) ? ReadInt(b, Child(path, "minTermFrequency"), 1, 1000) : 1,
+            MinDocumentFrequency = e.TryGetProperty("minDocFrequency", out JsonElement c) ? ReadInt(c, Child(path, "minDocFrequency"), 1, 1_000_000) : 1,
+            MinimumShouldMatchFraction = e.TryGetProperty("minimumShouldMatch", out JsonElement d) ? ReadFraction(d, Child(path, "minimumShouldMatch")) : 0.3,
+            BoostTerms = !e.TryGetProperty("boostTerms", out JsonElement f) || ReadBool(f, Child(path, "boostTerms")),
+            IncludeSource = e.TryGetProperty("includeSource", out JsonElement g) && ReadBool(g, Child(path, "includeSource")),
+        };
+        return Boosted(q, e, path);
+    }
+
+    private static double ReadFraction(JsonElement e, string path)
+    {
+        double v = ReadNumber(e, path, 0, 1);
+        return v > 0 ? v : throw Err(path, "Expected a number above 0 and at most 1.");
     }
 
     // A learned sparse node: {"type":"sparse","field":"Expansion","weights":{"token":1.5,...}} (docs/sparse.md).

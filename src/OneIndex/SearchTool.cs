@@ -235,6 +235,28 @@ public static class SearchTool
             }, required: ["fields", "term"]));
         }
 
+        if (text.Count > 0)
+        {
+            void MltOptions()
+            {
+                w.WriteStartObject("fields");
+                w.WriteString("type", "array");
+                w.WriteStartObject("items");
+                EnumOf(w, text);
+                w.WriteEndObject();
+                w.WriteNumber("maxItems", 64);
+                w.WriteString("description", "The full-text fields to read and match. Default: all of them.");
+                w.WriteEndObject();
+                Int(w, "maxQueryTerms", 1, MoreLikeThisQuery.MaxTermsLimit, "How many distinctive terms to search for. Default 25.");
+                Int(w, "minTermFrequency", 1, 1000, "A term must occur this often in the source. Default 1.");
+                Int(w, "minDocFrequency", 1, 1_000_000, "A term must occur in this many documents. Default 1.");
+                Num(w, "minimumShouldMatch", 0, 1, "The share of the chosen terms a document must contain, above 0. Default 0.3.");
+            }
+
+            Def("moreLikeThisText", () => Node(w, "moreLikeThis", () => { Str(w, "text", "Text to find similar documents to."); MltOptions(); }, required: ["text"]));
+            Def("moreLikeThisDocument", () => Node(w, "moreLikeThis", () => { Str(w, "id", "Identifier of an indexed document to find similar documents to; it is left out of the results."); MltOptions(); }, required: ["id"]));
+        }
+
         RangeDef("rangeNumber", numeric, "number");
         RangeDef("rangeDate", date, "date");
         RangeDef("rangeKeyword", keyword, "string");

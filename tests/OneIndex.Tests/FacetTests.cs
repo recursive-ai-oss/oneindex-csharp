@@ -175,6 +175,19 @@ public sealed class FacetTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task TheHappyPathSearchesFacetValuesOverItsOwnMatches()
+    {
+        using SearchIndex<Product> index = Catalog();
+        IReadOnlyList<FacetValue> all = index.Search().FacetValues(x => x.Category, "sho");
+        Assert.Equal(["shoes=2"], all.Select(v => $"{v.Value}={v.Count}"));
+        // The counts follow the search: only the sock that is in stock and runs matches.
+        IReadOnlyList<FacetValue> narrowed = await index.Search("running").Where(x => x.InStock).FacetValuesAsync(x => x.Category, null, sortBy: FacetSort.Count);
+        Assert.Equal(["shoes=2", "socks=1"], narrowed.Select(v => $"{v.Value}={v.Count}"));
+        Assert.Empty(index.Search("leather").FacetValues(x => x.Category, "sho"));
+        Assert.Throws<ArgumentException>(() => index.Search().FacetValues(x => x.Title, "a"));
+    }
+
+    [Fact]
     public void FacetValueSearchCountsOverTheQueryMatches()
     {
         using AggCorpus corpus = AggCorpus.Build(5, documents: 120, merge: false);

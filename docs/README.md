@@ -42,6 +42,7 @@ Normative, language-neutral notes on what OneIndex does and how its files look. 
 | Page | What it covers |
 |---|---|
 | [queries.md](queries.md) | Semantics and limits of every query object. |
+| [more-like-this.md](more-like-this.md) | Documents that resemble a text or a document: term selection and query JSON. |
 | [scoring.md](scoring.md) | BM25F, proximity and the explain format. |
 | [search-contracts.md](search-contracts.md) | The shapes the engine is built against: queries, collectors, scorers. |
 | [ranking-rules.md](ranking-rules.md) | Optional bucket-sort ranking rules. |

@@ -38,7 +38,7 @@ The tests run the abstraction's own conformance suite (`Microsoft.Extensions.Vec
 
 | | Tests |
 |---|---:|
-| Everything `run.sh` runs (contract tests, conformance suites wired, dependency-injection suite) | 168 passed, 0 failed |
-| Excluded (`tests/OneIndex.VectorData.Tests/known-unsupported.txt`) | Manhattan and Hamming distance (2); the `Guid` key test, which also needs a dynamic collection (1); `EmbeddingGeneratorIsResolved` in 9 variants (lifetime and service key); the 16 data-type tests, which need a dynamic collection |
+| Contract tests, wired conformance suites, dependency-injection suite (`dotnet test`) | 168 passed, 0 failed, the unsupported cases below reported as skipped |
+| Skipped with a reason (`tests/OneIndex.VectorData.Tests/Unsupported.cs`) | Manhattan and Hamming distance (2); the `Guid` key test, which also needs a dynamic collection (1); `EmbeddingGeneratorIsResolved` in 9 variants (lifetime and service key); the 16 data-type tests, which need a dynamic collection |
 
-Filters comparing with `null` and `Contains` / `Any` over a collection property, excluded before, now pass (10 tests). Wired suites: collection management, distance functions, index kinds, filters (typed), basic, no-data, no-vector and multi-vector models, key types, hybrid search, dependency injection, data types (all excluded). Not wired: dynamic-model, embedding-generation and embedding-type suites (no dynamic collections, no generated embeddings). `tests/OneIndex.VectorData.Tests/run.sh <dll>` runs everything except the excluded tests.
+Filters comparing with `null` and `Contains` / `Any` over a collection property, excluded before, now pass (10 tests). Wired suites: collection management, distance functions, index kinds, filters (typed), basic, no-data, no-vector and multi-vector models, key types, hybrid search, dependency injection, data types (all excluded). Not wired: dynamic-model, embedding-generation and embedding-type suites (no dynamic collections, no generated embeddings). A plain `dotnet test` runs them all; the unsupported cases skip themselves, each naming the feature.

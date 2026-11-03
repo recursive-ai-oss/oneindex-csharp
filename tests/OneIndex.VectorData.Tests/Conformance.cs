@@ -44,6 +44,9 @@ public sealed class CollectionManagement(CollectionManagement.Fx f) : Collection
 
 public sealed class Distance(Distance.Fx f) : DistanceFunctionTests<string>(f), IClassFixture<Distance.Fx>
 {
+    // The constructor runs for every test of the suite; see Unsupported.
+    private readonly bool _checked = Unsupported.Run();
+
     public sealed class Fx : DistanceFunctionTests<string>.Fixture
     {
         public override TestStore TestStore => OneIndexTestStore.Instance;
@@ -103,6 +106,9 @@ public sealed class MultiVector(MultiVector.Fx f) : MultiVectorModelTests<string
 
 public sealed class KeyTypes(KeyTypes.Fx f) : KeyTypeTests(f), IClassFixture<KeyTypes.Fx>
 {
+    // The constructor runs for every test of the suite; see Unsupported.
+    private readonly bool _checked = Unsupported.Run();
+
     public sealed class Fx : KeyTypeTests.Fixture
     {
         public override TestStore TestStore => OneIndexTestStore.Instance;
@@ -124,6 +130,9 @@ public sealed class Hybrid(Hybrid.Fx1 a, Hybrid.Fx2 b) : HybridSearchTests<strin
 
 public sealed class DataTypes(DataTypes.Fx f) : DataTypeTests<string, DataTypeTests<string>.DefaultRecord>(f), IClassFixture<DataTypes.Fx>
 {
+    // The constructor runs for every test of the suite; see Unsupported.
+    private readonly bool _checked = Unsupported.Run();
+
     public sealed class Fx : DataTypeTests<string, DataTypeTests<string>.DefaultRecord>.Fixture
     {
         public override TestStore TestStore => OneIndexTestStore.Instance;
@@ -136,6 +145,8 @@ public sealed class DataTypes(DataTypes.Fx f) : DataTypeTests<string, DataTypeTe
 /// </summary>
 public sealed class DependencyInjection : DependencyInjectionTests<OneIndexVectorStore, OneIndexRecords<string, DependencyInjectionTests<string>.Record>, string, DependencyInjectionTests<string>.Record>
 {
+    public DependencyInjection() => Unsupported.Check();
+
     public override IEnumerable<Func<IServiceCollection, object?, ServiceLifetime, IServiceCollection>> StoreDelegates
     {
         get

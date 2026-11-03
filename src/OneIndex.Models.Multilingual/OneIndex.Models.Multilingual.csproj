@@ -18,6 +18,10 @@
     <None Include="$(OneIndexE5Weights)/LICENSE-multilingual-e5-small.txt" Pack="true" PackagePath="models/multilingual-e5-small/" Visible="false" />
   </ItemGroup>
 
+  <Target Name="RequireE5Weights" BeforeTargets="CoreCompile" Condition="'$(OneIndexRequireWeights)' == 'true'">
+    <Error Condition="!Exists('$(OneIndexE5Weights)/model.onemodel')" Text="OneIndexRequireWeights is set but the weights are missing (looked in $(OneIndexE5Weights)). Run tools/models/fetch-release-weights.sh." />
+  </Target>
+
   <ItemGroup>
     <ProjectReference Include="../OneIndex.Models/OneIndex.Models.csproj" />
   </ItemGroup>

@@ -30,3 +30,18 @@ public sealed class TooManyTermsException : QueryException
     /// <summary>The limit that was exceeded.</summary>
     public int Limit { get; }
 }
+
+/// <summary>A more-like-this query names a document that is not in the searched commit (or keeps no stored source). Data-dependent, like <see cref="TooManyTermsException"/>: the same query is valid against another commit.</summary>
+public sealed class SourceDocumentNotFoundException : QueryException
+{
+    /// <summary>Creates the exception.</summary>
+    /// <param name="id">The identifier that was not found.</param>
+    public SourceDocumentNotFoundException(string id)
+        : base($"No live document '{id}' with stored source was found for more-like-this.")
+    {
+        DocumentId = id;
+    }
+
+    /// <summary>The identifier that was not found.</summary>
+    public string DocumentId { get; }
+}
