@@ -130,8 +130,9 @@ public sealed class KeywordAnalyzer : Analyzer
 /// <summary>
 /// The analyzers this build knows, by the names schemas store. The list is a plain <c>switch</c> and a fixed table, not discovered by
 /// reflection, so trimming and AOT keep exactly what is named here. The names are: <c>standard</c> (the default), <c>cjk</c>,
-/// <c>keyword</c>, <c>whitespace-lowercase</c>, one per language code (<see cref="LanguageAnalyzer.LanguageCodes"/>) and the
-/// language code plus <c>-both</c>.
+/// <c>keyword</c>, <c>whitespace-lowercase</c>, one per language code (<see cref="LanguageAnalyzer.LanguageCodes"/>), the
+/// language code plus <c>-both</c>, and for the languages with a packed word list (<see cref="CompoundVocabulary.PackedLanguages"/>) the
+/// code plus <c>-compound</c> (compounds also indexed as their parts), with or without <c>-both</c>.
 /// </summary>
 public static class AnalyzerRegistry
 {
@@ -199,11 +200,13 @@ public static class AnalyzerRegistry
     {
         bool both = name.EndsWith("-both", StringComparison.Ordinal);
         string code = both ? name[..^5] : name;
+        bool compound = code.EndsWith("-compound", StringComparison.Ordinal);
+        code = compound ? code[..^9] : code;
         foreach (string known in LanguageAnalyzer.LanguageCodes)
         {
             if (known == code)
             {
-                return new LanguageAnalyzer(code, both);
+                return compound && !CompoundVocabulary.PackedLanguages.Contains(code) ? null : new LanguageAnalyzer(code, both, null, compound);
             }
         }
 

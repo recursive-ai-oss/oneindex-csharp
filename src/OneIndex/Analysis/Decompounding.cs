@@ -88,6 +88,45 @@ public sealed class CompoundVocabulary
         }
     }
 
+    /// <summary>The languages that have a packed word list: <c>de</c>, <c>nl</c>, <c>sv</c>, <c>da</c>, <c>no</c>, <c>fi</c> and <c>is</c>.</summary>
+    public static IReadOnlyList<string> PackedLanguages { get; } = ["da", "de", "fi", "is", "nl", "no", "sv"];
+
+    private static readonly Dictionary<string, CompoundVocabulary> s_packed = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The word list packed in this package for a language: corpus word counts from the Leipzig Corpora Collection (CC BY 4.0), and for
+    /// Dutch the OpenTaal word list with those counts (notices in <c>THIRD-PARTY-NOTICES.md</c>). The same instance is returned on every call;
+    /// it is never changed after loading, so it can be shared between threads and splitters.
+    /// </summary>
+    /// <param name="language">An ISO 639-1 code from <see cref="PackedLanguages"/>.</param>
+    /// <returns>The vocabulary, with frequencies.</returns>
+    /// <exception cref="ArgumentException">The language has no packed list.</exception>
+    /// <exception cref="FileNotFoundException">The assembly was built without the packed lists (a development build that did not run <c>tools/decompounding/build_lists.py</c>).</exception>
+    public static CompoundVocabulary ForLanguage(string language)
+    {
+        ArgumentNullException.ThrowIfNull(language);
+        if (!PackedLanguages.Contains(language))
+        {
+            throw new ArgumentException($"There is no packed decompounding word list for '{language}'.", nameof(language));
+        }
+
+        lock (s_packed)
+        {
+            if (s_packed.TryGetValue(language, out CompoundVocabulary? loaded))
+            {
+                return loaded;
+            }
+
+            using Stream resource = typeof(CompoundVocabulary).Assembly.GetManifestResourceStream("OneIndex.Analysis.Decompounding." + language + ".tsv.gz")
+                ?? throw new FileNotFoundException($"This build of OneIndex does not contain the '{language}' decompounding word list; load one with CompoundVocabulary.Read.");
+            using var gzip = new System.IO.Compression.GZipStream(resource, System.IO.Compression.CompressionMode.Decompress);
+            using var reader = new StreamReader(gzip, System.Text.Encoding.UTF8);
+            CompoundVocabulary v = Read(reader);
+            s_packed[language] = v;
+            return v;
+        }
+    }
+
     internal long CountOf(ReadOnlySpan<char> lowerCasePart)
         => _counts.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(lowerCasePart, out long c) ? c : 0;
 }
@@ -108,6 +147,13 @@ public sealed class CompoundOptions
     /// Joining elements that may sit between two parts and belong to neither (German "Liebe-s-brief", Dutch "kinder-en"). Default none.
     /// </summary>
     public IReadOnlyList<string> LinkingElements { get; init; } = [];
+
+    /// <summary>
+    /// Choose the split with the fewest parts, and among splits with that many parts the best geometric mean. Without it the best geometric
+    /// mean over all part counts wins, which cuts words into many short, very frequent fragments ("mittagessen" into "mit", "tag", "essen").
+    /// Default <see langword="true"/> (settled on hand-checked samples of seven languages, <c>docs/decompounding.md</c>).
+    /// </summary>
+    public bool PreferFewerParts { get; init; } = true;
 
     /// <summary>
     /// With frequencies, split a word only when the parts are more frequent than the word itself (the rule of Koehn and Knight 2003, section 3):
@@ -138,7 +184,7 @@ public sealed class CompoundOptions
 /// <summary>
 /// Splits a compound word into dictionary words by corpus-statistics decompounding (Koehn and Knight 2003, "Empirical methods for
 /// compound splitting", section 3): every way to cover the word with vocabulary words (optionally joined by linking elements) is
-/// scored by the geometric mean of the parts' counts, and the best wins; with fewer parts preferred on ties. Not thread-safe.
+/// scored by the geometric mean of the parts' counts, and the best wins (among the splits with the fewest parts unless <see cref="CompoundOptions.PreferFewerParts"/> is off). Not thread-safe.
 /// </summary>
 public sealed class CompoundSplitter
 {
@@ -147,6 +193,13 @@ public sealed class CompoundSplitter
     private double[] _best = new double[64];
     private int[] _from = new int[64], _count = new int[64], _partStart = new int[64], _partLength = new int[64];
     private char[] _lower = new char[64];
+
+    /// <summary>Creates a splitter for a language with a packed word list and that language's linking elements.</summary>
+    /// <param name="language">An ISO 639-1 code from <see cref="CompoundVocabulary.PackedLanguages"/>.</param>
+    /// <returns>A new splitter (not thread-safe; the word list behind it is shared).</returns>
+    /// <exception cref="ArgumentException">The language has no packed list.</exception>
+    /// <exception cref="FileNotFoundException">The assembly was built without the packed lists.</exception>
+    public static CompoundSplitter ForLanguage(string language) => new(CompoundVocabulary.ForLanguage(language), CompoundOptions.For(language));
 
     /// <summary>Creates a splitter.</summary>
     /// <param name="vocabulary">The words parts may be.</param>
@@ -240,6 +293,11 @@ public sealed class CompoundSplitter
             {
                 bestMean = mean;
                 bestK = k;
+            }
+
+            if (_options.PreferFewerParts)
+            {
+                break;
             }
         }
 
