@@ -24,6 +24,8 @@
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <EnablePackageValidation>true</EnablePackageValidation>
+    <!-- The last published version: a pack fails on an unintended breaking change against it. Bump after every release. -->
+    <PackageValidationBaselineVersion>0.4.0-preview.1</PackageValidationBaselineVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IsAotCompatible>true</IsAotCompatible>
     <IsTrimmable>true</IsTrimmable>
