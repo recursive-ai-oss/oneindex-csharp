@@ -12,6 +12,7 @@ namespace OneIndex.Codecs;
 internal sealed class FieldTermDictionary
 {
     private const int MaxArcsPerNode = 256;
+    private readonly int _version;
     private readonly byte[] _data;
     private readonly int _fstStart;
     private readonly int _fstLength;
@@ -21,9 +22,10 @@ internal sealed class FieldTermDictionary
     private readonly int _samplesStart;
     private readonly long _sampleCount;
 
-    public FieldTermDictionary(string fileName, byte[] data, int fstStart, int fstLength, int root, int tableStart, int tableLength, int samplesStart, long sampleCount, long termCount, long totalTermBytes, int maxTermBytes)
+    public FieldTermDictionary(string fileName, int version, byte[] data, int fstStart, int fstLength, int root, int tableStart, int tableLength, int samplesStart, long sampleCount, long termCount, long totalTermBytes, int maxTermBytes)
     {
         FileName = fileName;
+        _version = version;
         _data = data;
         _fstStart = fstStart;
         _fstLength = fstLength;
@@ -75,13 +77,13 @@ internal sealed class FieldTermDictionary
         ReadOnlySpan<byte> fst = Fst;
         foreach (byte b in prefix)
         {
-            int pos = ReadHeader(fst, node, out int arcCount, out bool isFinal);
-            if (isFinal)
+            ReadNode(fst, node, out NodeView view);
+            if (view.IsFinal)
             {
                 ordinal++;
             }
 
-            if (!FindArc(fst, node, pos, arcCount, b, ref ordinal, out node))
+            if (!FindArc(fst, node, in view, b, ref ordinal, out node))
             {
                 return EmptyTermEnumerator.Instance;
             }
@@ -98,20 +100,20 @@ internal sealed class FieldTermDictionary
         long ord = 0;
         foreach (byte b in term)
         {
-            int pos = ReadHeader(fst, node, out int arcCount, out bool isFinal);
-            if (isFinal)
+            ReadNode(fst, node, out NodeView view);
+            if (view.IsFinal)
             {
                 ord++;
             }
 
-            if (!FindArc(fst, node, pos, arcCount, b, ref ord, out node))
+            if (!FindArc(fst, node, in view, b, ref ord, out node))
             {
                 return false;
             }
         }
 
-        ReadHeader(fst, node, out _, out bool final);
-        if (!final)
+        ReadNode(fst, node, out NodeView last);
+        if (!last.IsFinal)
         {
             return false;
         }
@@ -126,10 +128,26 @@ internal sealed class FieldTermDictionary
     }
 
     // Finds the arc labelled 'label' in a node, adding the counts of the arcs before it to 'ordinal'.
-    private bool FindArc(ReadOnlySpan<byte> fst, int node, int pos, int arcCount, byte label, ref long ordinal, out int target)
+    private bool FindArc(ReadOnlySpan<byte> fst, int node, in NodeView view, byte label, ref long ordinal, out int target)
     {
+        if (_version >= 2)
+        {
+            // Labels are stored together, so the arc is found without decoding the others, and the words before it are one table read.
+            int at = fst.Slice(view.Labels, view.ArcCount).IndexOf(label);
+            if (at < 0)
+            {
+                target = 0;
+                return false;
+            }
+
+            ReadArc2(fst, node, in view, at, out _, out long before, out _, out target);
+            ordinal += before;
+            return true;
+        }
+
+        int pos = view.ArcPos;
         int previous = -1;
-        for (int a = 0; a < arcCount; a++)
+        for (int a = 0; a < view.ArcCount; a++)
         {
             ReadArc(fst, node, ref pos, out byte l, out long words, out int t);
             if (l <= previous)
@@ -155,6 +173,102 @@ internal sealed class FieldTermDictionary
         target = 0;
         return false;
     }
+
+    /// <summary>Where a node's parts are. Version 1: <see cref="ArcPos"/> is the first arc, read in sequence. Version 2: labels, cumulative word counts and child distances are three tables at fixed widths.</summary>
+    internal struct NodeView
+    {
+        public int ArcCount;
+        public bool IsFinal;
+        public int ArcPos;
+        public int Labels;
+        public int Cum;
+        public int Delta;
+        public int CumWidth;
+        public int DeltaWidth;
+    }
+
+    internal void ReadNode(ReadOnlySpan<byte> fst, int node, out NodeView view)
+    {
+        view = default;
+        if (_version < 2)
+        {
+            view.ArcPos = ReadHeader(fst, node, out view.ArcCount, out view.IsFinal);
+            return;
+        }
+
+        if ((uint)node >= (uint)fst.Length)
+        {
+            throw Corrupt("a node lies outside the automaton");
+        }
+
+        byte head = fst[node];
+        view.IsFinal = (head & 1) != 0;
+        view.CumWidth = ((head >> 1) & 3) + 1;
+        view.DeltaWidth = ((head >> 3) & 3) + 1;
+        int pos = node + 1;
+        int code = head >> 5;
+        if (code == 7)
+        {
+            ulong extra = ReadVarUInt(fst, ref pos);
+            if (extra > MaxArcsPerNode - 7)
+            {
+                throw Corrupt("a node claims more than 256 arcs");
+            }
+
+            view.ArcCount = 7 + (int)extra;
+        }
+        else
+        {
+            view.ArcCount = code;
+        }
+
+        view.Labels = pos;
+        view.Cum = pos + view.ArcCount;
+        view.Delta = view.Cum + (view.ArcCount * view.CumWidth);
+        if ((long)view.Delta + ((long)view.ArcCount * view.DeltaWidth) > fst.Length)
+        {
+            throw Corrupt("a node runs past the end of the automaton");
+        }
+    }
+
+    // Reads arc i of a version 2 node: its label, the words before it, the words through it and its child. The node was bounds
+    // checked by ReadNode, so the reads below stay inside the automaton.
+    internal void ReadArc2(ReadOnlySpan<byte> fst, int node, in NodeView view, int i, out byte label, out long before, out long inclusive, out int target)
+    {
+        label = fst[view.Labels + i];
+        before = i == 0 ? 0 : ReadFixed(fst, view.Cum + ((i - 1) * view.CumWidth), view.CumWidth);
+        inclusive = ReadFixed(fst, view.Cum + (i * view.CumWidth), view.CumWidth);
+        long delta = ReadFixed(fst, view.Delta + (i * view.DeltaWidth), view.DeltaWidth);
+        if (inclusive < before || inclusive > TermCount || delta == 0 || delta > node)
+        {
+            throw Corrupt("an arc has an invalid count or target");
+        }
+
+        target = node - (int)delta;
+    }
+
+    // Little-endian unsigned number of 1 to 4 bytes; the caller has checked that they lie inside the automaton.
+    private static long ReadFixed(ReadOnlySpan<byte> fst, int pos, int width)
+    {
+        // One four-byte load and a mask when four bytes remain; the few numbers at the very end of the automaton take the byte loop.
+        if (fst.Length >= 4 && (uint)pos <= (uint)(fst.Length - 4))
+        {
+            return System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(fst.Slice(pos, 4)) & (0xFFFFFFFFu >> (8 * (4 - width)));
+        }
+
+        return ReadFixedAtEnd(fst, pos, width);
+    }
+
+    private static long ReadFixedAtEnd(ReadOnlySpan<byte> fst, int pos, int width) => width switch
+    {
+        1 => fst[pos],
+        2 => fst[pos] | ((long)fst[pos + 1] << 8),
+        3 => fst[pos] | ((long)fst[pos + 1] << 8) | ((long)fst[pos + 2] << 16),
+        _ => (uint)(fst[pos] | (fst[pos + 1] << 8) | (fst[pos + 2] << 16) | (fst[pos + 3] << 24)),
+    };
+
+    // The words of all arcs of a version 2 node (the last cumulative entry).
+    internal static long ReadArcTotal(ReadOnlySpan<byte> fst, in NodeView view) => ReadFixed(fst, view.Cum + ((view.ArcCount - 1) * view.CumWidth), view.CumWidth);
 
     internal int ReadHeader(ReadOnlySpan<byte> fst, int node, out int arcCount, out bool isFinal)
     {
@@ -285,8 +399,15 @@ internal sealed class FieldTermDictionary
         private struct Frame
         {
             public int Node;
+            public NodeView View;
             public int ArcPos;
             public int ArcsLeft;
+            public int Index;
+            public long Consumed;
+            public ulong NarrowBytes;
+            public int NarrowCount;
+            public int NarrowNext;
+            public int SearchFrom;
             public bool IsFinal;
             public bool SelfDone;
             public int StateOffset;
@@ -310,6 +431,11 @@ internal sealed class FieldTermDictionary
         private long _budget;
         private bool _done;
         private InfoCursor _cursor = new() { Ordinal = -1 };
+        private readonly int[] _viableState = new int[4];
+        private readonly byte[] _viableScratch = new byte[8]; // TryGetViableBytes writes at most 8
+        private int _viableLength;
+        private int _viableCount;
+        private ulong _viableBytes;
 
         public TermEnumerator(FieldTermDictionary dict, ReadOnlySpan<byte> prefix, int node, long ordinal, TermAutomaton? automaton)
         {
@@ -404,15 +530,31 @@ internal sealed class FieldTermDictionary
                     }
                 }
 
-                if (f.ArcsLeft == 0)
+                byte label;
+                long words;
+                int target;
+                if (_dict._version >= 2)
                 {
-                    _poolTop = f.SavedTop;
-                    _depth--;
-                    continue;
+                    if (!NextArc2(ref f, fst, out label, out words, out target))
+                    {
+                        _poolTop = f.SavedTop;
+                        _depth--;
+                        continue;
+                    }
+                }
+                else
+                {
+                    if (f.ArcsLeft == 0)
+                    {
+                        _poolTop = f.SavedTop;
+                        _depth--;
+                        continue;
+                    }
+
+                    _dict.ReadArc(fst, f.Node, ref f.ArcPos, out label, out words, out target);
+                    f.ArcsLeft--;
                 }
 
-                _dict.ReadArc(fst, f.Node, ref f.ArcPos, out byte label, out long words, out int target);
-                f.ArcsLeft--;
                 if (label <= f.LastLabel)
                 {
                     throw _dict.Corrupt("arc labels are not increasing");
@@ -515,8 +657,15 @@ internal sealed class FieldTermDictionary
                     Array.Resize(ref _frames, _frames.Length * 2);
                 }
 
+                // The child is set up in the next slot and entered only if something below it can still match.
+                if (!InitFrame(ref _frames[_depth + 1], target, stateOffset, stateLength, saved, childNeed, childPartial, canSkip: _automaton is not null))
+                {
+                    _poolTop = saved;
+                    _nextOrdinal += words;
+                    continue;
+                }
+
                 _depth++;
-                InitFrame(ref _frames[_depth], target, stateOffset, stateLength, saved, childNeed, childPartial);
                 fst = _dict.Fst;
             }
         }
@@ -525,23 +674,148 @@ internal sealed class FieldTermDictionary
         {
         }
 
-        private void InitFrame(ref Frame frame, int node, int stateOffset, int stateLength, int saved, int need, int partial = 0)
+        // The next arc of a version 2 node, in label order. When the automaton can say which first bytes keep it alive (a
+        // Levenshtein state with no edits left reads only the word's own letters), only those arcs are looked up, directly; the
+        // words of the arcs passed over are added to the running ordinal from the cumulative table. Returns false at the end.
+        private bool NextArc2(ref Frame f, ReadOnlySpan<byte> fst, out byte label, out long words, out int target)
         {
-            int pos = _dict.ReadHeader(_dict.Fst, node, out int arcCount, out bool isFinal);
-            frame = new Frame
+            ref readonly NodeView v = ref f.View;
+            int i;
+            if (f.NarrowCount >= 0)
             {
-                Node = node,
-                ArcPos = pos,
-                ArcsLeft = arcCount,
-                IsFinal = isFinal,
-                SelfDone = false,
-                StateOffset = stateOffset,
-                StateLength = stateLength,
-                SavedTop = saved,
-                Need = need,
-                Partial = partial,
-                LastLabel = -1,
-            };
+                i = -1;
+                ReadOnlySpan<byte> labels = fst.Slice(v.Labels, v.ArcCount);
+                while (f.NarrowNext < f.NarrowCount)
+                {
+                    int at = labels[f.SearchFrom..].IndexOf((byte)(f.NarrowBytes >> (8 * f.NarrowNext++)));
+                    if (at >= 0)
+                    {
+                        i = f.SearchFrom + at;
+                        f.SearchFrom = i + 1;
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                i = f.Index < v.ArcCount ? f.Index++ : -1;
+            }
+
+            if (i < 0)
+            {
+                // The rest of the node's terms are passed over.
+                if (v.ArcCount > 0)
+                {
+                    _nextOrdinal += ReadArcTotal(fst, in v) - f.Consumed;
+                    f.Consumed = ReadArcTotal(fst, in v);
+                }
+
+                label = 0;
+                words = 0;
+                target = 0;
+                return false;
+            }
+
+            // Arcs taken in sequence know the words before them (the previous arc's cumulative count): one table read less.
+            long before = f.NarrowCount >= 0 ? (i == 0 ? 0 : ReadFixed(fst, v.Cum + ((i - 1) * v.CumWidth), v.CumWidth)) : f.Consumed;
+            label = fst[v.Labels + i];
+            long inclusive = ReadFixed(fst, v.Cum + (i * v.CumWidth), v.CumWidth);
+            long delta = ReadFixed(fst, v.Delta + (i * v.DeltaWidth), v.DeltaWidth);
+            if (inclusive < before || inclusive > _dict.TermCount || delta == 0 || delta > f.Node)
+            {
+                throw _dict.Corrupt("an arc has an invalid count or target");
+            }
+
+            target = f.Node - (int)delta;
+            _nextOrdinal += before - f.Consumed;
+            words = inclusive - before;
+            f.Consumed = inclusive;
+            return true;
+        }
+
+        // Sets up a frame for a node. With canSkip, returns false when nothing at or below the node can match: it is not a term the
+        // automaton accepts, and either it has no arcs or the automaton can say that only a few first bytes keep it alive and the
+        // node has none of them.
+        private bool InitFrame(ref Frame frame, int node, int stateOffset, int stateLength, int saved, int need, int partial = 0, bool canSkip = false)
+        {
+            _dict.ReadNode(_dict.Fst, node, out frame.View);
+            int arcCount = frame.View.ArcCount;
+            ulong narrowBytes = 0;
+            int narrowCount = -1;
+            if (_dict._version >= 2 && _automaton is not null && need == 0 && arcCount > 0 && stateLength > 0)
+            {
+                bool same = stateLength == _viableLength;
+                for (int k = 0; same && k < stateLength; k++)
+                {
+                    same = _pool[stateOffset + k] == _viableState[k];
+                }
+
+                if (same)
+                {
+                    // Sibling arcs that the automaton treats alike lead to the same state; its answer is kept.
+                    narrowCount = _viableCount;
+                    narrowBytes = _viableBytes;
+                }
+                else
+                {
+                    ReadOnlySpan<int> state = _pool.AsSpan(stateOffset, stateLength);
+                    narrowCount = _automaton.TryGetViableBytes(state, _viableScratch);
+                    for (int k = 0; k < narrowCount; k++)
+                    {
+                        narrowBytes |= (ulong)_viableScratch[k] << (8 * k);
+                    }
+
+                    if (stateLength <= _viableState.Length)
+                    {
+                        state.CopyTo(_viableState);
+                        _viableLength = stateLength;
+                        _viableCount = narrowCount;
+                        _viableBytes = narrowBytes;
+                    }
+                }
+            }
+
+            if (canSkip && need == 0 && stateLength > 0 && !(frame.View.IsFinal && _automaton!.IsAccepting(_pool.AsSpan(stateOffset, stateLength))))
+            {
+                if (arcCount == 0)
+                {
+                    return false;
+                }
+
+                if (narrowCount >= 0)
+                {
+                    ReadOnlySpan<byte> labels = _dict.Fst.Slice(frame.View.Labels, arcCount);
+                    bool any = false;
+                    for (int k = 0; k < narrowCount && !any; k++)
+                    {
+                        any = labels.Contains((byte)(narrowBytes >> (8 * k)));
+                    }
+
+                    if (!any)
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            frame.Node = node;
+            frame.NarrowBytes = narrowBytes;
+            frame.NarrowCount = narrowCount;
+            frame.ArcPos = frame.View.ArcPos;
+            frame.ArcsLeft = arcCount;
+            frame.Index = 0;
+            frame.Consumed = 0;
+            frame.NarrowNext = 0;
+            frame.SearchFrom = 0;
+            frame.IsFinal = frame.View.IsFinal;
+            frame.SelfDone = false;
+            frame.StateOffset = stateOffset;
+            frame.StateLength = stateLength;
+            frame.SavedTop = saved;
+            frame.Need = need;
+            frame.Partial = partial;
+            frame.LastLabel = -1;
+            return true;
         }
 
         private void EnsurePool(int size)

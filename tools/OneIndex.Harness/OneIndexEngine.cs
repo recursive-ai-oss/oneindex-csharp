@@ -71,7 +71,7 @@ public sealed class OneIndexEngine : ITextEngine
         }
 
         _settings = settings;
-        _writer = IndexWriter.Open(_storage, schema, new IndexWriterOptions { MergeScheduler = new ThreadedMergeScheduler(), AutoMerge = Environment.GetEnvironmentVariable("ONEINDEX_AUTOMERGE") != "0", MaxBufferedDocuments = int.TryParse(Environment.GetEnvironmentVariable("ONEINDEX_BUFFERED_DOCS"), out int buffered) ? buffered : 20_000 });
+        _writer = IndexWriter.Open(_storage, schema, new IndexWriterOptions { MergePolicy = new TieredMergePolicy { SizeRatio = double.TryParse(Environment.GetEnvironmentVariable("ONEINDEX_SIZE_RATIO"), System.Globalization.CultureInfo.InvariantCulture, out double sr) ? sr : 2 }, MergeScheduler = new ThreadedMergeScheduler(), AutoMerge = Environment.GetEnvironmentVariable("ONEINDEX_AUTOMERGE") != "0", MaxBufferedDocuments = int.TryParse(Environment.GetEnvironmentVariable("ONEINDEX_BUFFERED_DOCS"), out int buffered) ? buffered : 20_000 });
     }
 
     /// <inheritdoc/>

@@ -54,7 +54,7 @@ public static class CodecRegistry
 {
     private static readonly CodecRef[] Known =
     [
-        new(SegmentParts.Terms, 1),
+        new(SegmentParts.Terms, 2),
 
         new(SegmentParts.Postings, 1),
 
