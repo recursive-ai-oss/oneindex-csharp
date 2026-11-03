@@ -9,6 +9,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `RecursiveAI.OneIndex.Models`: SentencePiece unigram tokenizer (`SentencePieceModel`, `SentencePieceTokenizer`) with the nmt_nfkc normalizer.
 - New package `RecursiveAI.OneIndex.Models.Multilingual`: `MultilingualE5Embedder` (multilingual-e5-small, int8 weights packed).
 
+- More-like-this: `MoreLikeThisQuery` picks the most distinctive terms of a text or a stored document by term frequency times idf and searches them; `index.MoreLikeThis(id)`, `index.MoreLikeThisText(text)` and the query JSON node `moreLikeThis` (docs/more-like-this.md). A missing source document raises `SourceDocumentNotFoundException`.
+- Facet value search on the happy path: `search.FacetValues(x => x.Category, "sho")` counts over the documents of that search.
+- Release builds fetch the packed model weights from a release asset checked against a pinned SHA-256 and fail without them (`tools/models/fetch-release-weights.sh`).
+
 ## [0.3.0-preview.1] - 2026-11-03
 
 - Commit format 3: a flushed segment writes its text, column, point, stored and identifier parts into one pack file, so a small commit adds two files instead of eight (fewer flushes to disk per commit). Indexes written by earlier formats open, search and merge unchanged.
