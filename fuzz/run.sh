@@ -4,7 +4,7 @@
 #   fuzz/run.sh <target> <seconds> [corpus dir] [extra libFuzzer flags...]
 #   fuzz/run.sh replay <target> <file>...      # run saved inputs once, without libFuzzer (reproduce a finding)
 #
-# Targets: commit, analysis, terms, postings, segment, query, columns, points, stored, usertext, strict, filter, queryjson, dynamic, vectors, wordpiece   (see fuzz/README.md)
+# Targets: commit, analysis, terms, postings, segment, query, columns, points, stored, usertext, strict, filter, queryjson, dynamic, vectors, wordpiece, dictionary, asian   (see fuzz/README.md)
 #
 # Environment (nothing is baked into the script):
 #   ONEINDEX_FUZZ_WORK    required: where builds, corpora and findings go. Keep it outside the checkout.
@@ -43,6 +43,8 @@ case "$target" in
   usertext|strict|filter|queryjson) maxlen=8192 ;;
   dynamic) maxlen=4096 ;;
   wordpiece) maxlen=8192 ;;
+  asian) maxlen=4096 ;;
+  dictionary) maxlen=4096 ;;
   *) echo "unknown target '$target'" >&2; exit 2 ;;
 esac
 
@@ -79,6 +81,8 @@ mkdir -p "$corpus" "$findings"
 
 "$instrument" "$bin/OneIndex.dll" >/dev/null
 [[ "$target" != wordpiece ]] || "$instrument" "$bin/OneIndex.Models.dll" >/dev/null
+[[ "$target" != dictionary && "$target" != asian ]] || "$instrument" "$bin/OneIndex.Analysis.Asian.dll" >/dev/null
+[[ "$target" != dictionary && "$target" != asian ]] || "$instrument" "$bin/OneIndex.Models.dll" >/dev/null
 
 # An extra seed directory is read-only for libFuzzer: new finds go to $corpus.
 dirs=("$corpus")
