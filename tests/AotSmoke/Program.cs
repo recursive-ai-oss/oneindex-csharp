@@ -3,6 +3,7 @@ using OneIndex.Storage;
 
 SmokeScenario.Run(new MemoryStorage());
 AnalysisScenario.Run();
+AsianScenario.Run();
 HappyPathScenario.Run();
 DynamicAndEvolutionScenario.Run();
 DynamicObjectScenario.Run();

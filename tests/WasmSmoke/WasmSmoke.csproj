@@ -19,11 +19,14 @@
     <Compile Include="../AotSmoke/QueryFormsLowLevelScenario.cs" Link="QueryFormsLowLevelScenario.cs" />
     <Compile Include="../AotSmoke/VectorScenario.cs" Link="VectorScenario.cs" />
     <Compile Include="../AotSmoke/RankingScenario.cs" Link="RankingScenario.cs" />
+    <Compile Include="../AotSmoke/AsianScenario.cs" Link="AsianScenario.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../src/OneIndex.Generators/OneIndex.Generators.csproj" ReferenceOutputAssembly="false" OutputItemType="Analyzer" />
     <ProjectReference Include="../../src/OneIndex/OneIndex.csproj" />
+    <ProjectReference Include="../../src/OneIndex.Models/OneIndex.Models.csproj" />
+    <ProjectReference Include="../../src/OneIndex.Analysis.Asian/OneIndex.Analysis.Asian.csproj" />
   </ItemGroup>
 
 </Project>
