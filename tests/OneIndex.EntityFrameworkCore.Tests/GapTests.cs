@@ -90,7 +90,12 @@ public class GapTests
         foreach (int seed in new[] { 1, 2, 3, 4, 5 })
         {
             using var env = new Env();
-            OneIndexRuntime rt = env.Runtime(o => o.BatchSize = 7);
+            // This test is about the order rows become visible, not about age: a slow machine must not run into the 30 s default.
+            OneIndexRuntime rt = env.Runtime(o =>
+            {
+                o.BatchSize = 7;
+                o.LateRowAge = TimeSpan.FromHours(1);
+            });
             using AppDb plain = AppDb.Create(env.Db, null);
             await rt.CatchUpAsync();
             var rng = new Random(seed);
