@@ -18,6 +18,7 @@ internal static class IvfRun
         foreach (IvfStorage storage in new[] { IvfStorage.FullPrecision, IvfStorage.EightBit })
         {
             string file = Path.Combine(scratch, $"bench-{storage}.ivf");
+            File.Delete(file);
             var local = new FileSystemStorage(scratch);
             long rssBefore = Process.GetCurrentProcess().WorkingSet64;
             var clock = Stopwatch.StartNew();
