@@ -28,6 +28,8 @@ An analyzer instance is not thread-safe; each thread asks `AnalyzerRegistry` for
 | `cjk` | `StandardTokenizer` with CJK bigrams → `NormalizationFilter` (NFKC) → `CaseFoldFilter`. |
 | `<code>` | `StandardTokenizer` → [`TurkishCaseFilter` for `tr`] → `CaseFoldFilter` → `ApostropheFilter` → [`ElisionFilter` for `fr`, `it`, `ca`] → [`StopFilter` where Snowball publishes a list] → `StemFilter(Replace)` → [`AsciiFoldFilter` for `en`; `AccentFoldFilter` for `fr`, `es`, `it`, `pt`, `ca`, `nl`, `ro`]. |
 | `<code>-both` | The same with `StemFilter(Both)`. |
+| `<code>-compound`, `<code>-compound-both` | For `da`, `de`, `fi`, `is`, `nl`, `no`, `sv`: the language chain with a `DecompoundFilter` after case folding (docs/decompounding.md). |
+| `ja`, `zh`, `ko`, `th`, `lo`, `km`, `my` | Registered by `AsianAnalyzers.Register()` from the Asian package (`AnalyzerRegistry.Register`); docs/analysis-asian.md. |
 | `keyword` | The whole text as one term. |
 | `whitespace-lowercase` | Split at white space, invariant lower case; a reference for tests. |
 
