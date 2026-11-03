@@ -21,6 +21,7 @@
     <Compile Include="../AotSmoke/RankingScenario.cs" Link="RankingScenario.cs" />
     <Compile Include="../AotSmoke/AsianScenario.cs" Link="AsianScenario.cs" />
     <Compile Include="../AotSmoke/StaticScenario.cs" Link="StaticScenario.cs" />
+    <Compile Include="../AotSmoke/MultiVectorScenario.cs" Link="MultiVectorScenario.cs" />
   </ItemGroup>
 
   <ItemGroup>

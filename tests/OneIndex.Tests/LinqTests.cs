@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using OneIndex.Linq;
+using OneIndex.Queries;
 
 namespace OneIndex.Tests;
 
@@ -96,7 +97,7 @@ public class LinqTests
         {
             ExpressionType op = Operators[random.Next(Operators.Length)];
             ExpressionType orderless = random.Next(2) == 0 ? ExpressionType.Equal : ExpressionType.NotEqual;
-            switch (random.Next(14))
+            switch (random.Next(18))
             {
                 case 0:
                     return Compare(op, Expression.Property(x, "Count"), Expression.Constant(random.Next(-4, 14)));
@@ -127,6 +128,22 @@ public class LinqTests
                     return Expression.Call(typeof(Enumerable), nameof(Enumerable.Contains), [typeof(string)], Expression.Property(x, "Labels"), Expression.Constant(Labels[random.Next(Labels.Length)]));
                 case 12:
                     return Expression.Call(typeof(Enumerable), nameof(Enumerable.Contains), [typeof(string)], Expression.Constant(Colors.Where(_ => random.Next(2) == 0).ToArray()), Expression.Property(x, "Color"));
+                case 14:
+                    return random.Next(2) == 0 ? Expression.Equal(Expression.Property(x, "Maybe"), Expression.Constant(null, typeof(int?))) : Expression.NotEqual(Expression.Constant(null, typeof(int?)), Expression.Property(x, "Maybe"));
+                case 15:
+                    return Expression.Call(typeof(Enumerable), nameof(Enumerable.Any), [typeof(string)], Expression.Property(x, "Labels"));
+                case 16:
+                {
+                    ParameterExpression l = Expression.Parameter(typeof(string), "l");
+                    Expression body = Expression.Equal(l, Expression.Constant(Labels[random.Next(Labels.Length)]));
+                    if (random.Next(2) == 0)
+                    {
+                        body = Expression.OrElse(body, Expression.Equal(Expression.Constant(Labels[random.Next(Labels.Length)]), l));
+                    }
+
+                    return Expression.Call(typeof(Enumerable), nameof(Enumerable.Any), [typeof(string)], Expression.Property(x, "Labels"), Expression.Lambda<Func<string, bool>>(body, l));
+                }
+
                 default:
                     return Expression.Call(typeof(Enumerable), nameof(Enumerable.Contains), [typeof(int)], Expression.Constant(Enumerable.Range(-2, 8).Where(_ => random.Next(2) == 0).ToArray()), Expression.Property(x, "Count"));
             }
@@ -306,13 +323,14 @@ public class LinqTests
     [InlineData("x => x.Unfiltered == \"u\"", "x.Unfiltered", "not filterable")]
     [InlineData("x => x.Color.StartsWith(\"r\")", "x.Color.StartsWith(", "string methods")]
     [InlineData("x => x.Color.Contains(\"r\")", "x.Color.Contains(", "")]
-    [InlineData("x => x.Color == null", "(x.Color == null)", "null")]
+    [InlineData("x => x.Count > null", "null", "only be compared with")]
     [InlineData("x => x.Count + 1 > 3", "x.Count + 1", "one side must be a member")]
     [InlineData("x => x.Count > x.Big", "> x.Big)", "document")]
     [InlineData("x => x.Color.Length > 2", "x.Color.Length", "")]
     [InlineData("x => x.Count.ToString() == \"3\"", "x.Count.ToString(", "")]
     [InlineData("x => x.Color.CompareTo(\"a\") > 0", "CompareOrdinal", "")]
-    [InlineData("x => x.Labels.Any()", "x.Labels", "")]
+    [InlineData("x => x.Labels.Any(l => l != \"a\")", "!=", "inside Any")]
+    [InlineData("x => x.Labels.Any(l => l == \"a\" && l == \"b\")", "AndAlso", "inside Any")]
     [InlineData("x => x.Color == \"a\" && x.Text == \"b\"", "x.Text", "full-text")]
     [InlineData("x => x.Count == int.Parse(x.Color)", "x.Color", "")]
     public void AnUntranslatableExpressionNamesTheSubExpression(string source, string fragment, string reason)
@@ -333,17 +351,59 @@ public class LinqTests
         "x => x.Unfiltered == \"u\"" => x => x.Unfiltered == "u",
         "x => x.Color.StartsWith(\"r\")" => x => x.Color.StartsWith('r'),
         "x => x.Color.Contains(\"r\")" => x => x.Color.Contains('r', StringComparison.Ordinal),
-        "x => x.Color == null" => x => x.Color == null!,
+        "x => x.Count > null" => NullOrdering(),
         "x => x.Count + 1 > 3" => x => x.Count + 1 > 3,
         "x => x.Count > x.Big" => x => x.Count > x.Big,
         "x => x.Color.Length > 2" => x => x.Color.Length > 2,
         "x => x.Count.ToString() == \"3\"" => x => x.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) == "3",
         "x => x.Color.CompareTo(\"a\") > 0" => x => string.CompareOrdinal(x.Color, "a") > 0,
-        "x => x.Labels.Any()" => x => x.Labels.Any(),
+        "x => x.Labels.Any(l => l != \"a\")" => x => x.Labels.Any(l => l != "a"),
+        "x => x.Labels.Any(l => l == \"a\" && l == \"b\")" => x => x.Labels.Any(l => l == "a" && l == "b"),
         "x => x.Color == \"a\" && x.Text == \"b\"" => x => x.Color == "a" && x.Text == "b",
         "x => x.Count == int.Parse(x.Color)" => x => x.Count == int.Parse(x.Color, System.Globalization.CultureInfo.InvariantCulture),
         _ => throw new ArgumentException(source),
     };
+
+    private static Expression<Func<DiffDoc, bool>> NullOrdering()
+    {
+        ParameterExpression x = Expression.Parameter(typeof(DiffDoc), "x");
+        return Expression.Lambda<Func<DiffDoc, bool>>(Expression.GreaterThan(Expression.Property(x, "Maybe"), Expression.Constant(null, typeof(int?))), x);
+    }
+
+    [Fact]
+    public void NullAndAnyFiltersMatchLinqToObjects()
+    {
+        var random = new Random(11);
+        List<DiffDoc> docs = MakeDocs(random, 200);
+        using SearchIndex<DiffDoc> index = SearchIndex.InMemory<DiffDoc>();
+        index.Upsert(docs);
+        index.Commit();
+        int?[] withNull = [2, null];
+        string[] names = ["alpha", "zeta"];
+
+        void Check(Expression<Func<DiffDoc, bool>> predicate)
+        {
+            string[] expected = docs.Where(predicate.Compile()).Select(d => d.Id).Order(StringComparer.Ordinal).ToArray();
+            string[] actual = index.Search().Where(predicate).Take(1000).Select(h => h.Id).Order(StringComparer.Ordinal).ToArray();
+            Assert.True(expected.Length > 0 && expected.Length < docs.Count, predicate.ToString());
+            Assert.Equal(expected, actual);
+            string text = FilterString.Print(new FilterTranslator<DiffDoc>(index.Mapping).Translate(predicate), index.Schema);
+            Assert.Equal(expected, index.Search().Where(text).Take(1000).Select(h => h.Id).Order(StringComparer.Ordinal).ToArray());
+        }
+
+        Check(x => x.Maybe == null);
+        Check(x => x.Maybe != null);
+        Check(x => null == x.Maybe);
+        Check(x => x.Maybe == null && x.Flag);
+        Check(x => !(x.Maybe == null) || x.Count > 8);
+        Check(x => withNull.Contains(x.Maybe));
+        Check(x => x.Labels.Any());
+        Check(x => !x.Labels.Any());
+        Check(x => x.Labels.Any(l => l == "alpha"));
+        Check(x => x.Labels.Any(l => "beta" == l || l == "gamma"));
+        Check(x => x.Labels.Any(l => names.Contains(l)));
+        Check(x => x.Labels.Any(l => l == "alpha") && x.Count > 3);
+    }
 
     [Fact]
     public void ThrowingWhileReadingACapturedValueIsReportedAsUnsupported()

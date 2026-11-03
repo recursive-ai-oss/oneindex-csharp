@@ -69,6 +69,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
         Geo,
         Vector,
         Sparse,
+        MultiVector,
     }
 
     private sealed class Result
@@ -101,6 +102,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
         public bool Rerank;
         public bool VectorAttr;
         public bool SparseAttr;
+        public bool MultiVectorAttr;
         public int Dimensions;
         public string? From;
         public int Metric;
@@ -390,6 +392,17 @@ public sealed class MappingGenerator : IIncrementalGenerator
                     }
 
                     break;
+                case "MultiVectorAttribute":
+                    m.MultiVectorAttr = true;
+                    foreach (KeyValuePair<string, TypedConstant> arg in attribute.NamedArguments)
+                    {
+                        if (arg.Key == "Dimensions" && arg.Value.Value is IConvertible mvDimensions)
+                        {
+                            m.Dimensions = mvDimensions.ToInt32(CultureInfo.InvariantCulture);
+                        }
+                    }
+
+                    break;
                 case "VectorAttribute":
                     m.VectorAttr = true;
                     foreach (KeyValuePair<string, TypedConstant> arg in attribute.NamedArguments)
@@ -447,6 +460,18 @@ public sealed class MappingGenerator : IIncrementalGenerator
             else
             {
                 diagnostics.Add(Diagnostic.Create(UnsupportedType, location, property.Name, property.Type.ToDisplayString(), "[Vector]"));
+                return null;
+            }
+        }
+        else if (m.MultiVectorAttr)
+        {
+            if (property.Type is IArrayTypeSymbol { Rank: 1, ElementType: IArrayTypeSymbol { Rank: 1 } rows } && rows.ElementType.SpecialType == SpecialType.System_Single)
+            {
+                m.Shape = Shape.MultiVector;
+            }
+            else
+            {
+                diagnostics.Add(Diagnostic.Create(UnsupportedType, location, property.Name, property.Type.ToDisplayString(), "[MultiVector] (use float[][])"));
                 return null;
             }
         }
@@ -509,6 +534,19 @@ public sealed class MappingGenerator : IIncrementalGenerator
             if ((m.Dimensions < 1 && !(m.Dimensions == 0 && m.From is not null)) || m.Dimensions > 65536 || m.Metric < 0 || m.Metric > 2 || m.HnswM < 2 || m.HnswM > 256 || m.EfConstruction < m.HnswM || m.EfConstruction > 4096 || m.FlatThreshold < 0 || m.FlatThreshold > 100000000 || m.Quantization < 0 || m.Quantization > 3 || !(m.Oversample == 0 || (m.Oversample >= 1 && m.Oversample <= 100)))
             {
                 diagnostics.Add(Diagnostic.Create(BadAttributeValue, location, property.Name, "[Vector] needs Dimensions from 1 to 65536 (or none with From, the embedder then sets it), a known Metric, M from 2 to 256, EfConstruction from M to 4096, FlatThreshold from 0 to 100 million, a known Quantization and an Oversample of 0 or 1 to 100"));
+            }
+        }
+
+        if (m.MultiVectorAttr)
+        {
+            if (m.FullText || m.Keyword || m.Filterable || m.Sortable || m.Facet || m.GeoAttr || m.IsId || m.VectorAttr || m.SparseAttr)
+            {
+                diagnostics.Add(Diagnostic.Create(Conflict, location, property.Name, "a [MultiVector] member cannot also be [FullText], [Keyword], [Filterable], [Sortable], [Facet], [Geo], [SearchId], [Vector] or [Sparse]"));
+            }
+
+            if (m.Dimensions < 1 || m.Dimensions > 65536)
+            {
+                diagnostics.Add(Diagnostic.Create(BadAttributeValue, location, property.Name, "[MultiVector] needs Dimensions from 1 to 65536"));
             }
         }
 
@@ -793,6 +831,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
             Shape.Geo => "GeoPoint",
             Shape.Vector => "Vector",
             Shape.Sparse => "Sparse",
+            Shape.MultiVector => "Bytes",
             _ => "Date",
         };
         // Text fields are searched when [FullText]; everything else is searched by value only when marked for filtering.
@@ -811,6 +850,10 @@ public sealed class MappingGenerator : IIncrementalGenerator
               + (m.From is null ? string.Empty : ", from: " + Lit(m.From))
             : string.Empty;
         indexed |= m.Shape == Shape.Vector;
+        if (m.Shape == Shape.MultiVector)
+        {
+            vector = ", dimensions: " + m.Dimensions.ToString(CultureInfo.InvariantCulture);
+        }
 
         return "new global::OneIndex.MappedMember(" + Lit(m.Name) + ", global::OneIndex.Index.FieldType." + kind + ", multi: " + Bool(m.Multi) + ", indexed: " + Bool(indexed) + ", column: " + Bool(column)
             + ", facet: " + Bool(m.Facet) + ", fullText: " + Bool(m.FullText) + ", isId: " + Bool(m.IsId) + ", boost: " + boost + ", analyzer: " + analyzer + vector + sparse + (m.FullText && m.Rerank ? ", rerank: true" : string.Empty) + ")";
@@ -830,6 +873,9 @@ public sealed class MappingGenerator : IIncrementalGenerator
             case Shape.Vector:
                 // An empty array is the default of a non-nullable property: no vector supplied.
                 sb.AppendLine("            if (" + p + " is { Length: > 0 } v_" + m.Name + ") { document.Add(" + n + ", v_" + m.Name + "); }");
+                break;
+            case Shape.MultiVector:
+                sb.AppendLine("            if (" + p + " is { } mv_" + m.Name + ") { document.Add(" + n + ", global::OneIndex.Index.FieldValue.FromBytes(global::OneIndex.Vectors.MultiVector.Pack(mv_" + m.Name + ", " + m.Dimensions.ToString(CultureInfo.InvariantCulture) + "))); }");
                 break;
             case Shape.Sparse:
                 sb.AppendLine("            if (" + p + " is { } sp_" + m.Name + ") { document.Add(" + n + ", sp_" + m.Name + "); }");
@@ -884,6 +930,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
             Shape.DateTime => "result." + name + " = global::OneIndex.SearchMapping.FromDate(field.Value);",
             Shape.Vector => "result." + name + " = field.Value.AsVector().ToArray();",
             Shape.Sparse => "result." + name + " = field.Value.AsSparse();",
+            Shape.MultiVector => "result." + name + " = global::OneIndex.Vectors.MultiVector.ToRows(field.Value.AsBytes().Span);",
             Shape.Geo => "{ (double la, double lo) = field.Value.AsGeoPoint(); result." + name + " = new global::OneIndex.GeoPoint(la, lo); }",
             _ => "result." + name + " = global::System.DateTimeOffset.FromUnixTimeMilliseconds(field.Value.AsInt64());",
         };

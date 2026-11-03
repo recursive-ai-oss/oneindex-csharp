@@ -545,7 +545,7 @@ internal sealed class VectorPartReader : ISegmentPartReader, IVectorSource
             throw new CorruptIndexException(name, "the directory is larger than the limits allow");
         }
 
-        byte[] directory = BlockCache.ReadChecked(file, (long)directoryAt, directoryBytes, directoryCrc, "the directory");
+        byte[] directory = BlockCache.ReadChecked(file, (long)directoryAt, directoryBytes, directoryCrc, "the directory", limits);
         return (new ByteCursorBox(name, directory), (long)directoryAt);
     }
 
@@ -642,7 +642,7 @@ internal sealed class VectorPartReader : ISegmentPartReader, IVectorSource
             int[]? ordDoc = null;
             if (sparse)
             {
-                byte[] raw = BlockCache.ReadChecked(vectors, (long)ordDocOffset, ordDocLength, ordDocCrc, "the ordinal to document table");
+                byte[] raw = BlockCache.ReadChecked(vectors, (long)ordDocOffset, ordDocLength, ordDocCrc, "the ordinal to document table", limits);
                 ordDoc = new int[(int)count];
                 int last = -1;
                 for (int j = 0; j < ordDoc.Length; j++)
@@ -657,14 +657,14 @@ internal sealed class VectorPartReader : ISegmentPartReader, IVectorSource
                 }
             }
 
-            byte[] crcBytes = BlockCache.ReadChecked(vectors, (long)crcOffset, blocks * 4, crcTableCrc, "the block checksum table");
+            byte[] crcBytes = BlockCache.ReadChecked(vectors, (long)crcOffset, blocks * 4, crcTableCrc, "the block checksum table", limits);
             var crcs = new uint[blocks];
             for (int j = 0; j < crcs.Length; j++)
             {
                 crcs[j] = BinaryPrimitives.ReadUInt32LittleEndian(crcBytes.AsSpan(j * 4));
             }
 
-            var cache = new BlockCache(vectors, (long)dataOffset, dataLength, (int)perBlock * recordBytes, crcs, null);
+            var cache = new BlockCache(vectors, (long)dataOffset, dataLength, (int)perBlock * recordBytes, crcs, null, limits);
             entries.Add((name, def, (int)count, sparse, new VectorFieldData(cache, (int)count, def.Dimensions, (int)perBlock), ordDoc));
         }
 
@@ -744,18 +744,18 @@ internal sealed class VectorPartReader : ISegmentPartReader, IVectorSource
                 throw new CorruptIndexException(gname, $"the sections of the graph of '{name}' run past the directory");
             }
 
-            byte[] crcBytes = BlockCache.ReadChecked(graph, (long)crcOffset, blocks * 4, crcTableCrc, "the block checksum table");
+            byte[] crcBytes = BlockCache.ReadChecked(graph, (long)crcOffset, blocks * 4, crcTableCrc, "the block checksum table", limits);
             var crcs = new uint[blocks];
             for (int j = 0; j < crcs.Length; j++)
             {
                 crcs[j] = BinaryPrimitives.ReadUInt32LittleEndian(crcBytes.AsSpan(j * 4));
             }
 
-            byte[] upper = BlockCache.ReadChecked(graph, (long)upperOffset, (long)upperLength, upperCrc, "the upper layers");
+            byte[] upper = BlockCache.ReadChecked(graph, (long)upperOffset, (long)upperLength, upperCrc, "the upper layers", limits);
             (int[] upperNodes, byte[] upperLevels, int[][] upperLinks) = ParseUpper(gname, upper, count, (int)m, (int)maxLevel, (int)entry);
             int mInt = (int)m;
             int perBlockInt = (int)perBlock;
-            var cache = new BlockCache(graph, (long)level0Offset, level0Length, perBlockInt * recordInts * 4, crcs, (b, idx) => HnswGraphData.ValidateBlock(gname, b, idx, count, mInt, perBlockInt));
+            var cache = new BlockCache(graph, (long)level0Offset, level0Length, perBlockInt * recordInts * 4, crcs, (b, idx) => HnswGraphData.ValidateBlock(gname, b, idx, count, mInt, perBlockInt), limits);
             result[name] = new HnswGraphData(cache, count, mInt, perBlockInt, (int)maxLevel, (int)entry, upperNodes, upperLevels, upperLinks);
         }
 
@@ -823,7 +823,7 @@ internal sealed class VectorPartReader : ISegmentPartReader, IVectorSource
                 throw new CorruptIndexException(qname, $"the sections of the compressed vectors of '{name}' run past the directory");
             }
 
-            byte[] crcBytes = BlockCache.ReadChecked(file, (long)crcOffset, blocks * 4, crcTableCrc, "the block checksum table");
+            byte[] crcBytes = BlockCache.ReadChecked(file, (long)crcOffset, blocks * 4, crcTableCrc, "the block checksum table", limits);
             var crcs = new uint[blocks];
             for (int j = 0; j < crcs.Length; j++)
             {
@@ -832,7 +832,7 @@ internal sealed class VectorPartReader : ISegmentPartReader, IVectorSource
 
             int dimensions = def.Dimensions;
             int perBlockInt = (int)perBlock;
-            var cache = new BlockCache(file, (long)dataOffset, dataLength, perBlockInt * expectedRecord, crcs, (b, idx) => QuantizedFieldData.ValidateBlock(qname, b, idx, codec, dimensions, expectedRecord, perBlockInt));
+            var cache = new BlockCache(file, (long)dataOffset, dataLength, perBlockInt * expectedRecord, crcs, (b, idx) => QuantizedFieldData.ValidateBlock(qname, b, idx, codec, dimensions, expectedRecord, perBlockInt), limits);
             result[name] = new QuantizedFieldData(codec, cache, count, expectedRecord, perBlockInt);
         }
 

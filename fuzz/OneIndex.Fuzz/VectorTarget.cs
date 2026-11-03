@@ -20,6 +20,7 @@ internal static class VectorTarget
     private const int Dimensions = 8;
 
     private static readonly IndexLimits Limits = new() { MaxResidentFileBytes = 1 << 22, MaxDocsPerSegment = 100_000, MaxFields = 64, MaxStringBytes = 512 };
+    private static readonly IndexLimits SkipLimits = new() { MaxResidentFileBytes = 1 << 22, MaxDocsPerSegment = 100_000, MaxFields = 64, MaxStringBytes = 512, SkipVectorChecksums = true };
     private static readonly Lazy<(Schema Schema, byte[] Vectors, byte[] Graph, byte[] Quantized)> Good = new(Build);
 
     private static (Schema, byte[], byte[], byte[]) Build()
@@ -97,19 +98,11 @@ internal static class VectorTarget
             Repair(file, graph, quantized);
         }
 
-        VectorFiles.VerifyChecksums = (data[0] & 4) == 0;
-        try
-        {
-            Exercise(graph || quantized ? Good.Value.Vectors : file, graph ? file : Good.Value.Graph, quantized ? file : Good.Value.Quantized);
-        }
-        finally
-        {
-            VectorFiles.VerifyChecksums = true;
-        }
+        Exercise(graph || quantized ? Good.Value.Vectors : file, graph ? file : Good.Value.Graph, quantized ? file : Good.Value.Quantized, skipChecksums: (data[0] & 4) != 0);
     }
 
     /// <summary>Opens and reads one pair of files; <see cref="CorruptIndexException"/> is the expected outcome for damaged input.</summary>
-    public static void Exercise(byte[] vectors, byte[] graph, byte[] quantized)
+    public static void Exercise(byte[] vectors, byte[] graph, byte[] quantized, bool skipChecksums = false)
     {
         var good = Good.Value;
         var storage = new MemoryStorage();
@@ -121,7 +114,7 @@ internal static class VectorTarget
 
         try
         {
-            using VectorPartReader part = VectorPartReader.Open(storage.OpenRead("s.vec"), storage.OpenRead("s.hnsw"), storage.OpenRead("s.vecq"), good.Schema, Documents, Limits, default);
+            using VectorPartReader part = VectorPartReader.Open(storage.OpenRead("s.vec"), storage.OpenRead("s.hnsw"), storage.OpenRead("s.vecq"), good.Schema, Documents, skipChecksums ? SkipLimits : Limits, default);
             var rng = new Random(3);
             var hits = new VectorHit[10];
             var buffer = new float[Dimensions];

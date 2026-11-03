@@ -58,6 +58,61 @@ public class StaticIndexTests
         return docs;
     }
 
+    private sealed class NamingSource(IStaticSource inner) : IStaticSource
+    {
+        public List<string> Names { get; } = [];
+
+        public long BytesFetched => inner.BytesFetched;
+
+        public int Requests => inner.Requests;
+
+        public ValueTask<byte[]> FetchAsync(string objectName, CancellationToken cancellationToken = default)
+        {
+            Names.Add(objectName);
+            return inner.FetchAsync(objectName, cancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task ATextQueryDoesNotFetchColumnsPointsOrVectors()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "oneindex-static-lazy-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string idx = Path.Combine(root, "idx");
+            string stat = Path.Combine(root, "static");
+            using (SearchIndex<StaticDoc> index = SearchIndex.Open<StaticDoc>(idx, null))
+            {
+                index.Upsert(Corpus(1200));
+                index.Commit();
+            }
+
+            StaticIndexBuilder.Build<StaticDoc>(idx, stat, new StaticBuildOptions { ChunkBytes = 4096 });
+            var source = new NamingSource(new DirectoryStaticSource(stat));
+            StaticIndex<StaticDoc> remote = await StaticIndex.OpenAsync<StaticDoc>(source);
+            using SearchIndex<StaticDoc> local = SearchIndex.OpenReadOnly<StaticDoc>(idx);
+
+            Func<SearchIndex<StaticDoc>, List<(string, float)>> text = i => [.. i.Search("river garden").Take(10).Execute().Select(static h => (h.Document.Id, h.Score))];
+            Assert.Equal(text(local), await remote.QueryAsync(text));
+            // Columns and points are not read at all. The vector files are asked only for their directory (the last chunk of each file).
+            Assert.DoesNotContain(source.Names, static n => n.Contains(".columns", StringComparison.Ordinal) || n.Contains(".points", StringComparison.Ordinal));
+            Assert.True(source.Names.Count(static n => n.Contains(".vectors", StringComparison.Ordinal) || n.Contains(".hnsw", StringComparison.Ordinal) || n.Contains(".vecq", StringComparison.Ordinal)) <= 3);
+
+            // The first query that does use them opens them, and the answer still equals the ordinary index.
+            Func<SearchIndex<StaticDoc>, List<(string, float)>> filtered = i => [.. i.Search("river").Where("Year >= 2010").Take(10).Execute().Select(static h => (h.Document.Id, h.Score))];
+            long before = source.BytesFetched;
+            Assert.Equal(filtered(local), await remote.QueryAsync(filtered));
+            Assert.True(source.BytesFetched > before, "the filter needs the columns, which are fetched when it first asks");
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
+    }
+
     [Fact]
     public async Task StaticResultsEqualServerResultsAndReadFewChunks()
     {

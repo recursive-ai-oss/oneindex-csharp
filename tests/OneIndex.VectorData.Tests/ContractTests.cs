@@ -39,8 +39,58 @@ public sealed class GuidItem
     public float[]? Position { get; set; }
 }
 
+public sealed class TypedItem
+{
+    [VectorStoreKey]
+    public string Id { get; set; } = string.Empty;
+
+    [VectorStoreData(IsIndexed = true)]
+    public Guid Ref { get; set; }
+
+    [VectorStoreData(IsIndexed = true)]
+    public DateOnly Day { get; set; }
+
+    [VectorStoreData(IsIndexed = true)]
+    public TimeOnly Time { get; set; }
+
+    [VectorStoreData(IsIndexed = true)]
+    public int? Maybe { get; set; }
+
+    [VectorStoreData(IsIndexed = true)]
+    public string[] Tags { get; set; } = [];
+
+    [VectorStoreVector(2)]
+    public float[]? Position { get; set; }
+}
+
 public class ContractTests
 {
+    [Fact]
+    public async Task GuidDateOnlyTimeOnlyNullAndAnyFiltersRoundTrip()
+    {
+        using var store = new OneIndexVectorStore();
+        VectorStoreCollection<string, TypedItem> c = store.GetCollection<string, TypedItem>("typed");
+        await c.EnsureCollectionExistsAsync();
+        var g1 = Guid.NewGuid();
+        var g2 = Guid.NewGuid();
+        await c.UpsertAsync(
+        [
+            new TypedItem { Id = "a", Ref = g1, Day = new DateOnly(2024, 5, 6), Time = new TimeOnly(7, 8, 9), Maybe = 1, Tags = ["x", "y"], Position = [1, 0] },
+            new TypedItem { Id = "b", Ref = g2, Day = new DateOnly(2025, 1, 2), Time = new TimeOnly(10, 0), Maybe = null, Tags = ["y"], Position = [0, 1] },
+        ]);
+        TypedItem a = (await c.GetAsync("a"))!;
+        Assert.Equal((g1, new DateOnly(2024, 5, 6), new TimeOnly(7, 8, 9), (int?)1), (a.Ref, a.Day, a.Time, a.Maybe));
+        async Task<string> Ids(System.Linq.Expressions.Expression<Func<TypedItem, bool>> filter)
+            => string.Join(',', (await c.GetAsync(filter, 10).ToListAsync()).Select(r => r.Id).Order(StringComparer.Ordinal));
+        Assert.Equal("a", await Ids(r => r.Ref == g1));
+        Assert.Equal("b", await Ids(r => r.Day > new DateOnly(2024, 12, 31)));
+        Assert.Equal("a", await Ids(r => r.Time < new TimeOnly(8, 0)));
+        Assert.Equal("b", await Ids(r => r.Maybe == null));
+        Assert.Equal("a", await Ids(r => r.Maybe != null));
+        Assert.Equal("a,b", await Ids(r => r.Tags.Any(t => t == "y")));
+        Assert.Equal("a", await Ids(r => r.Tags.Any(t => t == "x" || t == "q")));
+    }
+
     private static Hotel Make(string id, string city, string text, int rating, float[] v, params string[] tags)
         => new() { Id = id, City = city, Description = text, Rating = rating, Tags = tags, Opened = new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero).AddDays(rating), Embedding = v };
 

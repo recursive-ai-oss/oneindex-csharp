@@ -119,7 +119,14 @@ public sealed class FilterTranslator<T>
         object? value = Evaluate(valueSide);
         if (value is null)
         {
-            throw new UnsupportedExpressionException(cmp, "comparing with null is not supported; absent values are simply not matched.");
+            // A null comparison asks whether the document has a value: the index stores no explicit nulls, and an empty string or an empty
+            // collection is not stored either, so those count as absent too (docs/linq.md).
+            return op switch
+            {
+                ExpressionType.Equal => Negate(new RangeQuery(member.Name, null, null)),
+                ExpressionType.NotEqual => new RangeQuery(member.Name, null, null),
+                _ => throw new UnsupportedExpressionException(cmp, "null can only be compared with == and !=."),
+            };
         }
 
         return op switch
@@ -142,13 +149,18 @@ public sealed class FilterTranslator<T>
             return GeoCall(call, p);
         }
 
+        if (call.Method.DeclaringType == typeof(Enumerable) && call.Method.Name == nameof(Enumerable.Any) && call.Object is null)
+        {
+            return AnyCall(call, p);
+        }
+
         // collection.Contains(item): the member is the collection (any of its values equals item) or the item (it is one of a captured list).
         Expression? collection = null;
         Expression? item = null;
         if (call.Method.Name == "Contains")
         {
             // Arrays reach Contains as Enumerable.Contains or, with first-class spans, as MemoryExtensions.Contains over an implicit span conversion.
-            if (call.Object is null && call.Arguments.Count == 2 && call.Method.DeclaringType == typeof(Enumerable) || call.Object is null && call.Arguments.Count == 2 && call.Method.DeclaringType == typeof(MemoryExtensions))
+            if (call.Object is null && call.Arguments.Count == 2 && call.Method.DeclaringType == typeof(Enumerable) || call.Object is null && call.Method.DeclaringType == typeof(MemoryExtensions) && (call.Arguments.Count == 2 || call.Arguments.Count == 3 && call.Arguments[2] is ConstantExpression { Value: null }))
             {
                 collection = call.Arguments[0];
                 item = call.Arguments[1];
@@ -194,13 +206,108 @@ public sealed class FilterTranslator<T>
             var alternatives = new List<BooleanClause>();
             foreach (object? v in values)
             {
-                alternatives.Add(new BooleanClause(EqualsValue(single, v ?? throw new UnsupportedExpressionException(call, "the list holds a null."), call), Occur.Should));
+                // A null in the list matches documents without a value, as List.Contains(null) does for a null member.
+                alternatives.Add(new BooleanClause(v is null ? Negate(new RangeQuery(single.Name, null, null)) : EqualsValue(single, v, call), Occur.Should));
             }
 
             return alternatives.Count == 0 ? None() : new BooleanQuery(alternatives) { MinimumShouldMatch = 1 };
         }
 
         throw new UnsupportedExpressionException(call, "Contains must be called on a member that is a collection, or with a member as its argument.");
+    }
+
+    // collection.Any() holds when the document has a value; collection.Any(t => ...) holds when some value satisfies the condition on t.
+    private Search.Query AnyCall(MethodCallExpression call, ParameterExpression p)
+    {
+        if (Member(StripConvert(call.Arguments[0]), p) is not { Multi: true } list)
+        {
+            throw new UnsupportedExpressionException(call, "Any is supported on a collection property of the document.");
+        }
+
+        CheckFilterable(list, call);
+        if (call.Arguments.Count == 1)
+        {
+            return new RangeQuery(list.Name, null, null);
+        }
+
+        if (call.Arguments[1] is not LambdaExpression { Parameters.Count: 1 } lambda)
+        {
+            throw new UnsupportedExpressionException(call, "Any needs a lambda such as t => t == \"a\".");
+        }
+
+        return AnyBody(lambda.Body, lambda.Parameters[0], list, p, call);
+    }
+
+    // The condition is on one element t. Only forms that mean "some element" are translated: == and ordering against a value, a captured
+    // list's Contains(t), and || of those. != and && would need the same element to satisfy two tests, which a term index cannot answer.
+    private static Search.Query AnyBody(Expression e, ParameterExpression t, MappedMember list, ParameterExpression p, Expression context)
+    {
+        switch (e)
+        {
+            case BinaryExpression { NodeType: ExpressionType.OrElse or ExpressionType.Or } or:
+                return new BooleanQuery([new BooleanClause(AnyBody(or.Left, t, list, p, context), Occur.Should), new BooleanClause(AnyBody(or.Right, t, list, p, context), Occur.Should)]) { MinimumShouldMatch = 1 };
+            case BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.LessThan or ExpressionType.LessThanOrEqual or ExpressionType.GreaterThan or ExpressionType.GreaterThanOrEqual } cmp:
+            {
+                ExpressionType op = cmp.NodeType;
+                Expression left = StripConvert(cmp.Left);
+                Expression right = StripConvert(cmp.Right);
+                Expression valueSide = right;
+                if (left != t)
+                {
+                    if (right != t)
+                    {
+                        break;
+                    }
+
+                    valueSide = left;
+                    op = Flip(op);
+                }
+
+                if (Mentions(valueSide, t) || Mentions(valueSide, p))
+                {
+                    throw new UnsupportedExpressionException(cmp, "the other side may not use the document or the element.");
+                }
+
+                object value = Evaluate(valueSide) ?? throw new UnsupportedExpressionException(cmp, "comparing an element with null is not supported.");
+                return op == ExpressionType.Equal ? EqualsValue(list, value, cmp) : Bounds(list, op, value, cmp);
+            }
+
+            case MethodCallExpression { Method.Name: "Contains" } contains:
+            {
+                Expression? collection = null;
+                Expression? item = null;
+                if (contains.Object is null && contains.Arguments.Count == 2)
+                {
+                    collection = contains.Arguments[0];
+                    item = contains.Arguments[1];
+                }
+                else if (contains.Object is not null && contains.Arguments.Count == 1)
+                {
+                    collection = contains.Object;
+                    item = contains.Arguments[0];
+                }
+
+                if (collection is null || item is null || StripConvert(item) != t || Mentions(collection, t) || Mentions(collection, p))
+                {
+                    break;
+                }
+
+                if (Evaluate(StripConvert(collection)) is not IEnumerable values)
+                {
+                    throw new UnsupportedExpressionException(contains, "the list is null.");
+                }
+
+                var alternatives = new List<BooleanClause>();
+                foreach (object? v in values)
+                {
+                    alternatives.Add(new BooleanClause(EqualsValue(list, v ?? throw new UnsupportedExpressionException(contains, "the list holds a null."), contains), Occur.Should));
+                }
+
+                return alternatives.Count == 0 ? None() : new BooleanQuery(alternatives) { MinimumShouldMatch = 1 };
+            }
+        }
+
+        throw new UnsupportedExpressionException(e, "inside Any only t == value, ordering comparisons of t with a value, a captured list's Contains(t) and || of those can be filtered.");
     }
 
     private static bool IsPathCall(MethodCallExpression call)
@@ -321,8 +428,18 @@ public sealed class FilterTranslator<T>
         return EqualsValue(member, value, context);
     }
 
+    // Values the index keeps in another form: a Guid as its text, a DateOnly as its day number, a TimeOnly as its ticks.
+    private static object Normalize(object value) => value switch
+    {
+        Guid g => g.ToString("D", System.Globalization.CultureInfo.InvariantCulture),
+        DateOnly day => (long)day.DayNumber,
+        TimeOnly time => time.Ticks,
+        _ => value,
+    };
+
     private static Search.Query EqualsValue(MappedMember member, object value, Expression context)
     {
+        value = Normalize(value);
         if (member.Type == FieldType.Keyword)
         {
             return value is string s ? new TermQuery(member.Name, s) : throw new UnsupportedExpressionException(context, $"'{member.Name}' holds text; compare it with a string.");
@@ -374,6 +491,7 @@ public sealed class FilterTranslator<T>
 
     private static FieldValue ToFieldValue(MappedMember member, object value, Expression context, ExpressionType op)
     {
+        value = Normalize(value);
         try
         {
             switch (member.Type)

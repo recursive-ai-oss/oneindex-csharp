@@ -12,7 +12,10 @@ The pieces of the lambda that do not mention the document (captured variables, c
 | `x.M < v`, `<=`, `>`, `>=` (the constant may be on either side) | numbers and dates | one-sided range |
 | `x.Flag`, `!x.Flag` | `bool` | `== true`, `== false` |
 | `x.Tags.Contains(v)` | a collection of strings marked `[Keyword]` | term (any element equals `v`) |
-| `list.Contains(x.M)` | any filterable member; `list` is captured or constant | any of the list's values; an empty list matches nothing |
+| `list.Contains(x.M)` | any filterable member; `list` is captured or constant | any of the list's values; an empty list matches nothing; a `null` in the list matches documents with no value |
+| `x.M == null`, `x.M != null` (the `null` may be on either side, or a captured variable that is `null`) | any filterable member, including collections | has no value / has a value (`NOT field EXISTS` / `field EXISTS` in a [filter string](filter-strings.md), `exists` in [query JSON](query-json.md)) |
+| `x.Tags.Any()` | a collection member | has a value |
+| `x.Tags.Any(t => t == v)`, `Any(t => t > v)` and the other ordering comparisons, `Any(t => list.Contains(t))`, and `\|\|` of those | a collection member | some element satisfies the test (a term or range on the field) |
 | `a && b`, `a \|\| b`, `!a` | | boolean clauses |
 | a constant condition (`true`, a captured `bool`) | | everything or nothing |
 | `Geo.WithinRadius(x.Location, lat, lng, meters)`, `Geo.WithinBoundingBox(x.Location, north, south, west, east)` | a `[Geo]` `GeoPoint` property (`x.Location.Value` for a nullable one); the numbers may not use the document | geo queries ([geo.md](geo.md)) |
@@ -28,10 +31,15 @@ A `[Dynamic]` property is reached with `Path`: `x.Meta.Path("customer.age") >= 1
 Anything else throws `UnsupportedExpressionException` (a `NotSupportedException`) **when `Where` is called**, naming the sub-expression: `The expression '(x.Text == "doc 1")' cannot be used in Where: 'Text' is full-text; match it with the search text, or filter on a separate [Keyword] property.` The usual causes:
 
 - a member that is not filterable (`'Note' is not filterable; mark it [Filterable] (or [Keyword] for text)`), or is full-text;
-- comparing with `null`, or with something that uses the document (`x.Count > x.Big`);
-- string methods (`StartsWith`, `Contains` on a string, `Equals`, `Length`), `ToString()`, other calls on the document's members, nested paths such as `x.Customer.Name`, `Any`, `All`, conditional expressions;
+- ordering a member against `null` (`x.Count > null`), or comparing with something that uses the document (`x.Count > x.Big`);
+- string methods (`StartsWith`, `Contains` on a string, `Equals`, `Length`), `ToString()`, other calls on the document's members, nested paths such as `x.Customer.Name`, `All`, conditional expressions;
+- inside `Any`: `!=` and `&&` (they would need one element to satisfy two tests, which a term index cannot answer), and anything but the forms in the table;
 - ordering comparisons on keywords or booleans;
 - a captured value that cannot be read (null reference inside it).
+
+## Null and empty
+
+The index stores no explicit nulls, and an empty string or an empty collection is not stored either (an empty keyword is never indexed). So `x.Color == null` means "has no value", which also matches `""`, and `x.Labels == null` also matches an empty array; `x.Labels.Any()` is the exact test for a non-empty collection. Values that are kept in another form are translated for you: a `Guid` is its text (`"D"` format), a `DateOnly` its day number and a `TimeOnly` its ticks, so equality and ordering comparisons on them work for members marked `[Filterable]` (and `[Keyword]` for a `Guid`).
 
 ## Precision
 
@@ -47,7 +55,7 @@ Anything else throws `UnsupportedExpressionException` (a `NotSupportedException`
 
 `Take(n)` (default 20) and `Skip(n)` page by rank (or by the ordering); `SearchAfter(cursor)` continues a sorted search after the cursor of a hit; `Skip + Take` may not exceed 10,000. `TotalHits` and `Count()` are lower bounds unless `CountExactly()` was called. Enumeration, `ToList()` and `Execute()` run the search; `ExecuteAsync` is the async twin.
 
-The differential test (`LinqTests`) compares `Where` against LINQ-to-Objects over seeded random documents (with updates and deletes between commits) and seeded random expression trees.
+The differential test (`LinqTests`) compares `Where` against LINQ-to-Objects over seeded random documents (with updates and deletes between commits) and seeded random expression trees, which include `null` comparisons, `Any()` and `Any(t => ...)` (4,000 cases, and the same predicates again as filter strings in `WhereStringTests`).
 
 ## Filter strings
 
