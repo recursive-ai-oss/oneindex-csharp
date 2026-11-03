@@ -155,6 +155,8 @@ set was not captured on arm64 (the file-backed index rows are the same sizes the
 agree exactly; Terms1, Facets, Stats, Sort and FunctionScore agree to within 2 to 9 documents (the U+202F tokenization difference below); the other rows differ by design
 (block-max WAND reports a lower bound, prefix queries are constant-score, fuzzy expansion is limited).
 
+The FunctionScore checksum is 3,044,177 against 3,044,186 on both machines (the same on x64 and arm64). The checksum is the sum of match counts, not of scores or ranks, and the row visits every match in both engines, so the nine-document gap is a match-count difference of the kind the other rows show (Terms1 2, Facets 3, Stats 3, Sort 2): the comparator counts documents whose query term sits next to a U+202F in its older tables. It is not a float tie at the top-k cutoff or a decay rounding difference: those cannot change a match count. This was read from the existing summaries, with no new run; the top-10 lists were not compared.
+
 ### Vector rows: OneIndex against the faster managed comparator at matched recall
 
 `tools/vector_bench_group.sh`, 150,000 x 384 (bge-small) and 75,000 x 768 (bge-base) vectors of the abstracts, M=16, efConstruction=100, one thread, recall@10
