@@ -50,7 +50,9 @@ public sealed class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
     /// <summary>Builds a context over a SQLite file with indexes under <paramref name="indexRoot"/>.</summary>
     public static AppDb Create(string databaseFile, string? indexRoot, Action<OneIndexOptions>? configure = null)
     {
-        var builder = new DbContextOptionsBuilder<AppDb>().UseSqlite($"Data Source={databaseFile};Default Timeout=60;Pooling=False");
+        var builder = new DbContextOptionsBuilder<AppDb>().UseSqlite($"Data Source={databaseFile};Default Timeout=60;Pooling=False")
+            // The campaign opens a fresh runtime (and so a fresh interceptor) for every check; a real app has one.
+            .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
         if (indexRoot is not null)
         {
             builder.UseOneIndex(indexRoot, o =>
