@@ -262,4 +262,117 @@ public class StaticIndexTests
             }
         }
     }
+
+    // A test stand-in for the static index's vector list: the same IVF image and document table, read from the chunk files without the retry loop.
+    private sealed class LocalIvfArm(IvfIndex ivf, uint[]? map, int nprobe) : IExternalVectorArm
+    {
+        public bool Handles(string field) => field == nameof(StaticDoc.Embedding);
+
+        public IReadOnlyList<(int Doc, float Score)> Nearest(string field, float[] vector, int count)
+            => [.. ivf.SearchApproximate(vector, Math.Min(count, ivf.Count), nprobe).Select(h => (map is null ? h.Id : (int)map[h.Id], h.Score))];
+    }
+
+    private static byte[] Join(string stat, string name)
+    {
+        var all = new List<byte>();
+        if (File.Exists(Path.Combine(stat, name)))
+        {
+            return File.ReadAllBytes(Path.Combine(stat, name));
+        }
+
+        for (int c = 0; File.Exists(Path.Combine(stat, $"{name}.c{c:D5}")); c++)
+        {
+            all.AddRange(File.ReadAllBytes(Path.Combine(stat, $"{name}.c{c:D5}")));
+        }
+
+        return [.. all];
+    }
+
+    [Fact]
+    public async Task HybridThroughIvfEqualsTheSameFusionOverTheSameCandidates()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "oneindex-static-hybrid-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string idx = Path.Combine(root, "idx");
+            string stat = Path.Combine(root, "static");
+            List<StaticDoc> docs = Corpus(1600);
+            using (SearchIndex<StaticDoc> index = SearchIndex.Open<StaticDoc>(idx, null))
+            {
+                index.Upsert(docs.Take(800));
+                index.Commit();
+                index.Upsert(docs.Skip(800));
+                index.Commit();
+                // Deleted documents leave gaps in the document ids, so the static index needs its vector-number to document table.
+                foreach (StaticDoc d in docs.Where(static (_, n) => n % 17 == 3))
+                {
+                    index.Delete(d.Id);
+                }
+
+                index.Commit();
+            }
+
+            StaticManifest manifest = StaticIndexBuilder.Build<StaticDoc>(idx, stat, new StaticBuildOptions { ChunkBytes = 8192 });
+            Assert.Contains(manifest.Files, static f => f.Name.EndsWith(".docs", StringComparison.Ordinal));
+
+            var source = new NamingSource(new DirectoryStaticSource(stat));
+            StaticIndex<StaticDoc> remote = await StaticIndex.OpenAsync<StaticDoc>(source);
+            byte[] mapBytes = Join(stat, "ivf-Embedding.docs");
+            var map = new uint[mapBytes.Length / 4];
+            Buffer.BlockCopy(mapBytes, 0, map, 0, mapBytes.Length);
+            var memory = new MemoryStorage();
+            using (IStorageWriter w = memory.Create("v.ivf"))
+            {
+                w.Write(Join(stat, "ivf-Embedding.ivf"));
+            }
+
+            using IvfIndex ivf = IvfIndex.Open(memory.OpenRead("v.ivf"));
+            using SearchIndex<StaticDoc> local = SearchIndex.OpenReadOnly<StaticDoc>(idx);
+            local.ExternalVectorArm = new LocalIvfArm(ivf, map, remote.HybridNprobe);
+
+            var rng = new Random(11);
+            for (int q = 0; q < 12; q++)
+            {
+                var vector = new float[8];
+                for (int d = 0; d < 8; d++)
+                {
+                    vector[d] = (float)rng.NextDouble();
+                }
+
+                string text = Words[rng.Next(Words.Length)] + " " + Words[rng.Next(Words.Length)];
+                // An excluded word must remove documents from the IVF arm as well as from the text arm.
+                string? excluded = q % 4 == 1 ? Words[rng.Next(Words.Length)] : null;
+                string searchText = excluded is null ? text : text + " -" + excluded;
+                string? filter = q % 3 == 0 ? "Year >= 2005" : null;
+                Func<SearchIndex<StaticDoc>, List<(string, float)>> hybrid = i =>
+                {
+                    SearchQuery<StaticDoc> sq = i.Search(searchText);
+                    if (filter is not null)
+                    {
+                        sq = sq.Where(filter);
+                    }
+
+                    return [.. sq.Hybrid(nameof(StaticDoc.Embedding), vector).Take(10).Execute().Select(static h => (h.Document.Id, h.Score))];
+                };
+                List<(string, float)> expected = hybrid(local);
+                Assert.NotEmpty(expected);
+                Assert.Equal(expected, await remote.QueryAsync(hybrid));
+                if (excluded is not null)
+                {
+                    HashSet<string> banned = [.. local.Search(excluded).Take(2000).Execute().Select(static h => h.Document.Id)];
+                    Assert.DoesNotContain(expected, e => banned.Contains(e.Item1));
+                }
+            }
+
+            // The graph is never walked: at most one chunk of each graph file (its directory, read when the vector part opens) was fetched.
+            Assert.All(source.Names.Where(static n => n.Contains(".hnsw", StringComparison.Ordinal)).GroupBy(static n => n[..n.IndexOf(".hnsw", StringComparison.Ordinal)]), static g => Assert.True(g.Distinct().Count() <= 1));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
+    }
 }

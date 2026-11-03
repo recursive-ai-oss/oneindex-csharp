@@ -92,7 +92,7 @@ internal static class Program
         var results = new List<(int Ef, double Recall, double Qps)>();
         foreach (int ef in _efGrid)
         {
-            if (ef < K)
+            if (ef < K && engineName != "oneindex-segment-ivf")
             {
                 continue;
             }

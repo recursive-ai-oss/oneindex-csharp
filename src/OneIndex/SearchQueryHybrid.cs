@@ -265,6 +265,14 @@ public sealed partial class SearchQuery<T>
         if (vector is not null)
         {
             var knn = new KnnQuery(field!, vector, window) { Filter = knnExclusion };
+            if (_index.ExternalVectorArm is { } arm && arm.Handles(field!))
+            {
+                // The static index's IVF candidates still pass through the query's filter (the excluded words included) in KnnWeight.FromCandidates.
+                float[] queryVector = vector;
+                string vectorField = field!;
+                knn = knn with { CandidateSource = count => arm.Nearest(vectorField, queryVector, count) };
+            }
+
             knnArm = (KnnQuery)(_extras is null && _filters.Length == 0 ? knn : WithExtras(knn, applyFunction: false));
         }
 

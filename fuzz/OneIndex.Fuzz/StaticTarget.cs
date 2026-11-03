@@ -6,7 +6,7 @@ namespace OneIndex.Fuzz;
 
 /// <summary>
 /// Arbitrary bytes in place of a static index's manifest (selector 0), an IVF index file (1, the checksum checked or not so that mutations reach the
-/// structure parsers) or a packed multi-vector (2). Only <see cref="CorruptIndexException"/> (and <see cref="FormatException"/> for the multi-vector) may
+/// structure parsers) or a packed multi-vector (2, unpacked flat and as rows). Only <see cref="CorruptIndexException"/> (and <see cref="FormatException"/> for the multi-vector) may
 /// come out; a crash, a hang or an allocation past the limits is a finding. A file that opens is searched.
 /// </summary>
 internal static class StaticTarget
@@ -44,7 +44,10 @@ internal static class StaticTarget
 
                     break;
                 default:
+                    // Unpack and ToRows share the header check; ToRows also allocates one array per token, so a header that claims
+                    // many tokens of no values must be refused before that allocation.
                     _ = MultiVector.Unpack(body, out _, out _);
+                    _ = MultiVector.ToRows(body);
                     break;
             }
         }

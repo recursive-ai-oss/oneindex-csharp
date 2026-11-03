@@ -110,6 +110,8 @@ segment. A segment smaller than the field's flat threshold has a `vectors` part 
 Crash behaviour is that of every part: the files are written, fsynced and listed by the commit; a crash before the commit leaves
 unreferenced files that are reclaimed.
 
+A field declared with `VectorIndexKind.Ivf` has no graph: its clustered lists are in part `ivf` (magic `OIXL`, version 1) and the vectors part is the rerank source; see [ivf.md](ivf.md).
+
 ## Query surfaces
 
 * Low level: `KnnQuery(field, vector, k)` with `Ef`, `Filter` and `Exact`. It finds the `k` nearest documents over all segments (each

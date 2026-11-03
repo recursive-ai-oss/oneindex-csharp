@@ -4,7 +4,7 @@
 #   fuzz/run.sh <target> <seconds> [corpus dir] [extra libFuzzer flags...]
 #   fuzz/run.sh replay <target> <file>...      # run saved inputs once, without libFuzzer (reproduce a finding)
 #
-# Targets: commit, analysis, terms, postings, segment, query, columns, points, stored, usertext, strict, filter, queryjson, dynamic, vectors, wordpiece, dictionary, asian, static   (see fuzz/README.md)
+# Targets: commit, analysis, terms, postings, paged, segment, query, columns, points, stored, usertext, strict, filter, queryjson, dynamic, vectors, wordpiece, dictionary, asian, static   (see fuzz/README.md)
 #
 # Environment (nothing is baked into the script):
 #   ONEINDEX_FUZZ_WORK    required: where builds, corpora and findings go. Keep it outside the checkout.
@@ -36,7 +36,7 @@ shift
 # Maximum input length per target.
 case "$target" in
   commit) maxlen=65536 ;;
-  analysis|terms|postings) maxlen=65536 ;;
+  analysis|terms|postings|paged) maxlen=65536 ;;
   segment) maxlen=16384 ;;
   query) maxlen=4096 ;;
   columns|points|stored|vectors) maxlen=65536 ;;

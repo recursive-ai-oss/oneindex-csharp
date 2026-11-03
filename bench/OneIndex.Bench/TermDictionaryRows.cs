@@ -103,7 +103,7 @@ public class TermDictionaryRows
         (byte[] bytes, int root) = fst.Finish();
         byte[] all = [.. bytes, .. info.Table, .. info.Samples];
         size = bytes.Length;
-        return new FieldTermDictionary("bench.terms", version, all, 0, bytes.Length, root, bytes.Length, info.Table.Length, bytes.Length + info.Table.Length, (terms.Count + 31) / 32, terms.Count, fst.TotalTermBytes, max);
+        return new FieldTermDictionary("bench.terms", version, PagedBytes.Whole(all), 0, bytes.Length, root, bytes.Length, info.Table.Length, bytes.Length + info.Table.Length, (terms.Count + 31) / 32, terms.Count, fst.TotalTermBytes, max);
     }
 
     private static long Drain(ITermEnumerator e)

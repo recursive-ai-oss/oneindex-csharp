@@ -258,7 +258,8 @@ public sealed class ChunkedStaticStorage : IStorage, IDeferredOpenStorage
             return (0, -1);
         }
 
-        return ((int)(offset / Manifest.ChunkBytes), (int)((offset + length - 1) / Manifest.ChunkBytes));
+        int size = Manifest.ChunkSize(file);
+        return ((int)(offset / size), (int)((offset + length - 1) / size));
     }
 
     private async ValueTask LoadAsync(StaticFile file, int chunk, CancellationToken ct)
@@ -272,7 +273,8 @@ public sealed class ChunkedStaticStorage : IStorage, IDeferredOpenStorage
         }
 
         byte[] bytes = await _source.FetchAsync(StaticManifest.ChunkName(file, chunk), ct).ConfigureAwait(false);
-        long expected = Math.Min(Manifest.ChunkBytes, file.Size - ((long)chunk * Manifest.ChunkBytes));
+        int size = Manifest.ChunkSize(file);
+        long expected = Math.Min(size, file.Size - ((long)chunk * size));
         if (bytes.Length != expected || Crc32C.Compute(bytes) != file.ChunkCrcs[chunk])
         {
             throw new CorruptIndexException(file.Name, $"chunk {chunk} does not match the manifest");
@@ -328,7 +330,7 @@ public sealed class ChunkedStaticStorage : IStorage, IDeferredOpenStorage
 
             int want = (int)Math.Min(destination.Length, file.Size - offset);
             int done = 0;
-            int chunkBytes = owner.Manifest.ChunkBytes;
+            int chunkBytes = owner.Manifest.ChunkSize(file);
             while (done < want)
             {
                 long at = offset + done;

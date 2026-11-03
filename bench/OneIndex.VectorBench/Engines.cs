@@ -17,13 +17,14 @@ internal static class Engines
     {
         "oneindex" => new OneIndexGraph(m, efConstruction),
         "oneindex-segment" => new OneIndexSegment(m, efConstruction, scratch),
+        "oneindex-segment-ivf" => new OneIndexSegment(m, efConstruction, scratch, ivf: true),
 #if HNSWNET
         "hnswnet" => new HnswNetEngine(m, efConstruction),
 #endif
 #if CURIOSITY
         "curiosity" => new CuriosityEngine(m, efConstruction),
 #endif
-        _ => throw new ArgumentException("engines: oneindex, oneindex-segment, hnswnet, curiosity"),
+        _ => throw new ArgumentException("engines: oneindex, oneindex-segment, oneindex-segment-ivf, hnswnet, curiosity"),
     };
 }
 
@@ -64,7 +65,7 @@ internal sealed class OneIndexGraph(int m, int efConstruction) : IEngine
 }
 
 /// <summary>The whole engine path: documents through the writer into a segment on disk, searched through the segment reader.</summary>
-internal sealed class OneIndexSegment(int m, int efConstruction, string scratch) : IEngine
+internal sealed class OneIndexSegment(int m, int efConstruction, string scratch, bool ivf = false) : IEngine
 {
     private string? _dir;
     private IndexWriter? _writer;
@@ -73,7 +74,7 @@ internal sealed class OneIndexSegment(int m, int efConstruction, string scratch)
     private readonly VectorHit[] _hits = new VectorHit[2048];
     private SearchContext? _context;
 
-    public string Name => "oneindex-segment";
+    public string Name => ivf ? "oneindex-segment-ivf" : "oneindex-segment";
 
     public long IndexBytes { get; private set; } = -1;
 
@@ -81,7 +82,7 @@ internal sealed class OneIndexSegment(int m, int efConstruction, string scratch)
     {
         _dir = Path.Combine(scratch, "oneindex-vectorbench-" + Guid.NewGuid().ToString("N"));
         Schema schema = new SchemaBuilder().Id("id")
-            .Add(new FieldDefinition("v", FieldType.Vector) { Dimensions = dimensions, HnswM = m, EfConstruction = efConstruction, Stored = false, Quantization = Engines.Quantization, Oversample = Engines.Quantization == VectorQuantization.None ? 0 : Engines.Oversample })
+            .Add(new FieldDefinition("v", FieldType.Vector) { Dimensions = dimensions, HnswM = m, EfConstruction = efConstruction, Stored = false, Quantization = Engines.Quantization, Oversample = Engines.Quantization == VectorQuantization.None ? 0 : Engines.Oversample, VectorIndex = ivf ? VectorIndexKind.Ivf : VectorIndexKind.Hnsw })
             .Build();
         _writer = IndexWriter.Open(new FileSystemStorage(_dir), schema, new IndexWriterOptions { MaxBufferedDocuments = count + 1, AutoMerge = false });
         for (int i = 0; i < count; i++)
@@ -93,8 +94,8 @@ internal sealed class OneIndexSegment(int m, int efConstruction, string scratch)
         _snapshot = _writer.OpenSnapshot();
         _context = SnapshotSearch.CreateContext(_snapshot);
         _reader = _context.Leaves[0].Reader.GetVectors("v");
-        IndexBytes = _snapshot.GetSegment(0).Info.Files.Where(f => f.Part is SegmentParts.Vectors or SegmentParts.Graph or SegmentParts.Quantized).Sum(f => f.Length);
-        Console.WriteLine("# files " + string.Join(", ", _snapshot.GetSegment(0).Info.Files.Where(f => f.Part is SegmentParts.Vectors or SegmentParts.Graph or SegmentParts.Quantized).Select(f => f.Part + " " + (f.Length >> 10) + " KB")));
+        IndexBytes = _snapshot.GetSegment(0).Info.Files.Where(f => f.Part is SegmentParts.Vectors or SegmentParts.Graph or SegmentParts.Quantized or SegmentParts.Ivf).Sum(f => f.Length);
+        Console.WriteLine("# files " + string.Join(", ", _snapshot.GetSegment(0).Info.Files.Where(f => f.Part is SegmentParts.Vectors or SegmentParts.Graph or SegmentParts.Quantized or SegmentParts.Ivf).Select(f => f.Part + " " + (f.Length >> 10) + " KB")));
     }
 
     public int Search(float[] query, int k, int ef, int[] ids)
