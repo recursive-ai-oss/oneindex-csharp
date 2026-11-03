@@ -65,6 +65,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
         DateTime,
         DateTimeOffset,
         Json,
+        JsonObject,
         Geo,
         Vector,
         Sparse,
@@ -90,6 +91,9 @@ public sealed class MappingGenerator : IIncrementalGenerator
         public bool Sortable;
         public bool Facet;
         public bool Dynamic;
+        public string? PocoCode;
+        public string? PocoWriter;
+        public string? PocoReader;
         public bool GeoAttr;
         public double Boost = 1;
         public string? Language;
@@ -458,6 +462,20 @@ public sealed class MappingGenerator : IIncrementalGenerator
                 return null;
             }
         }
+        else if (m.Dynamic && JsonPlan.IsPlainClass(property.Type))
+        {
+            var plan = new JsonPlan(property.Name);
+            if (plan.Build((INamedTypeSymbol)property.Type) is { } problem)
+            {
+                diagnostics.Add(Diagnostic.Create(UnsupportedType, location, property.Name, property.Type.ToDisplayString(), "[Dynamic] (" + problem + ")"));
+                return null;
+            }
+
+            m.Shape = Shape.JsonObject;
+            m.PocoCode = plan.Code;
+            m.PocoWriter = plan.RootWriter;
+            m.PocoReader = plan.RootReader;
+        }
         else if (!TryClassify(property.Type, m))
         {
             if (declared)
@@ -499,9 +517,9 @@ public sealed class MappingGenerator : IIncrementalGenerator
             diagnostics.Add(Diagnostic.Create(Conflict, location, property.Name, "a [Sparse] member cannot also be [FullText], [Keyword], [Filterable], [Sortable], [Facet], [Geo], [SearchId] or [Vector]"));
         }
 
-        if (m.Dynamic && m.Shape != Shape.Json)
+        if (m.Dynamic && m.Shape is not (Shape.Json or Shape.JsonObject))
         {
-            diagnostics.Add(Diagnostic.Create(UnsupportedType, location, property.Name, property.Type.ToDisplayString(), "[Dynamic] (use System.Text.Json.JsonElement)"));
+            diagnostics.Add(Diagnostic.Create(UnsupportedType, location, property.Name, property.Type.ToDisplayString(), "[Dynamic] (use System.Text.Json.JsonElement or a class of plain properties)"));
         }
 
         if (m.Dynamic && (m.FullText || m.Keyword || m.IsId || m.Filterable || m.Sortable || m.Facet))
@@ -746,6 +764,12 @@ public sealed class MappingGenerator : IIncrementalGenerator
 
         sb.AppendLine("            return result;");
         sb.AppendLine("        }");
+        foreach (Member m in members.Where(m => m.PocoCode is not null))
+        {
+            sb.AppendLine();
+            sb.Append(m.PocoCode);
+        }
+
         sb.AppendLine("    }");
         sb.AppendLine();
         sb.AppendLine("    internal static class " + safe + "Registration");
@@ -765,7 +789,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
             Shape.Integral => "Integral",
             Shape.Fractional => "Fractional",
             Shape.Bool => "Bool",
-            Shape.Json => "Json",
+            Shape.Json or Shape.JsonObject => "Json",
             Shape.Geo => "GeoPoint",
             Shape.Vector => "Vector",
             Shape.Sparse => "Sparse",
@@ -819,6 +843,15 @@ public sealed class MappingGenerator : IIncrementalGenerator
                     ? "            if (" + p + " is { } j_" + m.Name + " && j_" + m.Name + ".ValueKind != global::System.Text.Json.JsonValueKind.Undefined) { document.Add(" + n + ", global::OneIndex.Index.FieldValue.FromJson(j_" + m.Name + ")); }"
                     : "            if (" + p + ".ValueKind != global::System.Text.Json.JsonValueKind.Undefined) { document.Add(" + n + ", global::OneIndex.Index.FieldValue.FromJson(" + p + ")); }");
                 break;
+            case Shape.JsonObject:
+                sb.AppendLine("            if (" + p + " is { } o_" + m.Name + ")");
+                sb.AppendLine("            {");
+                sb.AppendLine("                var b_" + m.Name + " = new global::System.Buffers.ArrayBufferWriter<byte>();");
+                sb.AppendLine("                using (var w_" + m.Name + " = new global::System.Text.Json.Utf8JsonWriter(b_" + m.Name + ")) { " + m.PocoWriter + "(w_" + m.Name + ", o_" + m.Name + "); }");
+                sb.AppendLine("                using var d_" + m.Name + " = global::System.Text.Json.JsonDocument.Parse(b_" + m.Name + ".WrittenMemory);");
+                sb.AppendLine("                document.Add(" + n + ", global::OneIndex.Index.FieldValue.FromJson(d_" + m.Name + ".RootElement.Clone()));");
+                sb.AppendLine("            }");
+                break;
             default:
                 string v = m.Nullable ? "n_" + m.Name : p;
                 string add = m.Shape switch
@@ -846,6 +879,7 @@ public sealed class MappingGenerator : IIncrementalGenerator
             Shape.Fractional => "result." + name + " = (" + FractionalType(m) + ")field.Value.AsFloat64();",
             Shape.Bool => "result." + name + " = field.Value.AsBool();",
             Shape.Json => "result." + name + " = field.Value.AsJson();",
+            Shape.JsonObject => "result." + name + " = " + m.PocoReader + "(field.Value.AsJson());",
             Shape.DateTime => "result." + name + " = global::OneIndex.SearchMapping.FromDate(field.Value);",
             Shape.Vector => "result." + name + " = field.Value.AsVector().ToArray();",
             Shape.Sparse => "result." + name + " = field.Value.AsSparse();",
@@ -861,4 +895,285 @@ public sealed class MappingGenerator : IIncrementalGenerator
 
     private static string Unwrap(string typeName)
         => typeName.StartsWith("global::System.Nullable<", StringComparison.Ordinal) ? typeName.Substring(24, typeName.Length - 25) : typeName.EndsWith("?", StringComparison.Ordinal) ? typeName.Substring(0, typeName.Length - 1) : typeName;
+
+    // Turns the public properties of a plain class into JSON writer and reader code for a [Dynamic] member, as ordinary C# (no reflection, so
+    // it is AOT-safe). Supported property types: strings, booleans, integers, floating point, decimal, DateTime, DateTimeOffset, Guid, nested
+    // plain classes, and arrays or lists of those.
+    private sealed class JsonPlan
+    {
+        private readonly string _prefix;
+        private readonly StringBuilder _code = new StringBuilder();
+        private readonly Dictionary<string, string> _objects = new Dictionary<string, string>();
+        private readonly Dictionary<string, string> _lists = new Dictionary<string, string>();
+        private readonly HashSet<string> _visiting = new HashSet<string>();
+        private int _n;
+        private string? _error;
+
+        public JsonPlan(string member) => _prefix = member;
+
+        public string Code => _code.ToString();
+
+        public string RootWriter { get; private set; } = string.Empty;
+
+        public string RootReader { get; private set; } = string.Empty;
+
+        public static bool IsPlainClass(ITypeSymbol t)
+            => t is INamedTypeSymbol { TypeKind: TypeKind.Class, IsGenericType: false } named
+               && named.SpecialType == SpecialType.None
+               && !named.AllInterfaces.Any(i => i.SpecialType == SpecialType.System_Collections_IEnumerable);
+
+        public string? Build(INamedTypeSymbol root)
+        {
+            string name = Object(root);
+            if (_error is not null)
+            {
+                return _error;
+            }
+
+            RootWriter = "W_" + name;
+            RootReader = "R_" + name;
+            return null;
+        }
+
+        private string Object(INamedTypeSymbol type)
+        {
+            string key = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            if (_objects.TryGetValue(key, out string? known))
+            {
+                return known;
+            }
+
+            string id = _prefix + "_" + (_n++).ToString(CultureInfo.InvariantCulture);
+            _objects[key] = id;
+            if (!_visiting.Add(key))
+            {
+                _error ??= "'" + type.ToDisplayString() + "' refers to itself";
+                return id;
+            }
+
+            if (!type.InstanceConstructors.Any(c => c.Parameters.Length == 0 && c.DeclaredAccessibility is Accessibility.Public or Accessibility.Internal))
+            {
+                _error ??= "'" + type.ToDisplayString() + "' needs a public or internal parameterless constructor";
+            }
+
+            var write = new StringBuilder();
+            var read = new StringBuilder();
+            write.AppendLine("        private static void W_" + id + "(global::System.Text.Json.Utf8JsonWriter w, " + key + " v)");
+            write.AppendLine("        {");
+            write.AppendLine("            w.WriteStartObject();");
+            read.AppendLine("        private static " + key + " R_" + id + "(global::System.Text.Json.JsonElement e)");
+            read.AppendLine("        {");
+            read.AppendLine("            var r = new " + key + "();");
+            read.AppendLine("            if (e.ValueKind != global::System.Text.Json.JsonValueKind.Object) { return r; }");
+            read.AppendLine("            foreach (global::System.Text.Json.JsonProperty p in e.EnumerateObject())");
+            read.AppendLine("            {");
+            read.AppendLine("                if (p.Value.ValueKind == global::System.Text.Json.JsonValueKind.Null) { continue; }");
+            read.AppendLine("                switch (p.Name)");
+            read.AppendLine("                {");
+            int k = 0;
+            foreach (IPropertySymbol prop in type.GetMembers().OfType<IPropertySymbol>())
+            {
+                if (prop.IsStatic || prop.IsIndexer || prop.GetMethod is not { DeclaredAccessibility: Accessibility.Public or Accessibility.Internal }
+                    || prop.SetMethod is not { IsInitOnly: false, DeclaredAccessibility: Accessibility.Public or Accessibility.Internal } || prop.IsRequired)
+                {
+                    continue;
+                }
+
+                ITypeSymbol pt = prop.Type;
+                bool nullableValue = pt is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T };
+                ITypeSymbol inner = nullableValue ? ((INamedTypeSymbol)pt).TypeArguments[0] : pt;
+                string xv = "x" + (k++).ToString(CultureInfo.InvariantCulture);
+                string? w = WriteStatement(inner, xv);
+                string? rd = ReadExpression(inner, "p.Value");
+                if (w is null || rd is null)
+                {
+                    _error ??= "property '" + type.Name + "." + prop.Name + "' has type '" + pt.ToDisplayString() + "', which a dynamic JSON field cannot hold";
+                    continue;
+                }
+
+                write.AppendLine("            if (v." + prop.Name + " is { } " + xv + ") { w.WritePropertyName(" + Lit(prop.Name) + "); " + w + " }");
+                read.AppendLine("                    case " + Lit(prop.Name) + ": r." + prop.Name + " = " + rd + "; break;");
+            }
+
+            write.AppendLine("            w.WriteEndObject();");
+            write.AppendLine("        }");
+            read.AppendLine("                }");
+            read.AppendLine("            }");
+            read.AppendLine("            return r;");
+            read.AppendLine("        }");
+            _code.AppendLine(write.ToString());
+            _code.AppendLine(read.ToString());
+            _visiting.Remove(key);
+            return id;
+        }
+
+        // A statement writing the value of the (non-null) variable x of the given type, or null when the type is not supported.
+        private string? WriteStatement(ITypeSymbol t, string x)
+        {
+            switch (t.SpecialType)
+            {
+                case SpecialType.System_String: return "w.WriteStringValue(" + x + ");";
+                case SpecialType.System_Boolean: return "w.WriteBooleanValue(" + x + ");";
+                case SpecialType.System_SByte:
+                case SpecialType.System_Byte:
+                case SpecialType.System_Int16:
+                case SpecialType.System_UInt16: return "w.WriteNumberValue((int)" + x + ");";
+                case SpecialType.System_Int32:
+                case SpecialType.System_UInt32:
+                case SpecialType.System_Int64:
+                case SpecialType.System_UInt64:
+                case SpecialType.System_Decimal: return "w.WriteNumberValue(" + x + ");";
+                case SpecialType.System_Single: return "if (float.IsFinite(" + x + ")) { w.WriteNumberValue(" + x + "); } else { w.WriteNullValue(); }";
+                case SpecialType.System_Double: return "if (double.IsFinite(" + x + ")) { w.WriteNumberValue(" + x + "); } else { w.WriteNullValue(); }";
+                case SpecialType.System_DateTime: return "w.WriteStringValue(" + x + ");";
+            }
+
+            string display = t.ToDisplayString();
+            if (display == "System.DateTimeOffset" || display == "System.Guid")
+            {
+                return "w.WriteStringValue(" + x + ");";
+            }
+
+            ITypeSymbol? element = null;
+            if (t is IArrayTypeSymbol { Rank: 1 } array)
+            {
+                element = array.ElementType;
+            }
+            else if (t is INamedTypeSymbol { IsGenericType: true, TypeArguments.Length: 1 } generic && IsSequence(generic))
+            {
+                element = generic.TypeArguments[0];
+            }
+
+            if (element is not null)
+            {
+                // Sequences of sequences and of nullable values are not supported.
+                if (element is IArrayTypeSymbol || element is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } || (element is INamedTypeSymbol { IsGenericType: true } g && IsSequence(g)))
+                {
+                    return null;
+                }
+
+                string? item = WriteStatement(element, "e");
+                if (item is null)
+                {
+                    return null;
+                }
+
+                string ty = element.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                return "w.WriteStartArray(); foreach (" + ty + " e in " + x + ") { " + (element.IsValueType ? item : "if (e is null) { w.WriteNullValue(); } else { " + item + " }") + " } w.WriteEndArray();";
+            }
+
+            if (IsPlainClass(t))
+            {
+                return "W_" + Object((INamedTypeSymbol)t) + "(w, " + x + ");";
+            }
+
+            return null;
+        }
+
+        private static bool IsSequence(INamedTypeSymbol generic)
+        {
+            switch (generic.OriginalDefinition.ToDisplayString())
+            {
+                case "System.Collections.Generic.List<T>":
+                case "System.Collections.Generic.IEnumerable<T>":
+                case "System.Collections.Generic.IReadOnlyList<T>":
+                case "System.Collections.Generic.IReadOnlyCollection<T>":
+                case "System.Collections.Generic.IList<T>":
+                case "System.Collections.Generic.ICollection<T>":
+                    return true;
+            }
+
+            return false;
+        }
+
+        // An expression reading the value of a JsonElement expression into the type, or null when the type is not supported.
+        private string? ReadExpression(ITypeSymbol t, string e)
+        {
+            switch (t.SpecialType)
+            {
+                case SpecialType.System_String: return e + ".GetString()!";
+                case SpecialType.System_Boolean: return e + ".GetBoolean()";
+                case SpecialType.System_SByte: return e + ".GetSByte()";
+                case SpecialType.System_Byte: return e + ".GetByte()";
+                case SpecialType.System_Int16: return e + ".GetInt16()";
+                case SpecialType.System_UInt16: return e + ".GetUInt16()";
+                case SpecialType.System_Int32: return e + ".GetInt32()";
+                case SpecialType.System_UInt32: return e + ".GetUInt32()";
+                case SpecialType.System_Int64: return e + ".GetInt64()";
+                case SpecialType.System_UInt64: return e + ".GetUInt64()";
+                case SpecialType.System_Single: return e + ".GetSingle()";
+                case SpecialType.System_Double: return e + ".GetDouble()";
+                case SpecialType.System_Decimal: return e + ".GetDecimal()";
+                case SpecialType.System_DateTime: return e + ".GetDateTime()";
+            }
+
+            string display = t.ToDisplayString();
+            if (display == "System.DateTimeOffset")
+            {
+                return e + ".GetDateTimeOffset()";
+            }
+
+            if (display == "System.Guid")
+            {
+                return e + ".GetGuid()";
+            }
+
+            ITypeSymbol? element = null;
+            bool isArray = false;
+            if (t is IArrayTypeSymbol { Rank: 1 } array)
+            {
+                element = array.ElementType;
+                isArray = true;
+            }
+            else if (t is INamedTypeSymbol { IsGenericType: true, TypeArguments.Length: 1 } generic && IsSequence(generic))
+            {
+                element = generic.TypeArguments[0];
+            }
+
+            if (element is not null)
+            {
+                if (element is IArrayTypeSymbol || element is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } || (element is INamedTypeSymbol { IsGenericType: true } g && IsSequence(g)))
+                {
+                    return null;
+                }
+
+                string? item = ReadExpression(element, "i");
+                if (item is null)
+                {
+                    return null;
+                }
+
+                string ety = element.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                string key = ety + "|" + item;
+                if (!_lists.TryGetValue(key, out string? helper))
+                {
+                    helper = "RL_" + _prefix + "_" + (_n++).ToString(CultureInfo.InvariantCulture);
+                    _lists[key] = helper;
+                    _code.AppendLine("        private static global::System.Collections.Generic.List<" + ety + "> " + helper + "(global::System.Text.Json.JsonElement e)");
+                    _code.AppendLine("        {");
+                    _code.AppendLine("            var l = new global::System.Collections.Generic.List<" + ety + ">();");
+                    _code.AppendLine("            if (e.ValueKind == global::System.Text.Json.JsonValueKind.Array)");
+                    _code.AppendLine("            {");
+                    _code.AppendLine("                foreach (global::System.Text.Json.JsonElement i in e.EnumerateArray())");
+                    _code.AppendLine("                {");
+                    _code.AppendLine("                    if (i.ValueKind == global::System.Text.Json.JsonValueKind.Null) { " + (element.IsValueType ? "continue;" : "l.Add(default!); continue;") + " }");
+                    _code.AppendLine("                    l.Add(" + item + ");");
+                    _code.AppendLine("                }");
+                    _code.AppendLine("            }");
+                    _code.AppendLine("            return l;");
+                    _code.AppendLine("        }");
+                    _code.AppendLine();
+                }
+
+                return helper + "(" + e + ")" + (isArray ? ".ToArray()" : string.Empty);
+            }
+
+            if (IsPlainClass(t))
+            {
+                return "R_" + Object((INamedTypeSymbol)t) + "(" + e + ")";
+            }
+
+            return null;
+        }
+    }
 }
