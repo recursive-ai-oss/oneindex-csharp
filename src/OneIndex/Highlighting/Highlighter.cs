@@ -186,6 +186,9 @@ public sealed class HighlightTerms
             return 0;
         }
 
+        // The terms are chosen against a snapshot when the weight is made, so there is nothing to locate in a stored text yet.
+        public override int VisitMoreLikeThis(MoreLikeThisQuery query) => 0;
+
         public override int VisitProximity(ProximityQuery query)
         {
             query.Inner.Accept(this);

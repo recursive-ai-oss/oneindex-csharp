@@ -14,6 +14,7 @@ OneIndex is unaffiliated with other products named OneIndex, OneSearch or simila
 | Segments, commits (fsync, then atomic rename), background merges, reader processes on committed snapshots, near-real-time readers | Working. |
 | Analysis: UAX #29 words and sentences (Unicode 17.0.0), NFC/NFKC, case and accent folding, Snowball stemmers (34 languages) and stop words, CJK bigrams | Working, conformance-tested ([docs/analysis.md](docs/analysis.md)) |
 | Term dictionary, postings, block-max WAND, BM25F; term, boolean, phrase, prefix, fuzzy, regex, range queries | Working, measured ([docs/benchmarks.md](docs/benchmarks.md)) |
+| More-like-this (from a document or a text; LINQ, query JSON) | Working ([docs/more-like-this.md](docs/more-like-this.md)) |
 | Typo tolerance, as-you-type, "did you mean", synonyms, stop words | Working ([docs/typo-tolerance.md](docs/typo-tolerance.md)) |
 | Columns, filters, facets with value search, aggregations, distinct, geo, sort and search-after, function scores, ranking rules, explain | Working |
 | `[Dynamic]` fields and schema evolution from stored source | Working ([docs/schema-evolution.md](docs/schema-evolution.md)) |
@@ -119,7 +120,7 @@ Build output goes outside the checkout: set `ONEINDEX_ARTIFACTS` to choose where
 - `src/OneIndex`: the core library. `Storage`, `Index`, `Analysis` and `Search` are public layers, each built only on the ones before it; the happy path lives in the root namespace.
 - `src/OneIndex.Generators`: the source generator that ships inside the core package.
 - `tests/`, `bench/`, `fuzz/`: unit tests, the durability, relevance and differential suites, smoke apps (NativeAOT and browser WebAssembly), benchmarks and fuzz targets.
-- `docs/`: normative notes on formats and protocols; start with [the architecture note](docs/architecture.md).
+- `docs/`: normative notes on formats and protocols; the index of notes is [docs/README.md](docs/README.md), and the architecture note is [docs/architecture.md](docs/architecture.md).
 
 ## License
 

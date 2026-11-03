@@ -98,6 +98,23 @@ public sealed class QueryEngine : IWeightFactory
             }
         }
 
+        public override Weight VisitMoreLikeThis(MoreLikeThisQuery query)
+        {
+            if (++_depth > options.MaxDepth)
+            {
+                throw new QueryException($"Queries are nested deeper than {options.MaxDepth} levels.");
+            }
+
+            try
+            {
+                return MoreLikeThisExpander.Expand(context, query).Accept(this);
+            }
+            finally
+            {
+                _depth--;
+            }
+        }
+
         public override Weight VisitSparse(SparseQuery query) => SparseWeight.Create(context, query);
 
         public override Weight VisitKnn(KnnQuery query) => KnnWeight.Create(context, query, query.Filter?.Accept(this));
