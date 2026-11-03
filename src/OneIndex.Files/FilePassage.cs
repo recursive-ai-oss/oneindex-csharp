@@ -24,7 +24,7 @@ public class FilePassage
     /// <summary>The record of a file that could not be read; <see cref="Error"/> says why.</summary>
     public const string KindError = "error";
 
-    /// <summary>Dimensions of the passage embedding. Matches the packaged default embedder; a passage index opened with an embedder of another size is refused.</summary>
+    /// <summary>Dimensions of the passage embedding. The default, which matches the packaged embedder; <see cref="FolderIndexer.OpenIndex"/> sizes the field to the embedder it is given, so an embedder of another size works, and an existing index created with a different size is refused.</summary>
     public const int EmbeddingDimensions = 384;
 
     /// <summary>The document identifier: <c>FileId#ordinal</c> for a passage, <c>file:FileId</c> for a file record.</summary>

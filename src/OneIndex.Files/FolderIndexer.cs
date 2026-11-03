@@ -22,7 +22,7 @@ public static class FolderIndexer
     /// <param name="indexPath">The index directory.</param>
     /// <param name="embedder">Embeds passages for hybrid search; null for text search only.</param>
     /// <returns>The index.</returns>
-    public static SearchIndex<FilePassage> OpenIndex(string indexPath, IEmbedder? embedder = null) => SearchIndex.Open<FilePassage>(indexPath, embedder);
+    public static SearchIndex<FilePassage> OpenIndex(string indexPath, IEmbedder? embedder = null) => embedder is null ? SearchIndex.Open<FilePassage>(indexPath, null) : SearchIndex.OpenSizedToEmbedder<FilePassage>(indexPath, embedder);
 
     /// <summary>Indexes or updates a folder.</summary>
     /// <param name="index">The passage index; the caller owns it and keeps it open.</param>

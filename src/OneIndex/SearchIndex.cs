@@ -66,6 +66,32 @@ public static class SearchIndex
         return new SearchIndex<T>(new FileSystemStorage(path), SearchMappings.Require<T>(), embedder, sparseEncoder, reranker);
     }
 
+    /// <summary>Opens or creates an index in a directory whose automatically embedded vector members take the embedder's dimension instead of the length their attribute declares.</summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="path">The index directory.</param>
+    /// <param name="embedder">The embedder; its <see cref="IEmbedder.Dimension"/> becomes the length of every <c>[Vector(From = ...)]</c> member.</param>
+    /// <returns>The index.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="embedder"/> is null.</exception>
+    public static SearchIndex<T> OpenSizedToEmbedder<T>(string path, IEmbedder embedder)
+        where T : class
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        ArgumentNullException.ThrowIfNull(embedder);
+        return new SearchIndex<T>(new FileSystemStorage(path), SearchMappings.Require<T>().WithEmbeddedVectorDimensions(embedder.Dimension), embedder, SearchSparseEncoders.Default, SearchRerankers.Default);
+    }
+
+    /// <summary>Creates an in-memory index whose automatically embedded vector members take the embedder's dimension.</summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="embedder">The embedder.</param>
+    /// <returns>The index.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="embedder"/> is null.</exception>
+    public static SearchIndex<T> InMemorySizedToEmbedder<T>(IEmbedder embedder)
+        where T : class
+    {
+        ArgumentNullException.ThrowIfNull(embedder);
+        return new SearchIndex<T>(new MemoryStorage(), SearchMappings.Require<T>().WithEmbeddedVectorDimensions(embedder.Dimension), embedder, SearchSparseEncoders.Default, SearchRerankers.Default);
+    }
+
     /// <summary>Creates an in-memory index with explicit embedder and sparse encoder (see <see cref="Open{T}(string, IEmbedder, ISparseEncoder)"/>).</summary>
     /// <typeparam name="T">The attributed document type.</typeparam>
     /// <param name="embedder">The embedder, or <see langword="null"/> for none.</param>
