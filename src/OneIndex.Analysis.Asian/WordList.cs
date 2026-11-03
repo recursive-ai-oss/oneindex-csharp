@@ -56,6 +56,8 @@ public sealed class WordList
             throw new DictionaryFormatException("Word offsets do not cover the character data.");
         }
 
+        DictionaryContainer.RequireSortedWords(_chars, _offsets);
+
         byte[] f = s[SecFrequency];
         if (f.Length != n * 4)
         {

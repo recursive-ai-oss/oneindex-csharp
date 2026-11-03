@@ -92,6 +92,27 @@ internal static class DictionaryContainer
         return file;
     }
 
+    /// <summary>
+    /// Words are searched by narrowing a sorted range one character at a time, so the lists must be non-empty words in UTF-16 code unit
+    /// order (repeats allowed); a checksummed file that breaks this would send the search past a word's end.
+    /// </summary>
+    internal static void RequireSortedWords(ReadOnlySpan<char> chars, ReadOnlySpan<int> offsets)
+    {
+        for (int i = 0; i + 1 < offsets.Length; i++)
+        {
+            ReadOnlySpan<char> word = chars[offsets[i]..offsets[i + 1]];
+            if (word.Length == 0)
+            {
+                throw new DictionaryFormatException("The dictionary lists an empty word.");
+            }
+
+            if (i > 0 && chars[offsets[i - 1]..offsets[i]].SequenceCompareTo(word) > 0)
+            {
+                throw new DictionaryFormatException("The dictionary's words are not in order.");
+            }
+        }
+    }
+
     /// <summary>Validates the file and returns the decompressed sections by id.</summary>
     internal static Dictionary<uint, byte[]> Read(ReadOnlySpan<byte> file, uint expectedKind, DictionaryLimits limits)
     {

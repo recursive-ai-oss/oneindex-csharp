@@ -141,8 +141,18 @@ public class AsianAnalysisTests
     {
         // Found by the dictionary fuzz target (testdata/fuzz/dictionary-crash-b69cbc22.bin): a section offset near 2^64 wrapped the bounds check.
         byte[] input = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(ThisFile())!, "..", "..", "testdata", "fuzz", "dictionary-crash-b69cbc22.bin"));
-        Assert.False(LatticeLexicon.TryLoad(input, out _));
-        Assert.False(WordList.TryLoad(input, out _));
+        // The first byte only selects the reader in the fuzz target; the file starts after it.
+        Assert.False(LatticeLexicon.TryLoad(input.AsSpan(1), out _));
+        Assert.False(WordList.TryLoad(input.AsSpan(1), out _));
+    }
+
+    [Fact]
+    public void UnsortedWordsAreRejected()
+    {
+        // Found by the dictionary fuzz target (testdata/fuzz/dictionary-crash-20ee4d23.bin): a checksummed list whose words were not in order
+        // sent the prefix search past the end of a word.
+        byte[] input = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(ThisFile())!, "..", "..", "testdata", "fuzz", "dictionary-crash-20ee4d23.bin"));
+        Assert.False(WordList.TryLoad(input.AsSpan(1), out _));
     }
 
     private static string ThisFile([System.Runtime.CompilerServices.CallerFilePath] string path = "") => path;

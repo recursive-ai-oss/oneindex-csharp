@@ -76,6 +76,8 @@ public sealed class LatticeLexicon
             throw new DictionaryFormatException("Word offsets do not cover the character data.");
         }
 
+        DictionaryContainer.RequireSortedWords(_chars, offsets);
+
         _left = ReadUShorts(s[SecLeft], n);
         _right = ReadUShorts(s[SecRight], n);
         _pos = ReadUShorts(s[SecPos], n);

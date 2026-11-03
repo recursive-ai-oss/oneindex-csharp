@@ -172,3 +172,81 @@ Information, SciFact: the default hybrid list (docs/hybrid.md; 0.7257) reranked 
 
 Throughput, for information: 22 to 25 (query, passage) pairs per second with 8 threads on a shared x64 machine (AVX-512 kernels), 100 passages of 150 to 400 tokens per query.
 The model tool's rate on pairs is the limit of the BEIR runs above (about 45 minutes for SciFact, five hours for ArguAna).
+
+## SentencePiece tokenizer (`OneIndex.Models.Tokenization`)
+
+Self-contained like WordPiece (BCL only, no reference to the engine or to OneModel), so it can move to a shared tokenizer library. Unigram
+models only: a BPE model is reported as a `SentencePieceFormatException`.
+
+Sources: Kudo, "Subword Regularization" (ACL 2018) for the unigram model and its Viterbi segmentation; Kudo and Richardson, "SentencePiece"
+(EMNLP 2018 demo); the `sentencepiece_model.proto` schema as a description of the file format. The reference implementation's source was
+not read; its output was used as a black box.
+
+- **Model file:** a protobuf (`ModelProto`) read by a small reader that checks every length against the remaining bytes and
+  `SentencePieceLimits` (file size, piece count, piece length); malformed input raises `SentencePieceFormatException`. The `dictionary`
+  fuzz target covers it.
+- **Normalizer:** `nmt_nfkc`. The model file carries the rule set only as a compiled character map, so the table (4,837 single code
+  points and 14,116 sequences, `Tokenization/nmt_nfkc.tsv`) was dumped by running the released normalizer
+  (`tools/models/spm_normalizer_dump.py`) over the Unicode scalar values and the sequences its map contains; Hangul jamo composition is
+  algorithmic. The table is data observed from the reference's output.
+- **Segmentation:** Viterbi search over the piece scores, the first-found path winning ties.
+
+### Conformance
+
+Token ids against `sentencepiece` 0.2.1 (run in a `uv` venv on the model's own `sentencepiece.bpe.model`) over 7,971 texts
+(`tools/models/spm_sample.py`, seed 20261103): the Universal Dependencies Japanese, Chinese, Korean and Thai sentences, phrases from
+the Snowball vocabularies of 34 languages, edge cases (empty, whitespace, control characters, long runs, emoji, combining sequences)
+and random strings over awkward scripts.
+
+- **7,967 identical** (99.95 %); the normalized strings are identical in all 7,971.
+- **4 differ, each an exact tie.** All four contain U+2034 (a triple prime), which normalizes to three U+2032; the text then has two
+  segmentations with the same total score and the reference picks the other one (we keep the first found; trying "last found" and
+  accumulating in double precision gave no better result). Both are valid unigram segmentations.
+- Against the model's fast `tokenizer.json` (a different implementation of the same model) 116 of the 7,971 texts differ from the
+  `sentencepiece` ids, so "identical to the fast tokenizer" is not a claim we can make; `sentencepiece` is the reference here.
+
+## Multilingual embedder: multilingual-e5-small (`RecursiveAI.OneIndex.Models.Multilingual`)
+
+intfloat/multilingual-e5-small, MIT licence, revision `614241f622f53c4eeff9890bdc4f31cfecc418b3`: 12 layers, 384 dimensions, around 100
+languages, with a 250,000-piece embedding table. It is a separate package because the int8 weights are 120 MB (the English default is
+35 MB); it depends on `RecursiveAI.OneIndex.Models` and OneModel only.
+
+- Prefixes as the model card says: `query: ` for queries, `passage: ` for documents, both added by role. Mean pooling over the real
+  tokens, then scaled to unit length. At most 512 tokens per text.
+- Token ids follow the model's numbering: the boundaries are 0 and 2, the padding id is 1, unknown 3, and every other piece id is shifted
+  up by one (the fairseq convention of XLM-RoBERTa).
+- `MultilingualE5Embedder.Load()` opens the packed int8 weights; `Open(model, sentencepiece, variant)` loads files. Run by OneModel in
+  its default mode, batched like the English embedder.
+- Weights: `tools/models/prepare_e5_small.py` downloads the published ONNX (SHA-256 checked) and quantizes it (int8 per output channel,
+  the table per row); `tools/models/pack-weights.sh e5` places the converted file where the project embeds it. As OneModel files, fp32
+  is 470,429,956 bytes and int8 120,038,276.
+
+### Parity with ONNX Runtime
+
+800 texts (with the `passage: ` prefix) from the tokenizer sample: ONNX Runtime 1.31.1 fp32 on the ids of the model's `tokenizer.json`
+against our embedder (AVX-512 kernels).
+
+| | cosine min | cosine 1st percentile | cosine median | cosine mean | max abs difference |
+|---|---|---|---|---|---|
+| fp32 through OneModel | 0.954092 | 0.998780 | 1.000000 | 0.999811 | 0.05686 |
+| int8 (shipped) | 0.953278 | 0.998596 | 0.999871 | 0.999666 | 0.05774 |
+
+The low minimums come from the few texts where the fast tokenizer the reference used and `sentencepiece` (which we match) segment
+differently, not from the arithmetic: the median is 1.0.
+
+### BEIR reproduction
+
+Dense retrieval over each set's corpus with the shipped int8 weights on CPU (flat vector search, `query: ` and `passage: ` prefixes,
+nDCG@10 under the BEIR convention), against the model card's MTEB figures (the `model-index` of its README, nDCG@10 in %):
+
+| Set | Model card | OneIndex int8 | Difference |
+|---|---|---|---|
+| SciFact | 67.704 | 67.82 | +0.1 point |
+| ArguAna | 39.063 | 38.59 | -0.5 point |
+| SCIDOCS | 13.895 | SCIDOCS_PLACEHOLDER | |
+
+MIRACL and NQ were not run: MIRACL needs multilingual corpora of millions of passages and NQ is 2.68 million passages, at 15 to 30
+passages per second on CPU. ArguAna's queries are documents of the corpus: the BEIR convention (used here) skips a hit whose id equals
+the query's, while the model card's MTEB figure may count that copy as a hit, so the two numbers are not computed the same way. We did
+not run the other convention for this model, so the split of the 0.5 point between convention, int8 weights and the tokenizer
+differences is not measured.
