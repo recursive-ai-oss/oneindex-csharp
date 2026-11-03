@@ -62,7 +62,7 @@ public static class Mutations
     public static string[] Words { get; } = ["acme", "invoice", "widget", "hosting", "support", "license", "travel", "audit", "refund", "sprocket"];
 
     /// <summary>One save of one to five random changes. Conflicts with the other process are expected and ignored.</summary>
-    public static async Task<bool> SaveSomeAsync(AppDb db, Random rng, bool useAsync)
+    public static async Task<bool> SaveSomeAsync(AppDb db, Random rng, bool useAsync, int holdMs = 0)
     {
         int ops = rng.Next(1, 6);
         for (int i = 0; i < ops; i++)
@@ -86,6 +86,17 @@ public static class Mutations
 
         try
         {
+            if (holdMs > 0 && rng.Next(3) == 0)
+            {
+                // The transaction takes its log positions at SaveChanges and shows them only at commit, so a concurrent writer that commits meanwhile
+                // makes later positions visible first.
+                await using var tx = await db.Database.BeginTransactionAsync().ConfigureAwait(false);
+                await db.SaveChangesAsync().ConfigureAwait(false);
+                await Task.Delay(rng.Next(holdMs)).ConfigureAwait(false);
+                await tx.CommitAsync().ConfigureAwait(false);
+                return true;
+            }
+
             if (useAsync)
             {
                 await db.SaveChangesAsync().ConfigureAwait(false);
@@ -175,7 +186,7 @@ public static class ChildApp
             while (clock.ElapsedMilliseconds < ms)
             {
                 using AppDb w = AppDb.Create(db, Path.Combine(root, inst));
-                await Mutations.SaveSomeAsync(w, wrng, wrng.Next(2) == 0).ConfigureAwait(false);
+                await Mutations.SaveSomeAsync(w, wrng, wrng.Next(2) == 0, a.Number("hold", 0)).ConfigureAwait(false);
                 if (inline && ++saves % 40 == 0)
                 {
                     rt.Prune(a.Number("retain", 30));
@@ -368,7 +379,7 @@ public sealed class KillCampaign(Args a)
                     UseShellExecute = false,
                 };
                 foreach (string s in new[] { dll, "app", "--db", dbFile, "--root", dir, "--inst", inst, "--seed", (seed * 100003 + cycle * 7 + inst[0]).ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    "--ms", "2500", "--mode", rng.Next(3) == 0 ? "inline" : "threaded", "--writers", writers, "--kill", kill, "--retain", (5 + rng.Next(60)).ToString(System.Globalization.CultureInfo.InvariantCulture) })
+                    "--ms", "2500", "--mode", rng.Next(3) == 0 ? "inline" : "threaded", "--writers", writers, "--hold", a.Get("hold", "0"), "--kill", kill, "--retain", (5 + rng.Next(60)).ToString(System.Globalization.CultureInfo.InvariantCulture) })
                 {
                     psi.ArgumentList.Add(s);
                 }

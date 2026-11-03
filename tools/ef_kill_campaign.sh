@@ -14,7 +14,7 @@ pids=()
 for ((i = 0; i < LANES; i++)); do
   s=$((SEED + i))
   rm -rf "$WORK/tmp/lane$s"
-  dotnet "$DLL" kill --dir "$WORK/tmp/lane$s" --cycles "$CYCLES" --seed "$s" --pg "${EF_PG:-}" --writers "${EF_WRITERS:-2}" --hook "${EF_HOOK:-55}" > "$WORK/logs/lane$s.log" 2>&1 &
+  dotnet "$DLL" kill --dir "$WORK/tmp/lane$s" --cycles "$CYCLES" --seed "$s" --pg "${EF_PG:-}" --writers "${EF_WRITERS:-2}" --hook "${EF_HOOK:-55}" --hold "${EF_HOLD:-0}" > "$WORK/logs/lane$s.log" 2>&1 &
   pids+=($!)
 done
 rc=0
