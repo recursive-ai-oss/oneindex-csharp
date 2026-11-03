@@ -227,6 +227,12 @@ public sealed class SegmentReaderContext
     /// <summary>The index storage.</summary>
     public IStorage Storage { get; }
 
+    /// <summary>
+    /// Whether parts a query may never touch (columns, points, vectors) are opened on first use instead of with the segment. True for
+    /// storage that charges for every byte read (a static index over HTTP), where opening them would fetch files for nothing.
+    /// </summary>
+    public bool DeferOptionalParts => Storage is IDeferredOpenStorage;
+
     /// <summary>The schema.</summary>
     public Schema Schema { get; }
 

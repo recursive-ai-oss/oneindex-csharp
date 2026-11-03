@@ -147,6 +147,16 @@ public sealed class ColumnSegmentCodec : ISegmentCodec
     public ISegmentPartReader? OpenReader(SegmentReaderContext context, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
+        if (context.DeferOptionalParts)
+        {
+            return context.Info.FindPart(SegmentParts.Columns) is null ? null : new DeferredColumnSource(new DeferredPart<ColumnPartReader>(() => OpenNow(context, cancellationToken)));
+        }
+
+        return OpenNow(context, cancellationToken);
+    }
+
+    private static ColumnPartReader? OpenNow(SegmentReaderContext context, CancellationToken cancellationToken)
+    {
         IRangeReader? reader = context.OpenPart(SegmentParts.Columns, out SegmentFile? file, cancellationToken);
         if (reader is null)
         {
@@ -422,4 +432,12 @@ internal sealed class ColumnPartReader : ISegmentPartReader, IColumnSource
     public void Dispose()
     {
     }
+}
+
+/// <summary>Column access that opens the columns file when a query first asks for a column (static indexes).</summary>
+internal sealed class DeferredColumnSource(DeferredPart<ColumnPartReader> part) : ISegmentPartReader, IColumnSource
+{
+    public IColumnReader? GetColumn(string field) => part.Value?.GetColumn(field);
+
+    public void Dispose() => part.Dispose();
 }

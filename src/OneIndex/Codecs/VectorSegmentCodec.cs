@@ -475,6 +475,16 @@ public sealed class VectorSegmentCodec : ISegmentCodec
     public ISegmentPartReader? OpenReader(SegmentReaderContext context, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
+        if (context.DeferOptionalParts)
+        {
+            return context.Info.FindPart(SegmentParts.Vectors) is null ? null : new DeferredVectorSource(new DeferredPart<VectorPartReader>(() => OpenNow(context, cancellationToken)));
+        }
+
+        return OpenNow(context, cancellationToken);
+    }
+
+    private static VectorPartReader? OpenNow(SegmentReaderContext context, CancellationToken cancellationToken)
+    {
         IRangeReader? vectors = context.OpenPart(SegmentParts.Vectors, out _, cancellationToken);
         if (vectors is null)
         {
@@ -497,4 +507,12 @@ public sealed class VectorSegmentCodec : ISegmentCodec
             throw;
         }
     }
+}
+
+/// <summary>Vector access that opens the vector files when a query first asks for a field (static indexes).</summary>
+internal sealed class DeferredVectorSource(DeferredPart<VectorPartReader> part) : ISegmentPartReader, global::OneIndex.Search.IVectorSource
+{
+    public global::OneIndex.Search.IVectorFieldReader? GetVectors(string field) => part.Value?.GetVectors(field);
+
+    public void Dispose() => part.Dispose();
 }

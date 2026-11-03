@@ -17,7 +17,7 @@ internal static class StaticCommand
             return 1;
         }
 
-        int chunkKb = a.GetInt("--chunk-kb", 256, 1, 65536);
+        int chunkKb = a.GetInt("--chunk-kb", 16, 1, 65536);
         StaticManifest m = StaticIndexBuilder.Build<FilePassage>(index, outDir, new StaticBuildOptions { ChunkBytes = chunkKb * 1024 }, ct);
         long bytes = m.Files.Sum(static f => f.Size);
         output.WriteLine($"Static index: {m.Files.Count} files, {bytes:N0} bytes in chunks of {chunkKb} KiB, written to {outDir}");
