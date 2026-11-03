@@ -32,31 +32,37 @@ OneIndex is unaffiliated with other products named OneIndex, OneSearch or simila
 ### Known gaps
 
 - **Entity Framework:** `ExecuteUpdate`, `ExecuteDelete` and raw SQL bypass `SaveChanges`, so they are not indexed; repair with `ReindexAsync(query)`. A log row that becomes visible after the applier gave up on its position is applied at the entity's next change or by `ReindexAsync`. SQL Server and MySQL have not been run ([docs/entity-framework.md](docs/entity-framework.md)).
-- **VectorData:** dynamic (dictionary) collections, store-side embedding generation, Manhattan and Hamming distance and whole-array equality filters are not supported, so 13 of the abstraction's conformance tests and the data-type suite (which needs dynamic collections) are excluded ([docs/vectordata.md](docs/vectordata.md)).
+- **VectorData:** dynamic (dictionary) collections, store-side embedding generation, Manhattan and Hamming distance and whole-array equality filters are not supported, so the conformance tests that need them skip themselves with a reason naming the feature ([docs/vectordata.md](docs/vectordata.md)).
 - **Static index against Pagefind:** a first query costs about 0.74 MB (Pagefind: 0.32 MB) and a later text query about 194 KB in 48 small requests (Pagefind: 46 KB in 4); the stored-source blocks and term-dictionary pages set that floor. Static hybrid uses IVF candidates, so its results are close to, not identical with, the server's graph-based hybrid (top-10 overlap 0.89 at the default). The .NET WebAssembly payload is 5.35 MB raw (1.57 MB brotli) against Pagefind's 575 KB. IVF is also a per-field server option (`[Vector(Index = VectorIndexKind.Ivf)]`), 3 to 8 times slower than HNSW at equal recall.
 
-### Relevance (BM25, nDCG@10, BEIR test sets; measured 2026-10)
+### Relevance (BM25, nDCG@10, BEIR test sets; measured 2026-11)
 
-OneIndex at its defaults (BM25F, title weight 3, k1=0.9, b=0.4) against the published BM25 baseline (Kamalloo et al., SIGIR 2024, Table 3, multifield) and Lucene.NET 4.8.0-beta00018 on the same runs. Method and all layouts: [docs/relevance.md](docs/relevance.md).
+OneIndex at its defaults (user text: BM25F, title weight 3, k1=0.9, b=0.4, proximity bonus 0.1) against the published BM25 baseline (Kamalloo et al., SIGIR 2024, Table 3, multifield) and Lucene.NET 4.8.0-beta00018 on the same runs. Method and all layouts: [docs/relevance.md](docs/relevance.md).
 
 | Set | OneIndex | Published | Lucene.NET, flat | Lucene.NET, per-field sum |
 |---|---|---|---|---|
-| SciFact | 0.6912 | 0.665 | see docs | 0.6647 |
-| ArguAna | 0.4333 | 0.414 | see docs | 0.4240 |
-| NQ | 0.3420 | 0.329 | see docs | 0.3252 |
-| SCIDOCS | 0.1531 | 0.158 | 0.1509 | 0.1587 |
+| SciFact | 0.6918 | 0.665 | 0.6789 | 0.6647 |
+| ArguAna | 0.4347 | 0.414 | 0.4118 | 0.4240 |
+| NQ | 0.3452 | 0.329 | 0.3058 | 0.3252 |
+| SCIDOCS | 0.1544 | 0.158 | 0.1509 | 0.1587 |
+
+Hybrid search (BM25 with bge-small-en-v1.5, rank fusion at its defaults) averages 0.517 over SciFact, ArguAna, SCIDOCS and NQ, against 0.506 for the dense arm alone and 0.405 for BM25, and beats both arms on every set ([docs/hybrid.md](docs/hybrid.md)).
 
 BM25F scores a document as one weighted stream, so its like-for-like comparison is Lucene.NET's flat layout. On SCIDOCS, summing per-field scores does better (0.1587), but the same layout costs 3.1 points on SciFact and 1.0 on NQ when OneIndex runs it.
 
 ### Speed
 
-Text rows against Lucene.NET 4.8.0-beta00018 with matched analysis and commits, and vector rows against Hnsw.Net at matched recall, on x64 and arm64, are in [docs/benchmarks.md](docs/benchmarks.md) and [docs/vectors.md](docs/vectors.md), with peak memory and index size beside each row (measured 2026-10 and 2026-11).
+Measured 2026-11 on x64 (AMD Ryzen 9 7950X3D) and arm64 (Apple M2), with peak memory and index size beside each row in [docs/benchmarks.md](docs/benchmarks.md):
+
+- **Text, against Lucene.NET 4.8.0-beta00018** with matched analysis and commits (302,567 Wikipedia abstracts; 17 rows: indexing, commit, 1-, 2- and 5-term queries, phrase, prefix, as-you-type, fuzzy, typo, filtered, facets, stats, sort, function score). OneIndex's time is 0.62 of Lucene.NET's on x64 and 0.41 on arm64 as a geometric mean. The slowest rows are phrase (1.17x on x64) and function score (1.14x on x64).
+- **Vectors, against Hnsw.Net 0.1.4** at matched recall@10 of 0.90, 0.95 and 0.99 (0.98 at 384 dimensions, the highest both reach), at 384 and 768 dimensions. OneIndex has 1.19x the queries per second on x64 and 1.15x on arm64 (geometric mean). Build time is 0.94-0.95x on x64 and 0.62-0.75x on arm64.
+- Native engines (Tantivy, SQLite FTS5, hnswlib, FAISS) are listed for information. Tantivy is 2-3x faster on plain term and phrase queries.
 
 ### Durability and the EF Core integration
 
-**Durable by design.** A commit that returns survives a crash or `kill -9` of your process. A reader sees one whole commit. Every file is checksummed, and damage fails the open with an error that names the file instead of returning wrong results. We test this with fault injection at every storage operation (about 500,000 schedules on x64 and arm64) and with thousands of process kills. On a power cut the index may roll back to an earlier commit, but it is never corrupt. See [docs/durability.md](docs/durability.md).
+**Durable by design.** A commit that returns survives a crash or `kill -9` of your process. A reader sees one whole commit. Every file is checksummed, and damage fails the open with an error that names the file instead of returning wrong results. We test this with fault injection at every storage operation (about 890,000 schedules on x64 and arm64 for the 2026-11 build) and with more than 7,000 process kills during writes, merges, schema changes and multi-process reading, with no failed open and no lost commit. On a power cut the index may roll back to an earlier commit, but it is never corrupt. See [docs/durability.md](docs/durability.md).
 
-**EF Core integration.** Changes made through `SaveChanges` reach the index through a transactional outbox log and are applied once. After catch-up the index equals the database, including across kills of the app and of the applier. Verified on SQLite and PostgreSQL 16; SQL Server and MySQL are not tested. A transaction left open longer than the late-row window or age is applied with the entity's next change or `ReindexAsync`. See [docs/entity-framework.md](docs/entity-framework.md).
+**EF Core integration.** Changes made through `SaveChanges` reach the index through a transactional outbox log and are applied once. After catch-up the index equals the database, including across kills of the app and of the applier. Verified on SQLite (1,276 kills) and PostgreSQL 16 (1,809 kills, with concurrent writers); SQL Server and MySQL are not tested. A transaction left open longer than the late-row window or age is applied with the entity's next change or `ReindexAsync`. See [docs/entity-framework.md](docs/entity-framework.md).
 
 ## Getting started (preview)
 

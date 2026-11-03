@@ -4,6 +4,13 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.4.0-preview.1] - 2026-11-03
+
+The first public preview.
+
+- Static index: term dictionaries and lengths are read in 4 KiB pages on first use and scattered files use 4 KiB chunks (`StaticBuildOptions.ScatteredChunkBytes`, `oneindex static build --scattered-kb`), so a first query fetches about 0.63 MB instead of 2.6 MB. Static hybrid search takes its vector arm from IVF (`StaticIndex<T>.HybridNprobe`).
+- IVF as a per-field vector index on the server (`[Vector(Index = VectorIndexKind.Ivf, IvfLists = n)]`), stored in a new segment part `ivf`.
+- Query JSON: a ranking rule naming a field that cannot be sorted is a positioned parse error instead of an exception.
 - Multi-vector auto-encoding: `[MultiVector(From = ...)]` encodes the source text at upsert through an `IMultiVectorEncoder` (`SearchIndex.Open<T>(path, embedder, sparse, reranker, multiVectorEncoder)` or `SearchMultiVectorEncoders.Default`), caches by model identity and text in stored source, re-encodes stale entries in `ReembedStale()`, and `SearchQuery<T>.MaxSim(...)` is the late-interaction query stage beside `Rerank`. `IMultiVectorEncoder` gains batch `Encode`/`EncodeAsync` with default implementations.
 - Durability harness: the campaigns start their child processes correctly whether run through `dotnet run`, `dotnet Durability.dll` or the application host.
 
