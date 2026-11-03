@@ -105,6 +105,7 @@ internal static class Program
                     break;
                 case "dictionary":
                     AsianTargets.WriteDictionarySeeds(args[2]);
+                    break;
                 case "static":
                     StaticTarget.WriteSeeds(args[2]);
                     break;
