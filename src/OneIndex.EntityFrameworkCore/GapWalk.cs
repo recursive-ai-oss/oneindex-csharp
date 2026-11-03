@@ -89,7 +89,8 @@ internal sealed class GapWalk
                 _firstSeen.Remove(r.Seq);
                 if (r.EntityType == _entityType)
                 {
-                    count++;
+                    // Rows at or below the rebuild position are covered by the rebuild's read of the tables (a gap recorded by the rebuild is applied but not counted).
+                    count += r.Seq > Position.Base ? 1 : 0;
                     step.Late++;
                     if (apply.Add(r.EntityId))
                     {

@@ -10,7 +10,7 @@ namespace OneIndex.EntityFrameworkCore;
 /// <param name="LogId">The log the index was built against.</param>
 /// <param name="Seq">The high-water mark: every row of this entity type at or below it is reflected in the commit, except rows at <paramref name="Gaps"/>.</param>
 /// <param name="Base">The position of the last full rebuild; rows up to it came from reading the tables, not from the log.</param>
-/// <param name="Count">How many log rows of this entity type were applied after <paramref name="Base"/> and at or below <paramref name="Seq"/> (a late row counts when it arrives).</param>
+/// <param name="Count">How many log rows of this entity type were applied after <paramref name="Base"/> and at or below <paramref name="Seq"/> (a row that was missing counts when it arrives, if it is above the base).</param>
 /// <param name="Gaps">Ascending positions at or below <paramref name="Seq"/> (all distinct) that had no visible row when the mark passed them: transactions that had not committed yet, or that rolled back. A row that appears at one is applied then.</param>
 internal sealed record OutboxPosition(Guid LogId, long Seq, long Base, long Count, long[] Gaps)
 {
