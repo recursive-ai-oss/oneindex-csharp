@@ -143,6 +143,28 @@ public class FolderIndexerTests : IDisposable
     }
 
     [Fact]
+    public void DocsSampleRuns()
+    {
+        Make("docs/invoice.md", "# Invoice\n\nThe payment from Acme Corp is overdue since March.\n");
+        string docs = _t.Sub("root/docs");
+        string output = _t.Sub("data/passages");
+        var lines = new List<string>();
+
+        using SearchIndex<FilePassage> index = FolderIndexer.OpenIndex(output);
+        FolderIndexResult run = FolderIndexer.Run(index, docs,
+            progress: new Progress<FolderProgress>(p => lines.Add($"{p.FilesIndexed}/{p.FilesToIndex} files")));
+        Assert.Equal(1, run.Added);
+
+        foreach (SearchHit<FilePassage> hit in index.Passages("overdue \"acme corp\"").Distinct(p => p.FileId).Take(5))
+        {
+            Citation c = hit.Cite();
+            lines.Add($"{c.File}{(c.Entry is null ? "" : " > " + c.Entry)} page {c.Page} [{c.Start}..{c.End}]: {c.Text}");
+        }
+
+        Assert.Contains("invoice.md page 0 [0..61]: # Invoice\n\nThe payment from Acme Corp is overdue since March.", lines);
+    }
+
+    [Fact]
     public void ARescanAppliesExactlyTheChanges()
     {
         string a = Make("a.txt", "alpha text about apples.\n");
