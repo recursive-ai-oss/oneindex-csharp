@@ -173,6 +173,48 @@ a collection bug: six abstracts contain U+202F NARROW NO-BREAK SPACE, which the 
 of the six documents hold a query term next to such a space; the single-term counts (`oneindex-harness count-diff`) differ for exactly those
 terms, each by one document that only the comparator counts.
 
+### Fuzzy, prefix and as-you-type rows, term dictionary version 2
+
+Same corpus, driver, settings and Lucene.NET build as above, after the version 2 term dictionary, the single-load number reads, the
+merge policy size ratio of 2 and the block-max WAND change that keeps clause order between rounds. Each engine ran as its own exclusive
+benchmark-class job, Lucene.NET right after OneIndex on the same machine (x64), three repetitions, medians. Match checksums of the Fuzzy,
+Typo and Prefix rows differ by design (OneIndex prunes with WAND and prefix queries are constant-score; Lucene.NET expands and counts
+all matches); the as-you-type typo row has a matched variant (`ONEINDEX_TYPO_MATCHED=1`, same query shape as the comparator's
+prefix-OR-fuzzy) whose checksums agree (2,925).
+
+| Row (ms/query) | OneIndex x64 | Lucene.NET x64 | ratio | OneIndex arm64 | Lucene.NET arm64 | ratio |
+|---|---|---|---|---|---|---|
+| index (docs/s) | 62,540 | 37,947 | 0.61 | 62,869 | 37,849 | 0.60 |
+| commit (median ms, 5 x 200 docs) | 28.3 | 52.4 | 0.54 | 20.7 | 14.5 | 1.43 |
+| Terms1 | 0.123 | 0.214 | 0.58 | 0.179 | 0.318 | 0.56 |
+| Terms2 | 0.245 | 0.436 | 0.56 | n/r | n/r | |
+| Terms5 | 0.487 | 0.635 | 0.77 | 0.620 | 0.752 | 0.82 |
+| Phrase | 0.179 | 0.157 | 1.14 | 0.250 | 0.389 | 0.64 |
+| Prefix | 0.105 | 0.317 | 0.33 | 0.124 | 0.410 | 0.30 |
+| AsYouType | 0.151 | 0.198 | 0.76 | 0.234 | 0.223 | 1.05 |
+| Fuzzy1 | 0.232 | 0.530 | 0.44 | 0.277 | 0.945 | 0.29 |
+| Fuzzy2 | 1.227 | 2.083 | 0.59 | 1.386 | 4.072 | 0.34 |
+| Typo | 0.211 | 0.484 | 0.43 | 0.228 | 0.699 | 0.33 |
+| TypoAsYouType (matched variant) | 0.081 | 0.173 | 0.47 | 0.087 | n/r | |
+| TypoAsYouType (documented semantics, information) | 0.242 | 0.173 | 1.40 | n/r | | |
+| Filtered | 1.540 | 1.888 | 0.82 | n/r | | |
+| Facets / Stats / Sort | 0.427 / 0.276 / 0.370 | 0.601 / 0.514 / 0.668 | 0.71 / 0.54 / 0.55 | n/r | | |
+
+n/r: not re-run for this change. The arm64 Lucene.NET column and the arm64 Terms1, Phrase, Prefix, AsYouType and TypoAsYouType
+figures come from the earlier benchmark-class run of the same Lucene.NET build and an earlier build of the dictionary code; Terms5,
+Fuzzy1, Fuzzy2, Typo and commit on arm64 were re-run on the final code (they did not move with the clause-order change: Fuzzy2 1.395 to
+1.386 ms). Commit on arm64 is the one row above 1.25; it is governed by the number of files fsynced per commit, not by the dictionary.
+Allocated bytes per query, OneIndex against Lucene.NET (x64): Terms1 4,982 / 59,203; Terms5 21,054 / 970,469; Prefix 62,868 / 153,187;
+Fuzzy1 19,456 / 703,984; Fuzzy2 120,550 / 2,281,455; Typo 19,311 / 1,244,174; AsYouType 57,659 / 189,760.
+
+Size and memory (x64): settled index 60,589,958 bytes (62 MB before the merge policy change was 64.3 MB; Lucene.NET 45,426,027); peak
+resident set during the index row 1,269 MiB against 1,021 MiB (includes the 120 MB corpus held by the driver), during the query rows
+443 to 1,171 MiB against 434 to 603 MiB.
+
+Machine records: x64 as above (Ryzen 9 7950X3D, 32 logical cores, ext4 NVMe, .NET 10.0.13, warm page cache). 1-minute load average
+before / during / after: OneIndex run 3.3 / 3.0 / 2.5, Lucene.NET run 7.3 / 5.9 / 5.2 (other users' light jobs on the host), matched
+typo run 1.3 / 1.2 / 1.2. arm64: Apple M2, 8 cores, .NET 10.0.14, load 3.0 / 2.9 / 2.9.
+
 ## Earlier indicative pass (not publishable)
 
 A first run of the driver on 50,000 abstracts, to prove the rows run end to end and to capture memory and size. It ran as a shared-queue
