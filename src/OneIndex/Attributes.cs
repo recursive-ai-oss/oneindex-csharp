@@ -91,6 +91,15 @@ public sealed class VectorAttribute : Attribute
     /// full-precision rerank, 1 to 100. Default 0, which means the codec's own default (2, 3 and 5 for the three codecs).
     /// </summary>
     public float Oversample { get; set; }
+
+    /// <summary>
+    /// The structure built over the vectors of each segment that has at least <see cref="FlatThreshold"/> of them: <see cref="Vectors.VectorIndexKind.Hnsw"/>
+    /// (a graph, the default) or <see cref="Vectors.VectorIndexKind.Ivf"/> (clustered lists, docs/ivf.md). Smaller segments are searched exactly either way.
+    /// </summary>
+    public Vectors.VectorIndexKind Index { get; set; }
+
+    /// <summary>With <see cref="Vectors.VectorIndexKind.Ivf"/>: the lists per segment, 1 to 4,096. Default 0, about the square root of the segment's vector count.</summary>
+    public int IvfLists { get; set; }
 }
 
 /// <summary>

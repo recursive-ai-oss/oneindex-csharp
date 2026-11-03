@@ -161,7 +161,7 @@ public sealed class IvfIndex : IDisposable
         uint n = BinaryPrimitives.ReadUInt32LittleEndian(h[20..]);
         uint storage = BinaryPrimitives.ReadUInt32LittleEndian(h[24..]);
         long rerank = BinaryPrimitives.ReadInt64LittleEndian(h[32..]);
-        if (dims is < 1 or > 65536 || metric > 2 || nlist is < 1 or > 4096 || n > int.MaxValue || nlist > n || storage > 1)
+        if (dims is < 1 or > 65536 || metric > 2 || nlist is < 1 or > 4096 || n > int.MaxValue || nlist > n || storage > 2)
         {
             throw new CorruptIndexException(reader.Name, "the IVF header holds an impossible size or setting");
         }
@@ -182,7 +182,7 @@ public sealed class IvfIndex : IDisposable
         var firsts = new int[nlist];
         int dir = nlist * dims * 4;
         long total = 0;
-        int codeBytes = storage == IvfStorage.EightBit ? 4 + dims : dims * 4;
+        int codeBytes = storage != IvfStorage.FullPrecision ? 4 + dims : dims * 4;
         long expected = IvfBuilder.HeaderBytes + (long)body.Length;
         for (int c = 0; c < nlist; c++)
         {
@@ -275,15 +275,15 @@ public sealed class IvfIndex : IDisposable
         => SearchCore(query, k, nprobe, accept, oversample, rerank: true, cancellationToken);
 
     /// <summary>Like <see cref="Search"/> but, for 8-bit lists, ranks by the scores of the codes and never reads the full-precision region: the lists alone are read. For callers that only need a ranked candidate list (hybrid fusion), where a row read per candidate would cost far more than the lists.</summary>
-    internal IvfHit[] SearchApproximate(ReadOnlySpan<float> query, int k, int nprobe, CancellationToken cancellationToken = default)
-        => SearchCore(query, k, nprobe, null, 1, rerank: false, cancellationToken);
+    internal IvfHit[] SearchApproximate(ReadOnlySpan<float> query, int k, int nprobe, Func<int, bool>? accept = null, CancellationToken cancellationToken = default)
+        => SearchCore(query, k, nprobe, accept, 1, rerank: false, cancellationToken);
 
     private IvfHit[] SearchCore(ReadOnlySpan<float> query, int k, int nprobe, Func<int, bool>? accept, int oversample, bool rerank, CancellationToken cancellationToken)
     {
         float[] q = PrepareQuery(query, k, ref nprobe);
         int[] probes = Probes(q, nprobe);
-        var candidates = new Candidates(Storage == IvfStorage.EightBit ? Math.Min(Count, Math.Max(k, k * Math.Max(1, oversample))) : k);
-        float queryScale = Storage == IvfStorage.EightBit ? Scale(q) : 0;
+        var candidates = new Candidates(Storage != IvfStorage.FullPrecision ? Math.Min(Count, Math.Max(k, k * Math.Max(1, oversample))) : k);
+        float queryScale = Storage != IvfStorage.FullPrecision ? Scale(q) : 0;
         foreach (int list in probes)
         {
             if (_listCount[list] == 0)
@@ -327,8 +327,8 @@ public sealed class IvfIndex : IDisposable
     {
         float[] q = PrepareQuery(query.Span, k, ref nprobe);
         int[] probes = Probes(q, nprobe);
-        var candidates = new Candidates(Storage == IvfStorage.EightBit ? Math.Min(Count, Math.Max(k, k * Math.Max(1, oversample))) : k);
-        float queryScale = Storage == IvfStorage.EightBit ? Scale(q) : 0;
+        var candidates = new Candidates(Storage != IvfStorage.FullPrecision ? Math.Min(Count, Math.Max(k, k * Math.Max(1, oversample))) : k);
+        float queryScale = Storage != IvfStorage.FullPrecision ? Scale(q) : 0;
         foreach (int list in probes)
         {
             if (_listCount[list] == 0)
@@ -409,7 +409,7 @@ public sealed class IvfIndex : IDisposable
         return probes;
     }
 
-    private int ListBytes(int list) => _listCount[list] * (4 + (Storage == IvfStorage.EightBit ? 4 + Dimensions : Dimensions * 4));
+    private int ListBytes(int list) => _listCount[list] * (4 + (Storage != IvfStorage.FullPrecision ? 4 + Dimensions : Dimensions * 4));
 
     private void ScanList(int list, byte[] bytes, float[] q, float queryScale, Func<int, bool>? accept, Candidates into)
     {
@@ -418,7 +418,7 @@ public sealed class IvfIndex : IDisposable
         int vecStart = count * 4;
         var vec = new float[dims];
         sbyte[]? qcode = null;
-        if (Storage == IvfStorage.EightBit)
+        if (Storage != IvfStorage.FullPrecision)
         {
             qcode = new sbyte[dims];
             for (int d = 0; d < dims; d++)

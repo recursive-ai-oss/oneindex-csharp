@@ -20,7 +20,8 @@ public sealed record KnnQuery(string Field, float[] Vector, int K) : Query
 
     /// <summary>
     /// How many candidates the graph search keeps while it looks, at least <see cref="K"/>. Larger finds the true neighbours more often and
-    /// costs time. 0 (default) uses <c>max(K, 100)</c>. Ignored by exact search.
+    /// costs time. 0 (default) uses <c>max(K, 100)</c>. Ignored by exact search. On a field with <see cref="Vectors.VectorIndexKind.Ivf"/> it is instead
+    /// the number of lists each segment reads, 1 or more (0: an eighth of the lists, at least 8); more lists find more of the true neighbours.
     /// </summary>
     public int Ef { get; init; }
 
@@ -112,9 +113,12 @@ internal sealed class KnnWeight : Weight
             }
         }
 
-        if (q.K < 1 || q.K > KnnQuery.MaxK || q.Ef < 0 || q.Ef > KnnQuery.MaxK || (q.Ef != 0 && q.Ef < q.K))
+        bool clustered = def.VectorIndex == VectorIndexKind.Ivf;
+        if (q.K < 1 || q.K > KnnQuery.MaxK || q.Ef < 0 || q.Ef > KnnQuery.MaxK || (!clustered && q.Ef != 0 && q.Ef < q.K))
         {
-            throw new QueryException($"A knn query needs K from 1 to {KnnQuery.MaxK} and Ef 0 or from K to {KnnQuery.MaxK}; got K {q.K}, Ef {q.Ef}.");
+            throw new QueryException(clustered
+                ? $"A knn query needs K from 1 to {KnnQuery.MaxK} and Ef (the lists to read on an IVF field) 0 or from 1 to {KnnQuery.MaxK}; got K {q.K}, Ef {q.Ef}."
+                : $"A knn query needs K from 1 to {KnnQuery.MaxK} and Ef 0 or from K to {KnnQuery.MaxK}; got K {q.K}, Ef {q.Ef}.");
         }
 
         var perLeaf = new List<(int Leaf, int Doc, float Score)>();
