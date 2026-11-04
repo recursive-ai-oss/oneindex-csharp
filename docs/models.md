@@ -113,7 +113,7 @@ text at a time (cosine similarity of unit vectors; documents / queries with the 
 | int8 dynamic (comparison) | 0.97204 / 0.96137 | 0.99690 / 0.99640 | 0.034 / 0.041 | |
 
 Why int8 weights are the default: retrieval quality is the same as fp32 within noise on both sets (SciFact -0.0001, ArguAna +0.001),
-the package is 31 MB (the fp32 model file alone is 133 MB), and a vector does not depend on its batch. Memory at run time is higher than fp32
+the embedder's weights are 35 MB (the fp32 model file alone is 133 MB; the whole `RecursiveAI.OneIndex.Models` package, which also carries the reranker and the sparse encoder, is 134 MB), and a vector does not depend on its batch. Memory at run time is higher than fp32
 because OneModel expands the int8 weights to float32 when it plans each input shape; the shapes are few (see Batching) but each plan
 holds its own copy. Throughput is about the same as fp32 (the arithmetic is float32 either way). `BgeSmallEmbedder.Open` takes
 any other file of the same model, for example the fp32 one.
@@ -208,7 +208,7 @@ and random strings over awkward scripts.
 ## Multilingual embedder: multilingual-e5-small (`RecursiveAI.OneIndex.Models.Multilingual`)
 
 intfloat/multilingual-e5-small, MIT licence, revision `614241f622f53c4eeff9890bdc4f31cfecc418b3`: 12 layers, 384 dimensions, around 100
-languages, with a 250,000-piece embedding table. It is a separate package because the int8 weights are 120 MB (the English default is
+languages, with a 250,000-piece embedding table. It is a separate package because the int8 weights are 120 MB (the package is 112 MB; the English default is
 35 MB); it depends on `RecursiveAI.OneIndex.Models` and OneModel only.
 
 - Prefixes as the model card says: `query: ` for queries, `passage: ` for documents, both added by role. Mean pooling over the real

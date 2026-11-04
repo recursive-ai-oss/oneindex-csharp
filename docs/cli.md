@@ -3,11 +3,13 @@
 `oneindex` is a .NET tool (package `RecursiveAI.OneIndex.Cli`) that turns a folder into a searchable passage index, searches it with citations, and builds a static index for browsers. It uses the folder package ([files.md](files.md)) and the engine; it adds no behaviour of its own.
 
 ```
-dotnet tool install --global RecursiveAI.OneIndex.Cli
+dotnet tool install --global RecursiveAI.OneIndex.Cli --prerelease
 oneindex index ~/papers --index ~/papers-index
 oneindex query ~/papers-index "attention is all you need" --limit 5
 oneindex static build ~/papers-index ./site/search
 ```
+
+The tool package is 151 MB (about 463 MB installed) because it carries the default English models (embedder, reranker and sparse encoder, 134 MB in `RecursiveAI.OneIndex.Models`). `oneindex --version` prints the package version.
 
 ## Commands
 

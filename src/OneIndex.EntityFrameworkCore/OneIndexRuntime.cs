@@ -158,9 +158,18 @@ public sealed class OneIndexRuntime : IAsyncDisposable, IDisposable
         }
     }
 
-    internal DbContext CreateContext()
-        => _factory?.Invoke()
-           ?? throw new InvalidOperationException("OneIndex cannot create a DbContext of its own. Set OneIndexOptions.ContextFactory (for example to IDbContextFactory<T>.CreateDbContext), or give the context a public constructor taking its DbContextOptions.");
+    private const string NoFactoryMessage = "OneIndex cannot create a DbContext of its own. Set OneIndexOptions.ContextFactory (for example to IDbContextFactory<T>.CreateDbContext), or give the context a public constructor taking its DbContextOptions.";
+
+    internal DbContext CreateContext() => _factory?.Invoke() ?? throw new InvalidOperationException(NoFactoryMessage);
+
+    // A configuration that can never apply is refused up front: the error of an inline apply would otherwise only be kept in LastApplyError.
+    internal void ThrowIfCannotCreateContext()
+    {
+        if (_factory is null)
+        {
+            throw new InvalidOperationException(NoFactoryMessage + " ApplyInline needs this, because the index is updated from a context of its own after each SaveChanges.");
+        }
+    }
 
     internal bool TryGetEntity(Type type, out IndexedEntity entity) => _entities.TryGetValue(type, out entity!);
 
@@ -260,8 +269,10 @@ public sealed class OneIndexRuntime : IAsyncDisposable, IDisposable
     /// </summary>
     /// <param name="cancellationToken">Stops the loop.</param>
     /// <returns>A task that completes when the loop stops.</returns>
+    /// <exception cref="InvalidOperationException">The runtime cannot create a context of its own (see <see cref="OneIndexOptions.ContextFactory"/>): the loop could never apply anything.</exception>
     public async Task RunAsync(CancellationToken cancellationToken)
     {
+        ThrowIfCannotCreateContext();
         int rounds = 0;
         while (!cancellationToken.IsCancellationRequested)
         {

@@ -46,6 +46,20 @@ internal static class Program
     }
 
     /// <summary>Runs a command line. Kept separate from <c>Main</c> so tests can call it with their own writers.</summary>
+    // The package version (for example 0.4.0-preview.2): the informational version without the build metadata after '+'. The assembly version
+    // is four numbers and drops the pre-release label.
+    internal static string PackageVersion()
+    {
+        string? v = (System.Reflection.Assembly.GetExecutingAssembly().GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false) as System.Reflection.AssemblyInformationalVersionAttribute[])?.FirstOrDefault()?.InformationalVersion;
+        if (string.IsNullOrEmpty(v))
+        {
+            return typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown";
+        }
+
+        int plus = v.IndexOf('+', StringComparison.Ordinal);
+        return plus < 0 ? v : v[..plus];
+    }
+
     internal static int Run(string[] args, TextWriter output, TextWriter error, CancellationToken cancellationToken)
     {
         if (args.Length == 0)
@@ -59,7 +73,7 @@ internal static class Program
             switch (args[0])
             {
                 case "--version" or "-v":
-                    output.WriteLine(typeof(Program).Assembly.GetName().Version);
+                    output.WriteLine(PackageVersion());
                     return 0;
                 case "--help" or "-h" or "help":
                     output.WriteLine(Usage);

@@ -53,6 +53,11 @@ public sealed class CliToolTests : IDisposable
         Assert.True(install == 0, io + ie);
         string exe = Path.Combine(tools, OperatingSystem.IsWindows() ? "oneindex.exe" : "oneindex");
 
+        // The tool reports the package version, not the four-number assembly version.
+        (int vc, string vo, _) = Run(exe, "--version");
+        Assert.Equal(0, vc);
+        Assert.Equal(version, vo.Trim());
+
         string docs = Path.Combine(_work, "docs");
         Directory.CreateDirectory(Path.Combine(docs, "sub"));
         File.WriteAllText(Path.Combine(docs, "fox.md"), "# Animals\n\nThe quick brown fox jumps over the lazy dog.\n");
@@ -117,5 +122,9 @@ public sealed class CliToolTests : IDisposable
         Assert.Equal("2", Cli("index --bogus x", out err, out _));
         Assert.Equal("0", Cli("--help", out _, out string help));
         Assert.Contains("oneindex index", help, StringComparison.Ordinal);
+
+        // The package version: three numbers and an optional pre-release label, with no build metadata after '+'.
+        Assert.Equal("0", Cli("--version", out _, out string version));
+        Assert.Matches(@"^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?\r?\n?$", version);
     }
 }

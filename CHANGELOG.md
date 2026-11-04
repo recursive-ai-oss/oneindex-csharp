@@ -4,6 +4,12 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.4.0-preview.2] - 2026-11-03
+
+- **Fixed: Entity Framework Core inline apply skipped the first `SaveChanges`.** With `ApplyInline = true` and no `ContextFactory` (the configuration of the documented sample), the runtime had not yet learned how to create its own context when the first `SaveChanges` finished, so that save was not applied to the index. The error was kept only in `OneIndexRuntime.LastApplyError` and searches returned nothing for it. The rows were safely in the outbox. Anyone using `RecursiveAI.OneIndex.EntityFrameworkCore` 0.4.0-preview.1 that way should upgrade; after the upgrade the first apply (the next `SaveChanges`, or `OneIndexRuntime.For(db).CatchUp()`) catches the index up from the outbox, so nothing needs re-entering. On 0.4.0-preview.1 itself, calling `OneIndexRuntime.For(db)` once (any search through the context does) and then `CatchUp()` or `ReindexAsync` does the same. The context is now learned before the first change is saved. A configuration that can never apply (no `ContextFactory` and no public constructor taking the context's `DbContextOptions`) now throws `InvalidOperationException` from `SaveChanges` (with `ApplyInline`) or `RunAsync`, before anything is written, instead of failing silently.
+- The `oneindex` tool's `--version` prints the package version (for example `0.4.0-preview.2`), not the four-number assembly version.
+- Documentation: the install line for the tool needs `--prerelease`; package sizes (`.Models` 134 MB, `.Models.Multilingual` 112 MB, the tool 151 MB); the README says the previews are on nuget.org; the EF and `.Files` kill-campaign figures and the static index's first-query bytes (about 0.65 MB for the query, 0.74 MB with the manifest) agree across documents; internal markers removed from the synonyms and did-you-mean pages; the benchmark method page says where the published rows are.
+
 ## [0.4.0-preview.1] - 2026-11-03
 
 The first public preview.

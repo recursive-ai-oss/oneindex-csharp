@@ -190,6 +190,14 @@ internal sealed class OutboxInterceptor(OneIndexRuntime runtime) : SaveChangesIn
             return;
         }
 
+        // Inline apply builds its own context to read the database. Learn how from the first context saved, before its change is written, so
+        // that the first save is applied like every other; and if that is impossible, say so now rather than skip the index silently.
+        runtime.RememberFactory(context);
+        if (runtime.Options.ApplyInline)
+        {
+            runtime.ThrowIfCannotCreateContext();
+        }
+
         Release(context);
         context.ChangeTracker.DetectChanges();
         var wanted = new Dictionary<(string Type, string Id), OutboxOperation>();

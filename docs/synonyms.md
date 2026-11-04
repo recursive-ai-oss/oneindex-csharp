@@ -53,7 +53,7 @@ phrases). A reading is a `Must` group of its parts; readings of a stretch are `S
 `TokenGraphQueries.ToPhrase(graph, field, slop, synonymBoost)`: one `PhraseQuery` per distinct whole reading (a `TermQuery` for a
 one-term reading with slop 0), combined with `Should`.
 
-**Exact query first.** Parts that come from a synonym carry `synonymBoost` (default **0.8** [agent default]); the original words
+**Exact query first.** Parts that come from a synonym carry `synonymBoost` (default **0.8**); the original words
 carry 1, so a document with the user's own words outscores one with only a synonym. A document with both scores both.
 
 A query with no terms (empty, or only stop words) lowers to `MatchAllQuery`.

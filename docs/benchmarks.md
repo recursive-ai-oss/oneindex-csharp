@@ -1,8 +1,8 @@
 # Benchmarks: method
 
 How the text rows are measured against Lucene.NET and the native engines. The relevance method is in [relevance.md](relevance.md).
-Nothing here is a published result: publishable rows come from exclusive benchmark runs on the machines listed in the machine
-record, and every number carries that record.
+The published rows are in the milestone section below, from exclusive benchmark runs on the machines listed in the machine record, and every
+number carries that record. Other sections, including "Earlier results" at the end, record how the method developed and are history, not published results.
 
 ## What is measured
 

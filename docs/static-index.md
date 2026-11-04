@@ -50,7 +50,7 @@ The browser suite ([browser.md](browser.md)) builds a static index of 30,000 Wik
 | + 4 KiB chunks for terms, lengths, ids, columns, points, packs | 867 | 307 | 110 | 1,308 | 589 | 192 | 55 |
 | **default**: 4 KiB for postings and stored too, hybrid through IVF (nprobe 16) | **631** | **194** | **60** | **338** | 463 | 187 | 106 |
 
-The first query plus the manifest is about 737 KB (it was 2.6 MB), against Pagefind 1.6.0's 280-323 KB; a later text query is 194 KB against Pagefind's 46-70 KB. **The text query stays above the 120 KB aim:** per text query about 94 KB is term-dictionary pages, 60 KB stored source (ten hits, each a 32 KiB raw block that the stored codec compresses in whole blocks, so a hit costs at least its compressed block; only a smaller stored block size, a writer-side option with a cost in compression, would lower it), 21.5 KB postings and 14.5 KB packs. We accept 194 KB for now.
+The first query is about 646 KB, or 737 KB with the manifest (it was 2.6 MB), against Pagefind 1.6.0's 280-323 KB; a later text query is 194 KB against Pagefind's 46-70 KB. **The text query stays above the 120 KB aim:** per text query about 94 KB is term-dictionary pages, 60 KB stored source (ten hits, each a 32 KiB raw block that the stored codec compresses in whole blocks, so a hit costs at least its compressed block; only a smaller stored block size, a writer-side option with a cost in compression, would lower it), 21.5 KB postings and 14.5 KB packs. We accept 194 KB for now.
 
 Costs: the manifest grew from 40 to 106 KB because every chunk has a CRC entry (a compact encoding would about halve it); a 4 KiB chunk raises the requests of a text query from 13 to about 48 (Chromium: median 74 ms per text query, see [browser.md](browser.md)).
 

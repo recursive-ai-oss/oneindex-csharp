@@ -26,7 +26,7 @@ typo-tolerant *matching* (which finds documents for the typo itself); this is th
 
    where `both` is the number of documents that contain a word and the word before it (two adjacent words), counted by
    leapfrogging their postings lists, at most `MaxCooccurrenceScan` (50,000) steps per pair and segment. Defaults: weights 1, 1,
-   `EditPenalty` 4 (one more edit costs as much as the candidate being ~55 times rarer) [agent defaults].
+   `EditPenalty` 4 (one more edit costs as much as the candidate being ~55 times rarer).
 6. **Output.** Combinations that change nothing are dropped; the rest are sorted by score, then by text, and cut to
    `MaxSuggestions` (3). The suggested text is the query with each corrected word's span replaced by the dictionary term, so the
    punctuation and untouched words are exactly as typed. The replacement is the indexed (case-folded) form.

@@ -4,7 +4,7 @@
 
 OneIndex is unaffiliated with other products named OneIndex, OneSearch or similar.
 
-> **Status: preview, not yet on nuget.org.** Everything in the table below works and is tested; APIs and file formats may still change between previews. Known gaps are listed in the table and in "Known gaps", not hidden.
+> **Status: preview, on nuget.org as prerelease packages** (`0.4.0-preview.1` and later; add `--prerelease` or a version when installing). Everything in the table below works and is tested; APIs and file formats may still change between previews. Known gaps are listed in the table and in "Known gaps", not hidden.
 
 ## What exists
 
@@ -33,7 +33,7 @@ OneIndex is unaffiliated with other products named OneIndex, OneSearch or simila
 
 - **Entity Framework:** `ExecuteUpdate`, `ExecuteDelete` and raw SQL bypass `SaveChanges`, so they are not indexed; repair with `ReindexAsync(query)`. A log row that becomes visible after the applier gave up on its position is applied at the entity's next change or by `ReindexAsync`. SQL Server and MySQL have not been run ([docs/entity-framework.md](docs/entity-framework.md)).
 - **VectorData:** dynamic (dictionary) collections, store-side embedding generation, Manhattan and Hamming distance and whole-array equality filters are not supported, so the conformance tests that need them skip themselves with a reason naming the feature ([docs/vectordata.md](docs/vectordata.md)).
-- **Static index against Pagefind:** a first query costs about 0.74 MB (Pagefind: 0.32 MB) and a later text query about 194 KB in 48 small requests (Pagefind: 46 KB in 4); the stored-source blocks and term-dictionary pages set that floor. Static hybrid uses IVF candidates, so its results are close to, not identical with, the server's graph-based hybrid (top-10 overlap 0.89 at the default). The .NET WebAssembly payload is 5.35 MB raw (1.57 MB brotli) against Pagefind's 575 KB. IVF is also a per-field server option (`[Vector(Index = VectorIndexKind.Ivf)]`), 3 to 8 times slower than HNSW at equal recall.
+- **Static index against Pagefind:** a first query costs about 0.65 MB, or 0.74 MB with the manifest (Pagefind: 0.32 MB) and a later text query about 194 KB in 48 small requests (Pagefind: 46 KB in 4); the stored-source blocks and term-dictionary pages set that floor. Static hybrid uses IVF candidates, so its results are close to, not identical with, the server's graph-based hybrid (top-10 overlap 0.89 at the default). The .NET WebAssembly payload is 5.35 MB raw (1.57 MB brotli) against Pagefind's 575 KB. IVF is also a per-field server option (`[Vector(Index = VectorIndexKind.Ivf)]`), 3 to 8 times slower than HNSW at equal recall.
 
 ### Relevance (BM25, nDCG@10, BEIR test sets; measured 2026-11)
 
