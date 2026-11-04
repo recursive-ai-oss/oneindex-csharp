@@ -29,7 +29,7 @@
 
   <PropertyGroup Label="Version">
     <!-- The one place the version lives; every package shares it. -->
-    <Version>0.4.0-preview.2</Version>
+    <Version>0.4.0-preview.3</Version>
   </PropertyGroup>
 
   <ItemGroup Label="Global usings (implicit usings are off so that the set is explicit)">
