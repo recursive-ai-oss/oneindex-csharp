@@ -18,6 +18,10 @@ public class InlineApplyTests : IDisposable
         init.Initialize();
     }
 
+    // Every test builds its own runtime and so its own service provider; a real app has one. Only the warning about that count is silenced.
+    private static void Quiet(Microsoft.EntityFrameworkCore.Diagnostics.WarningsConfigurationBuilder w)
+        => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning);
+
     public void Dispose()
     {
         GC.SuppressFinalize(this);
@@ -38,6 +42,7 @@ public class InlineApplyTests : IDisposable
         var options = new DbContextOptionsBuilder<AppDb>()
             .UseSqlite($"Data Source={Path.Combine(_dir, "app.db")}")
             .UseOneIndex(Path.Combine(_dir, "search"), o => { o.Index<Invoice>(); o.ApplyInline = true; })
+            .ConfigureWarnings(Quiet)
             .Options;
 
         using var db = new AppDb(options);
@@ -69,6 +74,7 @@ public class InlineApplyTests : IDisposable
         var options = new DbContextOptionsBuilder<AppDb>()
             .UseSqlite($"Data Source={Path.Combine(_dir, "app.db")}")
             .UseOneIndex(Path.Combine(_dir, "search-sync"), o => { o.Index<Invoice>(); o.ApplyInline = true; })
+            .ConfigureWarnings(Quiet)
             .Options;
         using var db = new AppDb(options);
         db.Invoices.Add(new Invoice { Id = "a", Title = "alpha" });
@@ -124,6 +130,7 @@ public class InlineApplyTests : IDisposable
         var options = new DbContextOptionsBuilder<NoCtorDb>()
             .UseSqlite($"Data Source={dbFile}")
             .UseOneIndex(Path.Combine(_dir, "search-noctor"), o => { o.Index<Invoice>(); o.ApplyInline = true; })
+            .ConfigureWarnings(Quiet)
             .Options;
         using var db = new NoCtorDb(options, 1);
         db.Invoices.Add(new Invoice { Id = "a", Title = "alpha" });
